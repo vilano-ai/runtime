@@ -28,6 +28,14 @@ defmodule VilanoKernel.Router do
     })
   end
 
+  post "/v1/admin/shutdown" do
+    send_json(conn, 200, %{ok: true, shuttingDown: true})
+    Task.start(fn ->
+      Process.sleep(50)
+      System.stop(0)
+    end)
+  end
+
   get "/v1/projects" do
     send_json(conn, 200, %{
       ok: true,

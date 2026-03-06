@@ -111,11 +111,19 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
   }
 
   try {
-    process.kill(daemonState.pid, "SIGTERM");
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ESRCH") {
-      throw error;
+    await requestJsonWithState<{ ok: true; shuttingDown: true }>(daemonState, {
+      method: "POST",
+      pathname: "/v1/admin/shutdown",
+      autoStart: false,
+    });
+  } catch {
+    try {
+      process.kill(daemonState.pid, "SIGTERM");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ESRCH") {
+        throw error;
+      }
     }
   }
 
@@ -135,6 +143,33 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
     }
 
     await sleep(150);
+  }
+
+  try {
+    process.kill(daemonState.pid, "SIGKILL");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH") {
+      throw error;
+    }
+  }
+
+  const killDeadline = Date.now() + 2000;
+  while (Date.now() < killDeadline) {
+    const running = await pingKernelStatus(daemonState.port);
+    if (!running) {
+      await fs.rm(runtimePaths.daemonStateFile, { force: true });
+      return {
+        ok: true,
+        pid: daemonState.pid,
+        port: daemonState.port,
+        startedAt: daemonState.startedAt,
+        runtimeDbPath: daemonState.runtimeDbPath,
+        projectCount: 0,
+      };
+    }
+
+    await sleep(100);
   }
 
   throw new Error("Timed out waiting for the Vilano kernel to stop");
