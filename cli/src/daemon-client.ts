@@ -14,6 +14,10 @@ import type {
   ProjectListResponse,
   ProjectResponse,
   ProjectRecord,
+  ServiceEnsureResponse,
+  ServiceEnvelopeResponse,
+  ServiceMutationResponse,
+  ServiceStopResponse,
   RunInspectResponse,
   RunListResponse,
   RunStartResponse,
@@ -252,6 +256,99 @@ export async function inspectRun(runId: string): Promise<RunInspectResponse> {
   return requestJson<RunInspectResponse>({
     method: "GET",
     pathname: `/v1/runs/${encodeURIComponent(runId)}`,
+    autoStart: true,
+  });
+}
+
+export async function ensureServiceRun(
+  project: string,
+  service: string,
+  serviceKey: string,
+  keyInput: unknown
+): Promise<ServiceEnsureResponse> {
+  return requestJson<ServiceEnsureResponse>({
+    method: "POST",
+    pathname: "/v1/services/ensure",
+    body: {
+      project,
+      service,
+      serviceKey,
+      keyInput,
+    },
+    autoStart: true,
+  });
+}
+
+export async function inspectServiceRun(
+  project: string,
+  service: string,
+  serviceKey: string
+): Promise<RunInspectResponse> {
+  return requestJson<RunInspectResponse>({
+    method: "GET",
+    pathname: `/v1/services/${encodeURIComponent(project)}/${encodeURIComponent(service)}/runs/${encodeURIComponent(serviceKey)}`,
+    autoStart: true,
+  });
+}
+
+export async function inspectServiceEnvelope(
+  envelopeId: string
+): Promise<ServiceEnvelopeResponse> {
+  return requestJson<ServiceEnvelopeResponse>({
+    method: "GET",
+    pathname: `/v1/service-envelopes/${encodeURIComponent(envelopeId)}`,
+    autoStart: true,
+  });
+}
+
+export async function sendServiceMessage(
+  project: string,
+  service: string,
+  serviceKey: string,
+  keyInput: unknown,
+  message: string,
+  payload: unknown
+): Promise<ServiceMutationResponse> {
+  return requestJson<ServiceMutationResponse>({
+    method: "POST",
+    pathname: `/v1/services/${encodeURIComponent(project)}/${encodeURIComponent(service)}/runs/${encodeURIComponent(serviceKey)}/send`,
+    body: {
+      keyInput,
+      message,
+      payload,
+    },
+    autoStart: true,
+  });
+}
+
+export async function askService(
+  project: string,
+  service: string,
+  serviceKey: string,
+  keyInput: unknown,
+  message: string,
+  payload: unknown
+): Promise<ServiceMutationResponse> {
+  return requestJson<ServiceMutationResponse>({
+    method: "POST",
+    pathname: `/v1/services/${encodeURIComponent(project)}/${encodeURIComponent(service)}/runs/${encodeURIComponent(serviceKey)}/ask`,
+    body: {
+      keyInput,
+      message,
+      payload,
+    },
+    autoStart: true,
+  });
+}
+
+export async function stopServiceRun(
+  project: string,
+  service: string,
+  serviceKey: string
+): Promise<ServiceStopResponse> {
+  return requestJson<ServiceStopResponse>({
+    method: "POST",
+    pathname: `/v1/services/${encodeURIComponent(project)}/${encodeURIComponent(service)}/runs/${encodeURIComponent(serviceKey)}/stop`,
     autoStart: true,
   });
 }

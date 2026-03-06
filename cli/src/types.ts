@@ -79,6 +79,9 @@ export interface RunRecord {
   leaseWorkerId?: string | null;
   leaseExpiresAt?: string | null;
   input: unknown;
+  serviceKey?: string;
+  keyInput?: unknown;
+  state?: unknown | null;
   output: unknown | null;
   error: unknown | null;
   createdAt: string;
@@ -193,6 +196,28 @@ export interface RunInspectResponse {
   signals: RunSignalRecord[];
   children: RunChildRecord[];
   envelopes: RunEnvelopeRecord[];
+}
+
+export interface ServiceEnsureResponse {
+  ok: true;
+  run: RunRecord;
+}
+
+export interface ServiceEnvelopeResponse {
+  ok: true;
+  envelope: RunEnvelopeRecord;
+}
+
+export interface ServiceMutationResponse {
+  ok: true;
+  run: RunRecord;
+  envelope: RunEnvelopeRecord;
+}
+
+export interface ServiceStopResponse {
+  ok: true;
+  run: RunRecord;
+  stoppedEnvelopeCount: number;
 }
 
 export interface SignalSendResponse {

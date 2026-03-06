@@ -1,19 +1,27 @@
 import { spawn } from "node:child_process";
+import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import type { ServiceDefinition } from "@vilano/runtime";
 import {
   addProject,
+  askService,
   ensureDaemonStarted,
+  ensureServiceRun,
   getRunningDaemonStatus,
   inspectProject,
   inspectRun,
+  inspectServiceEnvelope,
+  inspectServiceRun,
   inspectWorkflowDefinition,
   listDefinitions,
   listProjects,
   listRuns,
   removeProject,
   sendRunSignal,
+  sendServiceMessage,
   startWorkflowRun,
+  stopServiceRun,
   stopDaemon,
   syncProject,
 } from "./daemon-client.ts";
@@ -53,7 +61,7 @@ function renderHelp(): string {
     "  vilano workflow list|inspect",
     "  vilano run start|list|inspect",
     "  vilano worker start",
-    "  vilano service list",
+    "  vilano service list|ensure|inspect|send|ask|stop",
     "  vilano signal send",
     "",
     "Everything important should eventually remain scriptable with --json.",
@@ -306,8 +314,152 @@ async function handleService(
       writeOutput(flags, response, (body) => renderDefinitionList("service", body.project, body.definitions));
       return 0;
     }
+    case "ensure": {
+      const reference = args[1];
+      if (!reference) {
+        throw new CliError("Usage: vilano service ensure <service-ref> --key-json '{...}'");
+      }
+
+      const target = await resolveServiceTarget(reference, flags, { syncDefinition: true });
+      const response = await ensureServiceRun(
+        target.project.name,
+        target.definition.name,
+        target.serviceKey,
+        target.keyInput
+      );
+      writeOutput(flags, response, (body) =>
+        `${renderRun(body.run)}\nservice_key: ${target.serviceKey}`
+      );
+      return 0;
+    }
+    case "inspect": {
+      const reference = args[1];
+      if (!reference) {
+        throw new CliError("Usage: vilano service inspect <service-ref> --key-json '{...}'");
+      }
+
+      const target = await resolveServiceTarget(reference, flags, { syncDefinition: true });
+      const response = await inspectServiceRun(
+        target.project.name,
+        target.definition.name,
+        target.serviceKey
+      );
+      writeOutput(flags, response, (body) =>
+        renderRunInspect(
+          body.run,
+          body.events,
+          body.steps,
+          body.execs,
+          body.waits,
+          body.signals,
+          body.children,
+          body.envelopes
+        )
+      );
+      return 0;
+    }
+    case "send": {
+      const reference = args[1];
+      const messageName = args[2];
+      if (!reference || !messageName) {
+        throw new CliError("Usage: vilano service send <service-ref> <message-name> --key-json '{...}' [--input '{...}']");
+      }
+
+      const target = await resolveServiceTarget(reference, flags, { syncDefinition: true });
+      const payload = parseJsonFlag(flags.input, "input", null);
+      const response = await sendServiceMessage(
+        target.project.name,
+        target.definition.name,
+        target.serviceKey,
+        target.keyInput,
+        messageName,
+        payload
+      );
+      writeOutput(flags, response, (body) =>
+        [
+          `service: ${target.project.name}/${target.definition.name}`,
+          `service_key: ${target.serviceKey}`,
+          `run: ${body.run.id}`,
+          `envelope: ${body.envelope.id}`,
+          `queued: send ${messageName}`,
+        ].join("\n")
+      );
+      return 0;
+    }
+    case "ask": {
+      const reference = args[1];
+      const messageName = args[2];
+      if (!reference || !messageName) {
+        throw new CliError("Usage: vilano service ask <service-ref> <ask-name> --key-json '{...}' [--input '{...}'] [--timeout 30s]");
+      }
+
+      const target = await resolveServiceTarget(reference, flags, { syncDefinition: true });
+      const payload = parseJsonFlag(flags.input, "input", null);
+      const initial = await askService(
+        target.project.name,
+        target.definition.name,
+        target.serviceKey,
+        target.keyInput,
+        messageName,
+        payload
+      );
+      const timeoutMs = parseDurationFlag(flags.timeout, 30_000, "timeout");
+      const envelope = await waitForServiceEnvelope(initial.envelope.id, timeoutMs);
+
+      if (envelope.status === "failed") {
+        const message =
+          envelope.error &&
+          typeof envelope.error === "object" &&
+          "message" in envelope.error &&
+          typeof envelope.error.message === "string"
+            ? envelope.error.message
+            : `Service ask '${messageName}' failed`;
+        throw new CliError(message);
+      }
+
+      const body = {
+        ok: true as const,
+        run: initial.run,
+        envelope,
+        reply: envelope.reply,
+      };
+
+      writeOutput(flags, body, (value) =>
+        [
+          `service: ${target.project.name}/${target.definition.name}`,
+          `service_key: ${target.serviceKey}`,
+          `run: ${value.run.id}`,
+          `envelope: ${value.envelope.id}`,
+          `reply: ${JSON.stringify(value.reply)}`,
+        ].join("\n")
+      );
+      return 0;
+    }
+    case "stop": {
+      const reference = args[1];
+      if (!reference) {
+        throw new CliError("Usage: vilano service stop <service-ref> --key-json '{...}'");
+      }
+
+      const target = await resolveServiceTarget(reference, flags, { syncDefinition: true });
+      const response = await stopServiceRun(
+        target.project.name,
+        target.definition.name,
+        target.serviceKey
+      );
+      writeOutput(flags, response, (body) =>
+        [
+          `service: ${target.project.name}/${target.definition.name}`,
+          `service_key: ${target.serviceKey}`,
+          `run: ${body.run.id}`,
+          `status: ${body.run.status}`,
+          `stopped_envelopes: ${body.stoppedEnvelopeCount}`,
+        ].join("\n")
+      );
+      return 0;
+    }
     default:
-      throw new CliError("Usage: vilano service list");
+      throw new CliError("Usage: vilano service list|ensure|inspect|send|ask|stop");
   }
 }
 
@@ -447,6 +599,51 @@ async function resolveWorkflowReference(
   return findDefinition(projects, "workflow", reference, process.cwd(), explicitProject);
 }
 
+async function resolveServiceReference(
+  reference: string,
+  flags: Record<string, string | boolean>,
+  options: { syncDefinition?: boolean } = {}
+): Promise<{ project: ProjectRecord; definition: DefinitionRecord }> {
+  const explicitProject = typeof flags.project === "string" ? flags.project : undefined;
+  let projects = (await listProjects()).projects;
+  const projectName = resolveReferenceProjectName(projects, reference, explicitProject);
+
+  if (options.syncDefinition && projectName) {
+    const project = projects.find((entry) => entry.name === projectName);
+    if (!project) {
+      throw new CliError(`Unknown project: ${projectName}`);
+    }
+
+    await syncProject(await buildProjectManifest(project.name, project.path));
+    projects = (await listProjects()).projects;
+  }
+
+  return findDefinition(projects, "service", reference, process.cwd(), explicitProject);
+}
+
+async function resolveServiceTarget(
+  reference: string,
+  flags: Record<string, string | boolean>,
+  options: { syncDefinition?: boolean } = {}
+): Promise<{
+  project: ProjectRecord;
+  definition: DefinitionRecord;
+  keyInput: unknown;
+  serviceKey: string;
+}> {
+  const { project, definition } = await resolveServiceReference(reference, flags, options);
+  const keyInput = parseRequiredJsonFlag(flags["key-json"] ?? flags.key, "key-json");
+  const definitionValue = await loadServiceDefinition(project, definition);
+  const serviceKey = definitionValue.key(keyInput);
+
+  return {
+    project,
+    definition,
+    keyInput,
+    serviceKey,
+  };
+}
+
 function resolveReferenceProjectName(
   projects: ProjectRecord[],
   reference: string,
@@ -479,6 +676,87 @@ function parseJsonFlag<T>(
       `Failed to parse --${flagName} as JSON: ${error instanceof Error ? error.message : "invalid JSON"}`
     );
   }
+}
+
+function parseRequiredJsonFlag(value: string | boolean | undefined, flagName: string): unknown {
+  const parsed = parseJsonFlag(value, flagName, undefined);
+  if (parsed === undefined) {
+    throw new CliError(`Usage requires --${flagName} '{...}'`);
+  }
+
+  return parsed;
+}
+
+async function loadServiceDefinition(
+  project: ProjectRecord,
+  definition: DefinitionRecord
+): Promise<ServiceDefinition<any, any, any, any, any>> {
+  const absolutePath = path.resolve(project.path, definition.file);
+  const moduleUrl = pathToFileURL(absolutePath).href;
+  const moduleExports = (await import(moduleUrl)) as Record<string, unknown>;
+  const value = moduleExports[definition.exportName];
+
+  if (!value || typeof value !== "object" || (value as { kind?: string }).kind !== "service") {
+    throw new CliError(
+      `Export '${definition.exportName}' from ${definition.file} is not a service definition`
+    );
+  }
+
+  return value as ServiceDefinition<any, any, any, any, any>;
+}
+
+function parseDurationFlag(
+  value: string | boolean | undefined,
+  fallbackMs: number,
+  flagName: string
+): number {
+  if (value === undefined) {
+    return fallbackMs;
+  }
+
+  if (typeof value !== "string") {
+    throw new CliError(`Expected --${flagName} to be followed by a duration like 30s`);
+  }
+
+  const match = /^(\d+)(ms|s|m|h)$/.exec(value.trim());
+  if (!match) {
+    throw new CliError(`Failed to parse --${flagName}: expected a duration like 30s`);
+  }
+
+  const amount = Number(match[1]);
+  switch (match[2]) {
+    case "ms":
+      return amount;
+    case "s":
+      return amount * 1_000;
+    case "m":
+      return amount * 60_000;
+    case "h":
+      return amount * 3_600_000;
+    default:
+      throw new CliError(`Failed to parse --${flagName}: unsupported duration unit`);
+  }
+}
+
+async function waitForServiceEnvelope(envelopeId: string, timeoutMs: number): Promise<RunEnvelopeRecord> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() <= deadline) {
+    const response = await inspectServiceEnvelope(envelopeId);
+    if (response.envelope.status === "completed" || response.envelope.status === "failed") {
+      return response.envelope;
+    }
+
+    await sleep(150);
+  }
+
+  throw new CliError(`Timed out waiting for service envelope ${envelopeId}`);
+}
+
+async function sleep(durationMs: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, durationMs);
+  });
 }
 
 function writeOutput<T>(
@@ -557,7 +835,7 @@ function renderDefinitionInspect(project: string, definition: DefinitionRecord):
 }
 
 function renderRun(run: RunRecord): string {
-  return [
+  const lines = [
     `run: ${run.id}`,
     `project: ${run.project}`,
     `kind: ${run.definitionKind}`,
@@ -566,7 +844,17 @@ function renderRun(run: RunRecord): string {
     `created_at: ${run.createdAt}`,
     `updated_at: ${run.updatedAt}`,
     `input: ${JSON.stringify(run.input)}`,
-  ].join("\n");
+  ];
+
+  if (run.serviceKey) {
+    lines.push(`service_key: ${run.serviceKey}`);
+  }
+
+  if (run.state !== undefined) {
+    lines.push(`state: ${JSON.stringify(run.state)}`);
+  }
+
+  return lines.join("\n");
 }
 
 function renderRunList(project: string | null, runs: RunRecord[]): string {
