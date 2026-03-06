@@ -105,23 +105,31 @@ async function executeActivation(
       return;
     }
 
-    if (activation.kind === "workflow") {
-      await client.failRun(activation.leaseId, {
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-    } else {
-      if (isInactiveServiceTurnError(error)) {
-        return;
-      }
+    if (error instanceof ActivationCancelledError || isInactiveActivationError(error)) {
+      return;
+    }
 
+    if (activation.kind === "workflow") {
+      try {
+        await client.failRun(activation.leaseId, {
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      } catch (reportError) {
+        if (reportError instanceof ActivationCancelledError || isInactiveActivationError(reportError)) {
+          return;
+        }
+
+        throw reportError;
+      }
+    } else {
       try {
         await client.failServiceTurn(activation.leaseId, activation.envelope.id, {
           message: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
         });
       } catch (reportError) {
-        if (isInactiveServiceTurnError(reportError)) {
+        if (reportError instanceof ActivationCancelledError || isInactiveActivationError(reportError)) {
           return;
         }
 
@@ -293,7 +301,7 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
         throw toExecError(spec.name, resolved.error);
       }
 
-      const execution = await executeProcess(activation, spec, {
+      const execution = await executeProcess(client, activation, spec, {
         key,
         attempt: resolved.attempt,
         cwd,
@@ -641,6 +649,7 @@ type ExecFailure = {
 };
 
 async function executeProcess<TOutput>(
+  client: WorkerClient,
   activation: Activation,
   spec: ExecSpec<TOutput>,
   execution: {
@@ -683,6 +692,8 @@ async function executeProcess<TOutput>(
   const stdoutPromise = streamToText(subprocess.stdout);
   const stderrPromise = streamToText(subprocess.stderr);
   let timedOut = false;
+  let activationCancelled = false;
+  let leaseStatusPollInFlight = false;
 
   const timer =
     execution.timeoutMs === undefined
@@ -692,13 +703,47 @@ async function executeProcess<TOutput>(
           subprocess.kill("SIGKILL");
         }, execution.timeoutMs);
 
+  const leaseStatusPoller = setInterval(() => {
+    if (leaseStatusPollInFlight || activationCancelled) {
+      return;
+    }
+
+    leaseStatusPollInFlight = true;
+    void client
+      .getLeaseStatus(activation.leaseId)
+      .then((lease) => {
+        if (!lease.active && !activationCancelled) {
+          activationCancelled = true;
+          subprocess.kill("SIGKILL");
+        }
+      })
+      .catch(() => {
+        if (!activationCancelled) {
+          activationCancelled = true;
+          subprocess.kill("SIGKILL");
+        }
+      })
+      .finally(() => {
+        leaseStatusPollInFlight = false;
+      });
+  }, 250);
+
   const exitCode = await subprocess.exited;
   if (timer) {
     clearTimeout(timer);
   }
+  clearInterval(leaseStatusPoller);
 
   const stdout = await stdoutPromise;
   const stderr = await stderrPromise;
+
+  if (activationCancelled) {
+    throw new ActivationCancelledError(
+      `Activation lease ${activation.leaseId} is no longer active`,
+      "lease_inactive"
+    );
+  }
+
   let captures: {
     stdoutRef?: string;
     stderrRef?: string;
@@ -977,7 +1022,7 @@ function toServiceCallError(
   return new Error(`Service ${kind} '${messageName}' failed on '${serviceRunId}'`);
 }
 
-function isInactiveServiceTurnError(error: unknown): boolean {
+function isInactiveActivationError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
   }
@@ -986,6 +1031,16 @@ function isInactiveServiceTurnError(error: unknown): boolean {
     error.message.startsWith("Unknown active lease:") ||
     error.message.startsWith("Unknown active service turn:")
   );
+}
+
+class ActivationCancelledError extends Error {
+  constructor(
+    message: string,
+    readonly reason: "lease_inactive"
+  ) {
+    super(message);
+    this.name = "ActivationCancelledError";
+  }
 }
 
 function deterministicChildRunId(parentRunId: string, key: string): string {

@@ -100,6 +100,19 @@ interface RunStatusResponse {
   };
 }
 
+interface LeaseStatusResponse {
+  ok: true;
+  lease:
+    | { active: false }
+    | {
+        active: true;
+        runId: string;
+        status: string;
+        definitionKind: string;
+        leaseExpiresAt: string | null;
+      };
+}
+
 interface ServiceRunResponse {
   ok: true;
   run: {
@@ -134,6 +147,17 @@ export class WorkerClient {
     await this.request("POST", `/v1/leases/${encodeURIComponent(leaseId)}/heartbeat`, {
       workerId: this.workerId,
     });
+  }
+
+  async getLeaseStatus(
+    leaseId: string
+  ): Promise<LeaseStatusResponse["lease"]> {
+    const response = await this.request<LeaseStatusResponse>(
+      "GET",
+      `/v1/leases/${encodeURIComponent(leaseId)}/status`
+    );
+
+    return response.lease;
   }
 
   async resolveStep(leaseId: string, name: string, key: string): Promise<StepResolveResponse["step"]> {
