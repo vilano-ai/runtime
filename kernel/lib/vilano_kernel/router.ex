@@ -94,6 +94,30 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  get "/v1/service-runs" do
+    query_params =
+      conn
+      |> Conn.fetch_query_params()
+      |> then(& &1.query_params)
+
+    project_name = query_params["project"]
+    active_only = query_params["active"] in ["true", "1", "yes"]
+
+    case project_name do
+      nil ->
+        send_json(conn, 200, %{ok: true, project: nil, activeOnly: active_only, runs: Storage.list_service_runs(nil, active_only)})
+
+      name ->
+        case Storage.get_project(name) do
+          nil ->
+            send_error(conn, 404, "not_found", "Unknown project: #{name}")
+
+          _project ->
+            send_json(conn, 200, %{ok: true, project: name, activeOnly: active_only, runs: Storage.list_service_runs(name, active_only)})
+        end
+    end
+  end
+
   get "/v1/workflows/:project/:name" do
     case Storage.get_definition(project, "workflow", name) do
       nil -> send_error(conn, 404, "not_found", "Unknown workflow '#{name}' in project '#{project}'")
@@ -426,7 +450,14 @@ defmodule VilanoKernel.Router do
              Map.get(conn.body_params, "payload")
            ) do
       _ = project_record
-      send_json(conn, 200, %{ok: true, run: result["run"], envelope: result["envelope"]})
+
+      case result do
+        %{"run" => run, "envelope" => envelope} ->
+          send_json(conn, 200, %{ok: true, run: run, envelope: envelope})
+
+        {:error, error} ->
+          send_error(conn, 409, "service_stopped", Map.fetch!(error, "message"))
+      end
     else
       nil ->
         send_error(conn, 404, "not_found", "Unknown service '#{name}' in project '#{project}'")
@@ -447,7 +478,42 @@ defmodule VilanoKernel.Router do
              Map.get(conn.body_params, "payload")
            ) do
       _ = project_record
-      send_json(conn, 200, %{ok: true, run: result["run"], envelope: result["envelope"]})
+
+      case result do
+        %{"run" => run, "envelope" => envelope} ->
+          send_json(conn, 200, %{ok: true, run: run, envelope: envelope})
+
+        {:error, error} ->
+          send_error(conn, 409, "service_stopped", Map.fetch!(error, "message"))
+      end
+    else
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown service '#{name}' in project '#{project}'")
+    end
+  end
+
+  post "/v1/services/:project/:name/runs/:service_key/signal" do
+    with project_record when not is_nil(project_record) <- Storage.get_project(project),
+         definition when not is_nil(definition) <- Storage.get_definition(project, "service", name),
+         result <-
+           Storage.enqueue_service_envelope!(
+             project,
+             definition["name"],
+             service_key,
+             Map.get(conn.body_params, "keyInput", %{}),
+             "signal",
+             fetch_required_string(conn.body_params, "signal"),
+             Map.get(conn.body_params, "payload")
+           ) do
+      _ = project_record
+
+      case result do
+        %{"run" => run, "envelope" => envelope} ->
+          send_json(conn, 200, %{ok: true, run: run, envelope: envelope})
+
+        {:error, error} ->
+          send_error(conn, 409, "service_stopped", Map.fetch!(error, "message"))
+      end
     else
       nil ->
         send_error(conn, 404, "not_found", "Unknown service '#{name}' in project '#{project}'")

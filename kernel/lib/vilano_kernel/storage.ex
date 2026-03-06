@@ -443,12 +443,17 @@ defmodule VilanoKernel.Storage do
 
     Repo.transaction(fn ->
       service_run = ensure_service_run!(project_name, definition_name, service_key, key_input || %{})
-      envelope_id = insert_service_envelope!(service_run["id"], kind, name, payload, nil, nil, now)
 
-      %{
-        "run" => get_service_run_by_id(service_run["id"]),
-        "envelope" => service_envelope_from_row(get_service_envelope(envelope_id))
-      }
+      case maybe_insert_service_envelope(service_run, kind, name, payload, nil, nil, now) do
+        {:ok, envelope_id} ->
+          %{
+            "run" => get_service_run_by_id(service_run["id"]),
+            "envelope" => service_envelope_from_row(get_service_envelope(envelope_id))
+          }
+
+        {:error, error} ->
+          {:error, error}
+      end
     end)
     |> unwrap_transaction_result()
   end
@@ -538,6 +543,7 @@ defmodule VilanoKernel.Storage do
               "ServiceStopped",
               %{
                 "reason" => "cli_stop",
+                "hadActiveLease" => not is_nil(service_run["leaseId"]),
                 "stoppedEnvelopeCount" => length(queued_envelopes)
               },
               now
@@ -551,6 +557,55 @@ defmodule VilanoKernel.Storage do
       end
     end)
     |> unwrap_transaction_result()
+  end
+
+  def list_service_runs(project_name \\ nil, active_only \\ false) do
+    {where_sql, args} =
+      case {project_name, active_only} do
+        {nil, false} ->
+          {"where r.definition_kind = 'service'", []}
+
+        {nil, true} ->
+          {"where r.definition_kind = 'service' and r.status not in ('idle', 'stopped')", []}
+
+        {project, false} ->
+          {"where r.definition_kind = 'service' and r.project_name = ?", [project]}
+
+        {project, true} ->
+          {"where r.definition_kind = 'service' and r.project_name = ? and r.status not in ('idle', 'stopped')", [project]}
+      end
+
+    Repo
+    |> SQL.query!(
+      """
+      select
+        r.id,
+        r.project_name,
+        r.definition_kind,
+        r.definition_name,
+        r.status,
+        r.lease_id,
+        r.lease_worker_id,
+        r.lease_expires_at,
+        r.input_json,
+        r.output_json,
+        r.error_json,
+        r.created_at,
+        r.updated_at,
+        s.service_key,
+        s.key_input_json,
+        s.state_json,
+        s.created_at as service_created_at,
+        s.updated_at as service_updated_at
+      from runs r
+      join service_runs s on s.run_id = r.id
+      #{where_sql}
+      order by r.created_at desc
+      """,
+      args
+    )
+    |> rows_to_maps()
+    |> Enum.map(&service_run_from_row(&1, &1))
   end
 
   def resolve_spawn(lease_id, definition_name, op_key, child_run_id, input) do
@@ -744,51 +799,55 @@ defmodule VilanoKernel.Storage do
         {_, nil} ->
           nil
 
-        {caller_run, _service_run} ->
+        {caller_run, service_run} ->
           case get_run_service_op(caller_run["id"], op_key) do
             existing when not is_nil(existing) ->
               %{"status" => existing["status"]}
 
             nil ->
-              insert_service_envelope!(
-                service_run_id,
-                "send",
-                name,
-                payload,
-                nil,
-                caller_run["id"],
-                now
-              )
+              case maybe_insert_service_envelope(
+                     service_run,
+                     "send",
+                     name,
+                     payload,
+                     nil,
+                     caller_run["id"],
+                     now
+                   ) do
+                {:ok, _envelope_id} ->
+                  SQL.query!(
+                    Repo,
+                    """
+                    insert into run_service_ops (
+                      caller_run_id,
+                      op_key,
+                      service_run_id,
+                      op_kind,
+                      message_name,
+                      correlation_id,
+                      status,
+                      payload_json,
+                      response_json,
+                      error_json,
+                      created_at,
+                      updated_at
+                    ) values (?, ?, ?, 'send', ?, null, 'completed', ?, null, null, ?, ?)
+                    """,
+                    [caller_run["id"], op_key, service_run_id, name, Jason.encode!(payload), now, now]
+                  )
 
-              SQL.query!(
-                Repo,
-                """
-                insert into run_service_ops (
-                  caller_run_id,
-                  op_key,
-                  service_run_id,
-                  op_kind,
-                  message_name,
-                  correlation_id,
-                  status,
-                  payload_json,
-                  response_json,
-                  error_json,
-                  created_at,
-                  updated_at
-                ) values (?, ?, ?, 'send', ?, null, 'completed', ?, null, null, ?, ?)
-                """,
-                [caller_run["id"], op_key, service_run_id, name, Jason.encode!(payload), now, now]
-              )
+                  append_event!(
+                    caller_run["id"],
+                    "MessageSent",
+                    %{"key" => op_key, "serviceRunId" => service_run_id, "name" => name, "payload" => payload},
+                    now
+                  )
 
-              append_event!(
-                caller_run["id"],
-                "MessageSent",
-                %{"key" => op_key, "serviceRunId" => service_run_id, "name" => name, "payload" => payload},
-                now
-              )
+                  %{"status" => "completed"}
 
-              %{"status" => "completed"}
+                {:error, error} ->
+                  %{"status" => "failed", "error" => error}
+              end
           end
       end
     end)
@@ -806,51 +865,55 @@ defmodule VilanoKernel.Storage do
         {_, nil} ->
           nil
 
-        {caller_run, _service_run} ->
+        {caller_run, service_run} ->
           case get_run_service_op(caller_run["id"], op_key) do
             existing when not is_nil(existing) ->
               %{"status" => existing["status"]}
 
             nil ->
-              insert_service_envelope!(
-                service_run_id,
-                "signal",
-                name,
-                payload,
-                nil,
-                caller_run["id"],
-                now
-              )
+              case maybe_insert_service_envelope(
+                     service_run,
+                     "signal",
+                     name,
+                     payload,
+                     nil,
+                     caller_run["id"],
+                     now
+                   ) do
+                {:ok, _envelope_id} ->
+                  SQL.query!(
+                    Repo,
+                    """
+                    insert into run_service_ops (
+                      caller_run_id,
+                      op_key,
+                      service_run_id,
+                      op_kind,
+                      message_name,
+                      correlation_id,
+                      status,
+                      payload_json,
+                      response_json,
+                      error_json,
+                      created_at,
+                      updated_at
+                    ) values (?, ?, ?, 'signal', ?, null, 'completed', ?, null, null, ?, ?)
+                    """,
+                    [caller_run["id"], op_key, service_run_id, name, Jason.encode!(payload), now, now]
+                  )
 
-              SQL.query!(
-                Repo,
-                """
-                insert into run_service_ops (
-                  caller_run_id,
-                  op_key,
-                  service_run_id,
-                  op_kind,
-                  message_name,
-                  correlation_id,
-                  status,
-                  payload_json,
-                  response_json,
-                  error_json,
-                  created_at,
-                  updated_at
-                ) values (?, ?, ?, 'signal', ?, null, 'completed', ?, null, null, ?, ?)
-                """,
-                [caller_run["id"], op_key, service_run_id, name, Jason.encode!(payload), now, now]
-              )
+                  append_event!(
+                    caller_run["id"],
+                    "SignalSent",
+                    %{"key" => op_key, "serviceRunId" => service_run_id, "name" => name, "payload" => payload},
+                    now
+                  )
 
-              append_event!(
-                caller_run["id"],
-                "SignalSent",
-                %{"key" => op_key, "serviceRunId" => service_run_id, "name" => name, "payload" => payload},
-                now
-              )
+                  %{"status" => "completed"}
 
-              %{"status" => "completed"}
+                {:error, error} ->
+                  %{"status" => "failed", "error" => error}
+              end
           end
       end
     end)
@@ -869,7 +932,7 @@ defmodule VilanoKernel.Storage do
         {_, nil} ->
           nil
 
-        {caller_run, _service_run} ->
+        {caller_run, service_run} ->
           case get_run_service_op(caller_run["id"], op_key) do
             existing when not is_nil(existing) ->
               case existing["status"] do
@@ -901,125 +964,129 @@ defmodule VilanoKernel.Storage do
               end
 
             nil ->
-              insert_service_envelope!(
-                service_run_id,
-                "ask",
-                name,
-                payload,
-                correlation_id,
-                caller_run["id"],
-                now
-              )
+              case maybe_insert_service_envelope(
+                     service_run,
+                     "ask",
+                     name,
+                     payload,
+                     correlation_id,
+                     caller_run["id"],
+                     now
+                   ) do
+                {:ok, _envelope_id} ->
+                  SQL.query!(
+                    Repo,
+                    """
+                    insert into run_service_ops (
+                      caller_run_id,
+                      op_key,
+                      service_run_id,
+                      op_kind,
+                      message_name,
+                      correlation_id,
+                      status,
+                      payload_json,
+                      response_json,
+                      error_json,
+                      created_at,
+                      updated_at
+                    ) values (?, ?, ?, 'ask', ?, ?, 'waiting', ?, null, null, ?, ?)
+                    """,
+                    [
+                      caller_run["id"],
+                      op_key,
+                      service_run_id,
+                      name,
+                      correlation_id,
+                      Jason.encode!(payload),
+                      now,
+                      now
+                    ]
+                  )
 
-              SQL.query!(
-                Repo,
-                """
-                insert into run_service_ops (
-                  caller_run_id,
-                  op_key,
-                  service_run_id,
-                  op_kind,
-                  message_name,
-                  correlation_id,
-                  status,
-                  payload_json,
-                  response_json,
-                  error_json,
-                  created_at,
-                  updated_at
-                ) values (?, ?, ?, 'ask', ?, ?, 'waiting', ?, null, null, ?, ?)
-                """,
-                [
-                  caller_run["id"],
-                  op_key,
-                  service_run_id,
-                  name,
-                  correlation_id,
-                  Jason.encode!(payload),
-                  now,
-                  now
-                ]
-              )
+                  SQL.query!(
+                    Repo,
+                    """
+                    insert into run_waits (
+                      run_id,
+                      op_key,
+                      wait_kind,
+                      wait_name,
+                      status,
+                      wake_at,
+                      output_json,
+                      created_at,
+                      updated_at
+                    ) values (?, ?, 'ask_reply', ?, 'waiting', null, null, ?, ?)
+                    on conflict(run_id, op_key) do update set
+                      wait_kind = excluded.wait_kind,
+                      wait_name = excluded.wait_name,
+                      status = 'waiting',
+                      wake_at = null,
+                      output_json = null,
+                      updated_at = excluded.updated_at
+                    """,
+                    [caller_run["id"], "ask_reply:" <> correlation_id, correlation_id, now, now]
+                  )
 
-              SQL.query!(
-                Repo,
-                """
-                insert into run_waits (
-                  run_id,
-                  op_key,
-                  wait_kind,
-                  wait_name,
-                  status,
-                  wake_at,
-                  output_json,
-                  created_at,
-                  updated_at
-                ) values (?, ?, 'ask_reply', ?, 'waiting', null, null, ?, ?)
-                on conflict(run_id, op_key) do update set
-                  wait_kind = excluded.wait_kind,
-                  wait_name = excluded.wait_name,
-                  status = 'waiting',
-                  wake_at = null,
-                  output_json = null,
-                  updated_at = excluded.updated_at
-                """,
-                [caller_run["id"], "ask_reply:" <> correlation_id, correlation_id, now, now]
-              )
+                  SQL.query!(
+                    Repo,
+                    """
+                    update runs
+                    set
+                      status = 'waiting',
+                      lease_id = null,
+                      lease_worker_id = null,
+                      lease_expires_at = null,
+                      updated_at = ?
+                    where id = ?
+                    """,
+                    [now, caller_run["id"]]
+                  )
 
-              SQL.query!(
-                Repo,
-                """
-                update runs
-                set
-                  status = 'waiting',
-                  lease_id = null,
-                  lease_worker_id = null,
-                  lease_expires_at = null,
-                  updated_at = ?
-                where id = ?
-                """,
-                [now, caller_run["id"]]
-              )
+                  append_event!(
+                    caller_run["id"],
+                    "AskRequested",
+                    %{
+                      "key" => op_key,
+                      "serviceRunId" => service_run_id,
+                      "name" => name,
+                      "correlationId" => correlation_id,
+                      "payload" => payload
+                    },
+                    now
+                  )
 
-              append_event!(
-                caller_run["id"],
-                "AskRequested",
-                %{
-                  "key" => op_key,
-                  "serviceRunId" => service_run_id,
-                  "name" => name,
-                  "correlationId" => correlation_id,
-                  "payload" => payload
-                },
-                now
-              )
+                  append_event!(
+                    caller_run["id"],
+                    "WaitRegistered",
+                    %{"kind" => "ask_reply", "key" => "ask_reply:" <> correlation_id, "correlationId" => correlation_id},
+                    now
+                  )
 
-              append_event!(
-                caller_run["id"],
-                "WaitRegistered",
-                %{"kind" => "ask_reply", "key" => "ask_reply:" <> correlation_id, "correlationId" => correlation_id},
-                now
-              )
+                  append_event!(
+                    caller_run["id"],
+                    "RunSuspended",
+                    %{"reason" => "ask_reply", "key" => "ask_reply:" <> correlation_id, "correlationId" => correlation_id},
+                    now
+                  )
 
-              append_event!(
-                caller_run["id"],
-                "RunSuspended",
-                %{"reason" => "ask_reply", "key" => "ask_reply:" <> correlation_id, "correlationId" => correlation_id},
-                now
-              )
+                  %{
+                    "status" => "suspended",
+                    "wait" => %{
+                      "runId" => caller_run["id"],
+                      "key" => "ask_reply:" <> correlation_id,
+                      "kind" => "ask_reply",
+                      "name" => correlation_id,
+                      "status" => "waiting",
+                      "wakeAt" => nil,
+                      "output" => nil
+                    }
+                  }
 
-              %{
-                "status" => "suspended",
-                "wait" => %{
-                  "runId" => caller_run["id"],
-                  "key" => "ask_reply:" <> correlation_id,
-                  "kind" => "ask_reply",
-                  "name" => correlation_id,
-                  "status" => "waiting",
-                  "wakeAt" => nil,
-                  "output" => nil
-                }
-              }
+                {:error, error} ->
+                  %{"status" => "failed", "error" => error}
+              end
           end
       end
     end)
@@ -3042,6 +3109,30 @@ defmodule VilanoKernel.Storage do
     )
     |> rows_to_maps()
     |> List.first()
+  end
+
+  defp maybe_insert_service_envelope(service_run, kind, name, payload, correlation_id, sender_run_id, now) do
+    if service_run["status"] == "stopped" do
+      {:error,
+       %{
+         "message" => "Service is stopped",
+         "serviceRunId" => service_run["id"],
+         "serviceKey" => service_run["serviceKey"],
+         "kind" => kind,
+         "name" => name
+       }}
+    else
+      {:ok,
+       insert_service_envelope!(
+         service_run["id"],
+         kind,
+         name,
+         payload,
+         correlation_id,
+         sender_run_id,
+         now
+       )}
+    end
   end
 
   defp insert_service_envelope!(service_run_id, kind, name, payload, correlation_id, sender_run_id, now) do

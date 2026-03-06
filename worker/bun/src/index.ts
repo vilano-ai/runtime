@@ -52,6 +52,7 @@ export async function startWorker(options: WorkerOptions = {}): Promise<void> {
 
   while (true) {
     const activation = await client.leaseActivation();
+
     if (!activation) {
       if (options.once) {
         return;
@@ -366,7 +367,7 @@ function createServiceRef(
       });
 
       if (resolved.status === "failed") {
-        throw new Error(`Service send '${name}' failed`);
+        throw toServiceCallError(serviceRunId, name, resolved.error, "send");
       }
     },
   ]);
@@ -420,7 +421,7 @@ function createServiceRef(
       });
 
       if (resolved.status === "failed") {
-        throw new Error(`Service signal '${name}' failed`);
+        throw toServiceCallError(serviceRunId, name, resolved.error, "signal");
       }
     },
   ]);
@@ -945,6 +946,19 @@ function toServiceAskError(serviceRunId: string, messageName: string, error: unk
   }
 
   return new Error(`Service ask '${messageName}' failed on '${serviceRunId}'`);
+}
+
+function toServiceCallError(
+  serviceRunId: string,
+  messageName: string,
+  error: unknown,
+  kind: "send" | "signal"
+): Error {
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return Object.assign(new Error(error.message), { cause: error, serviceRunId, messageName, kind });
+  }
+
+  return new Error(`Service ${kind} '${messageName}' failed on '${serviceRunId}'`);
 }
 
 function deterministicChildRunId(parentRunId: string, key: string): string {
