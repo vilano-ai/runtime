@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "build": "bun run typecheck",
-    "typecheck": "tsc -p cli/tsconfig.json && tsc -p sdk/typescript/tsconfig.json && tsc -p worker/bun/tsconfig.json"
+    "typecheck": "tsc -p cli/tsconfig.json && tsc -p sdk/typescript/tsconfig.json && tsc -p worker/bun/tsconfig.json && tsc -p tests/tsconfig.json",
+    "test": "bun test tests --timeout 30000 --max-concurrency 1"
   },
   "dependencies": {
     "@vilano/runtime": "workspace:*"
