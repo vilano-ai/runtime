@@ -423,7 +423,7 @@ export class WorkerClient {
   async failServiceTurn(
     leaseId: string,
     envelopeId: string,
-    error: { message: string; stack?: string },
+    error: Record<string, unknown>,
     retry?: { maxAttempts?: number; backoffMs?: number }
   ): Promise<ServiceTurnFailResponse> {
     return await this.request<ServiceTurnFailResponse>(
@@ -443,7 +443,7 @@ export class WorkerClient {
     });
   }
 
-  async failRun(leaseId: string, error: { message: string; stack?: string }): Promise<void> {
+  async failRun(leaseId: string, error: Record<string, unknown>): Promise<void> {
     await this.request("POST", `/v1/leases/${encodeURIComponent(leaseId)}/fail`, {
       error,
     });

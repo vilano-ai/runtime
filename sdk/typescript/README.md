@@ -121,6 +121,22 @@ That makes it the right boundary for CLI tools, browser drivers, codegen, and lo
 - cooperative cancellation for in-process `step()` code
 - kernel hard-stop fallback for timed blocking steps on managed workers
 
+## Explicit Non-Retryable Failures
+
+If a failure should fail immediately even when retries are configured, throw `nonRetryable(...)`:
+
+```ts
+import { nonRetryable } from "@vilano/runtime";
+
+throw nonRetryable(new Error("bad request"));
+```
+
+That works for:
+
+- `step()` callback failures
+- service handler failures
+- `exec()` parse failures
+
 ## Current Limits
 
 - no arbitrary JS continuation capture

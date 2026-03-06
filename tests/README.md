@@ -13,6 +13,7 @@ Current coverage:
 - durable step retry/backoff
 - durable exec retry/backoff
 - durable service-turn retry/backoff
+- explicit non-retryable failures bypassing retries
 - durable signal delivery, including buffered signals before first activation
 - sleep wait durability across daemon restart
 - signal wait durability across daemon restart

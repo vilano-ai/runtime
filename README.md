@@ -160,6 +160,14 @@ Retries are durable and kernel-scheduled for:
 - execs
 - service turns
 
+If a failure should bypass retries entirely, throw `nonRetryable(...)` from TypeScript-authored logic or parse code:
+
+```ts
+import { nonRetryable } from "@vilano/runtime";
+
+throw nonRetryable(new Error("invalid user input"));
+```
+
 Current retry behavior is fixed-count plus fixed-backoff:
 
 - `retries: 1` means at most 2 attempts total

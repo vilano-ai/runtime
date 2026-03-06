@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 
-import { service, workflow } from "@vilano/runtime";
+import { nonRetryable, service, workflow } from "@vilano/runtime";
 
 async function bumpMarkerAttempt(markerPath: string): Promise<number> {
   await fs.mkdir("tmp", { recursive: true });
@@ -157,6 +157,26 @@ export const retryingStep = workflow({
         key: `retrying-step:${input.token}`,
         retries: input.retries ?? 1,
         backoff: input.backoff ?? "50ms",
+      }
+    );
+  },
+});
+
+export const nonRetryingStep = workflow({
+  name: "nonRetryingStep",
+  run: async (input: { token: string }, ctx) => {
+    const markerPath = `tmp/non-retrying-step-${input.token}.txt`;
+
+    return await ctx.step(
+      "non-retrying-step",
+      async () => {
+        const attempt = await bumpMarkerAttempt(markerPath);
+        throw nonRetryable(new Error(`non-retryable step failure on attempt ${attempt}`));
+      },
+      {
+        key: `non-retrying-step:${input.token}`,
+        retries: 3,
+        backoff: "50ms",
       }
     );
   },
@@ -390,6 +410,22 @@ export const retryingResponder = service({
   },
 });
 
+export const nonRetryingResponder = service({
+  name: "nonRetryingResponder",
+  retry: {
+    retries: 3,
+    backoff: "50ms",
+  },
+  key: (input: { sessionId: string }) => input.sessionId,
+  onAsk: {
+    unstable: async (payload: { token: string }) => {
+      const markerPath = `tmp/non-retrying-service-${payload.token}.txt`;
+      const attempt = await bumpMarkerAttempt(markerPath);
+      throw nonRetryable(new Error(`non-retryable service failure on attempt ${attempt}`));
+    },
+  },
+});
+
 export const reviewCoordinator = workflow({
   name: "reviewCoordinator",
   run: async (input: { repoId: string; note: string }, ctx) => {
@@ -519,6 +555,29 @@ export const retryingExec = workflow({
         stderr: true,
       },
       parse: (stdout) => JSON.parse(stdout.trim()) as { attempt: number; token: string },
+    });
+  },
+});
+
+export const nonRetryingExec = workflow({
+  name: "nonRetryingExec",
+  run: async (input: { token: string }, ctx) => {
+    return await ctx.exec({
+      name: "non-retrying-exec",
+      key: `non-retrying-exec:${input.token}`,
+      retries: 3,
+      backoff: "50ms",
+      cmd: "bun",
+      args: [
+        "-e",
+        `console.log(JSON.stringify({ token: ${JSON.stringify(input.token)} }))`,
+      ],
+      capture: {
+        stdout: true,
+      },
+      parse: (_stdout) => {
+        throw nonRetryable(new Error(`non-retryable exec parse failure for ${input.token}`));
+      },
     });
   },
 });

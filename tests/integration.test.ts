@@ -16,6 +16,7 @@ const ROOT = path.resolve(import.meta.dir, "..");
 const CLI_ENTRY = path.join(ROOT, "cli", "bin", "vilano.ts");
 const WORKER_ENTRY = path.join(ROOT, "worker", "bun", "src", "cli.ts");
 const BOOTSTRAP_DEMO_TMP = path.join(ROOT, "examples", "bootstrap-demo", "tmp");
+const ROOT_TMP = path.join(ROOT, "tmp");
 
 class RuntimeHarness {
   private constructor(
@@ -30,6 +31,7 @@ class RuntimeHarness {
     } = {}
   ): Promise<RuntimeHarness> {
     await fs.rm(BOOTSTRAP_DEMO_TMP, { recursive: true, force: true });
+    await fs.rm(ROOT_TMP, { recursive: true, force: true });
 
     const runtimeHome = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-test-"));
     const port = await reservePort();
@@ -47,6 +49,7 @@ class RuntimeHarness {
     } finally {
       await fs.rm(this.runtimeHome, { recursive: true, force: true });
       await fs.rm(BOOTSTRAP_DEMO_TMP, { recursive: true, force: true });
+      await fs.rm(ROOT_TMP, { recursive: true, force: true });
     }
   }
 
@@ -551,6 +554,35 @@ test("step retries back off durably and eventually complete", async () => {
   }
 });
 
+test("non-retryable step failures bypass configured retries", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/nonRetryingStep", {
+      token: "step-no-retry",
+    });
+
+    const failed = await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "failed" &&
+        inspect.steps.some((step) => step.name === "non-retrying-step" && step.status === "failed"),
+      10_000
+    );
+
+    const step = failed.steps.find((entry) => entry.name === "non-retrying-step");
+    expect(step?.attempts).toBe(1);
+    expect(
+      step?.error && typeof step.error === "object"
+        ? (step.error as Record<string, unknown>).retryable
+        : null
+    ).toBe(false);
+    expect(failed.events.map((event) => event.type)).not.toContain("RetryScheduled");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("run cancel kills the managed worker for non-cooperative steps", async () => {
   const harness = await RuntimeHarness.create();
 
@@ -899,6 +931,45 @@ test("service turns retry durably after handler failures", async () => {
   }
 });
 
+test("non-retryable service turn failures bypass configured retries", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { sessionId: "service-no-retry" };
+
+  try {
+    const askCommand = harness.spawnCliCommand([
+      "service",
+      "ask",
+      "demo/nonRetryingResponder",
+      "unstable",
+      "--key-json",
+      JSON.stringify(keyInput),
+      "--input",
+      JSON.stringify({ token: "service-no-retry" }),
+      "--timeout",
+      "20s",
+      "--json",
+    ]);
+
+    const askResult = await askCommand.wait();
+    expect(askResult.exitCode).not.toBe(0);
+
+    const inspect = await harness.waitForService(
+      "demo/nonRetryingResponder",
+      keyInput,
+      (body) =>
+        body.run.status === "idle" &&
+        (body.turns ?? []).some((turn) => turn.phase === "failed"),
+      10_000
+    );
+
+    const failedTurn = (inspect.turns ?? []).find((turn) => turn.phase === "failed");
+    expect(failedTurn?.attempts).toBe(1);
+    expect(inspect.events.map((event) => event.type)).not.toContain("RetryScheduled");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("signals wake waiting workflows durably after downtime", async () => {
   const harness = await RuntimeHarness.create({
     env: {
@@ -1189,6 +1260,35 @@ test("exec retries back off durably and eventually complete", async () => {
     expect(
       completed.waits.some((wait) => wait.kind === "retry_backoff" && wait.status === "completed")
     ).toBe(true);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("non-retryable exec failures bypass configured retries", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/nonRetryingExec", {
+      token: "exec-no-retry",
+    });
+
+    const failed = await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "failed" &&
+        inspect.execs.some((entry) => entry.name === "non-retrying-exec" && entry.status === "failed"),
+      10_000
+    );
+
+    const exec = failed.execs.find((entry) => entry.name === "non-retrying-exec");
+    expect(exec?.attempts).toBe(1);
+    expect(
+      exec?.error && typeof exec.error === "object"
+        ? (exec.error as Record<string, unknown>).retryable
+        : null
+    ).toBe(false);
+    expect(failed.events.map((event) => event.type)).not.toContain("RetryScheduled");
   } finally {
     await harness.dispose();
   }

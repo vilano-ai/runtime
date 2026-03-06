@@ -217,6 +217,43 @@ export interface ServiceRef<
   status(): Promise<RunStatus>;
 }
 
+export class NonRetryableError extends Error {
+  readonly retryable = false as const;
+
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = "NonRetryableError";
+
+    if (options && "cause" in options) {
+      Object.defineProperty(this, "cause", {
+        value: options.cause,
+        configurable: true,
+        enumerable: false,
+        writable: true,
+      });
+    }
+  }
+}
+
+export function nonRetryable(error: string | Error): Error & { retryable: false } {
+  if (typeof error === "string") {
+    return new NonRetryableError(error);
+  }
+
+  Object.defineProperty(error, "retryable", {
+    value: false,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+
+  if (error.name === "Error") {
+    error.name = "NonRetryableError";
+  }
+
+  return error as Error & { retryable: false };
+}
+
 export function workflow<TInput, TOutput>(
   definition: Omit<WorkflowDefinition<TInput, TOutput>, "kind">
 ): WorkflowDefinition<TInput, TOutput> {

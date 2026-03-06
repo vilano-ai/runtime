@@ -113,10 +113,7 @@ async function executeActivation(
 
     if (activation.kind === "workflow") {
       try {
-        await client.failRun(activation.leaseId, {
-          message: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
+        await client.failRun(activation.leaseId, toFailureBody(error));
       } catch (reportError) {
         if (reportError instanceof ActivationCancelledError || isInactiveActivationError(reportError)) {
           return;
@@ -129,10 +126,7 @@ async function executeActivation(
         const failedTurn = await client.failServiceTurn(
           activation.leaseId,
           activation.envelope.id,
-          {
-            message: error instanceof Error ? error.message : String(error),
-            stack: error instanceof Error ? error.stack : undefined,
-          },
+          toFailureBody(error),
           toRetryPolicy(serviceDefinition?.retry)
         );
 
@@ -862,6 +856,7 @@ async function executeProcess<TOutput>(
         timedOut: false,
         artifacts: [],
         stderr: "",
+        retryable: true,
       }),
       exitCode: null,
       signalCode: null,
@@ -947,6 +942,7 @@ async function executeProcess<TOutput>(
           stderrRef: captures.stderrRef,
           artifacts: captures.artifacts,
           stderr,
+          retryable: true,
         }),
         exitCode,
         signalCode,
@@ -969,6 +965,7 @@ async function executeProcess<TOutput>(
           stderrRef: captures.stderrRef,
           artifacts: captures.artifacts,
           stderr,
+          retryable: true,
         }),
         exitCode,
         signalCode,
@@ -1012,6 +1009,7 @@ async function executeProcess<TOutput>(
         stderrRef: captures.stderrRef,
         artifacts: captures.artifacts,
         stderr,
+        retryable: isRetryableError(error),
       }),
       exitCode,
       signalCode: subprocess.signalCode,
@@ -1143,6 +1141,7 @@ function buildExecError(input: {
   stderrRef?: string;
   artifacts: ExecArtifact[];
   stderr: string;
+  retryable: boolean;
 }): Record<string, unknown> {
   return {
     name: "ExecError",
@@ -1154,6 +1153,7 @@ function buildExecError(input: {
     stdoutRef: input.stdoutRef,
     stderrRef: input.stderrRef,
     artifacts: input.artifacts,
+    retryable: input.retryable,
   };
 }
 
@@ -1178,6 +1178,30 @@ function buildStepError(input: {
     timeoutMs: input.timeoutMs,
     stack,
     retryable: input.retryable,
+  };
+}
+
+function toFailureBody(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    const body: Record<string, unknown> = {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+
+    if ("retryable" in error && error.retryable === false) {
+      body.retryable = false;
+    }
+
+    if ("cause" in error) {
+      body.cause = (error as Error & { cause?: unknown }).cause;
+    }
+
+    return body;
+  }
+
+  return {
+    message: String(error),
   };
 }
 
