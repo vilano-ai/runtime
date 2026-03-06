@@ -13,6 +13,8 @@ Current coverage:
 - durable signal delivery, including buffered signals before first activation
 - exec stdout/stderr/artifact capture on success
 - exec timeout persistence with captured failure artifacts
+- cooperative step cancellation that releases the worker
+- cooperative step timeout persistence for run and step failure state
 
 Run it from the dev shell:
 
@@ -20,4 +22,4 @@ Run it from the dev shell:
 
 Next high-value additions:
 
-- worker-managed cancellation preemption for long JS `step()` bodies
+- isolated step execution for truly preemptive cancellation of long-running in-process code

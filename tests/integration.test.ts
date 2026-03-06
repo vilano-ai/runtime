@@ -375,6 +375,76 @@ test("run cancel marks active exec work cancelled", async () => {
   }
 });
 
+test("cooperative step cancellation releases the worker for later runs", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const longRun = await harness.startWorkflow("demo/cooperativeStep", {
+      durationMs: 30_000,
+    });
+
+    await harness.waitForRun(
+      longRun.run.id,
+      (inspect) => inspect.run.status === "running" && inspect.steps.some((step) => step.status === "running")
+    );
+
+    const cancelled = await harness.cancelRun(longRun.run.id);
+    expect(cancelled.run.status).toBe("cancelled");
+
+    const planner = await harness.startWorkflow("demo/planner", { topic: "after-cancel" });
+    const plannerInspect = await harness.waitForRun(
+      planner.run.id,
+      (inspect) => inspect.run.status === "completed",
+      5_000
+    );
+
+    expect(plannerInspect.run.output).toEqual({ summary: "planned: after-cancel" });
+
+    const cancelledInspect = await harness.waitForRun(
+      longRun.run.id,
+      (inspect) =>
+        inspect.run.status === "cancelled" &&
+        inspect.steps.some((step) => step.status === "cancelled")
+    );
+
+    expect(cancelledInspect.events.map((event) => event.type)).toContain("StepCancelled");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("cooperative step timeouts fail the step and run durably", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/cooperativeStep", {
+      durationMs: 5_000,
+      timeout: "200ms",
+    });
+
+    const failed = await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "failed" &&
+        inspect.steps.some((step) => step.status === "failed")
+    );
+
+    const step = failed.steps.find((entry) => entry.name === "cooperative-step");
+    expect(step).toBeTruthy();
+    expect(step?.timeoutMs).toBe(200);
+    expect(step?.status).toBe("failed");
+    expect(
+      step?.error && typeof step.error === "object"
+        ? (step.error as Record<string, unknown>).timedOut
+        : null
+    ).toBe(true);
+    expect(failed.events.map((event) => event.type)).toContain("StepFailed");
+    expect(failed.events.map((event) => event.type)).toContain("RunFailed");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("workflow runs resume after worker loss and lease expiry", async () => {
   const harness = await RuntimeHarness.create({
     env: {
