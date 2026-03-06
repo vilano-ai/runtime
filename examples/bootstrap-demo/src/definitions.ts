@@ -115,6 +115,57 @@ export const reviewer = service({
   },
 });
 
+export const operator = service({
+  name: "operator",
+  key: (input: { sessionId: string }) => input.sessionId,
+  init: async (input: { sessionId: string }) => ({
+    sessionId: input.sessionId,
+    approvals: 0,
+  }),
+  onAsk: {
+    pipeline: async (payload: { topic: string }, state, ctx) => {
+      await ctx.sleep("50ms", { key: `pause:${payload.topic}` });
+
+      const child = ctx.spawn(childTask, { topic: payload.topic }, { key: `child:${payload.topic}` });
+      const childResult = await child.result();
+
+      const execResult = await ctx.exec({
+        name: "operator-pipeline",
+        key: `exec:${payload.topic}`,
+        cmd: "bun",
+        args: [
+          "-e",
+          `console.log(JSON.stringify(${JSON.stringify({
+            summary: `operator:${payload.topic}`,
+          })}))`,
+        ],
+        capture: {
+          stdout: true,
+        },
+        parse: (stdout) => JSON.parse(stdout.trim()) as { summary: string },
+      });
+
+      return {
+        reply: {
+          child: childResult,
+          exec: execResult,
+          approvals: state.approvals,
+        },
+      };
+    },
+    awaitApproval: async (_payload: void, state, ctx) => {
+      const approval = await ctx.waitForSignal("approved", { key: "approved" });
+
+      return {
+        reply: {
+          approval,
+          sessionId: state.sessionId,
+        },
+      };
+    },
+  },
+});
+
 export const reviewCoordinator = workflow({
   name: "reviewCoordinator",
   run: async (input: { repoId: string; note: string }, ctx) => {
@@ -125,6 +176,19 @@ export const reviewCoordinator = workflow({
     return {
       reviewerRunId: reviewerRef.id,
       status,
+    };
+  },
+});
+
+export const serviceTurnCoordinator = workflow({
+  name: "serviceTurnCoordinator",
+  run: async (input: { sessionId: string; topic: string }, ctx) => {
+    const operatorRef = await ctx.connect(operator, { sessionId: input.sessionId });
+    const pipeline = await operatorRef.ask.pipeline({ topic: input.topic });
+
+    return {
+      operatorRunId: operatorRef.id,
+      pipeline,
     };
   },
 });

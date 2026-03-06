@@ -16,7 +16,6 @@ import type {
   RunStatus,
   ServiceDefinition,
   ServiceRef,
-  ServiceTurnContext,
   SignalOptions,
   SignalResult,
   SpawnOptions,
@@ -93,7 +92,7 @@ async function executeActivation(
   try {
     if (activation.kind === "workflow") {
       const definition = await loadWorkflowDefinition(activation);
-      const ctx = createWorkflowContext(client, activation);
+      const ctx = createTurnContext(client, activation);
       const result = await definition.run(activation.run.input, ctx);
       await client.completeRun(activation.leaseId, result);
       return;
@@ -169,11 +168,10 @@ async function loadDefinitionModule(
   return moduleExports[exportName];
 }
 
-function createWorkflowContext(client: WorkerClient, activation: WorkflowActivation): WorkflowContext {
+function createTurnContext(client: WorkerClient, activation: Activation): WorkflowContext {
   const implicitServiceOpCounters = new Map<string, number>();
 
   return {
-    ...createTurnContext(client, activation),
     spawn<TInput, TOutput>(
       definition: WorkflowDefinition<TInput, TOutput>,
       input: TInput,
@@ -245,11 +243,6 @@ function createWorkflowContext(client: WorkerClient, activation: WorkflowActivat
         implicitServiceOpCounters
       ) as ServiceRef<TSend, TAsk, TSignal>;
     },
-  };
-}
-
-function createTurnContext(client: WorkerClient, activation: Activation): ServiceTurnContext {
-  return {
     runId: activation.run.id,
     async step<TOutput>(
       name: string,
@@ -354,7 +347,7 @@ function createTurnContext(client: WorkerClient, activation: Activation): Servic
 
 function createServiceRef(
   client: WorkerClient,
-  activation: WorkflowActivation,
+  activation: Activation,
   definition: ServiceDefinition<any, any, any, any, any>,
   serviceRunId: string,
   implicitOpCounters: Map<string, number>

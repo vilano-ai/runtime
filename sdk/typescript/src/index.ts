@@ -66,9 +66,6 @@ export interface ServiceTurnContext {
   sleep(duration: string, options?: { key?: string }): Promise<void>;
   waitForSignal(name: string, options?: { key?: string }): Promise<unknown>;
   log(message: string, fields?: Record<string, unknown>): Promise<void>;
-}
-
-export interface WorkflowContext extends ServiceTurnContext {
   spawn<TInput, TOutput>(
     definition: WorkflowDefinition<TInput, TOutput>,
     input: TInput,
@@ -86,6 +83,8 @@ export interface WorkflowContext extends ServiceTurnContext {
     options?: ConnectOptions
   ): Promise<ServiceRef<TSend, TAsk, TSignal>>;
 }
+
+export interface WorkflowContext extends ServiceTurnContext {}
 
 export interface ExecSpec<TOutput = unknown> {
   name: string;
