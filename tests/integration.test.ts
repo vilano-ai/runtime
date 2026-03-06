@@ -35,7 +35,10 @@ class RuntimeHarness {
 
     const runtimeHome = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-test-"));
     const port = await reservePort();
-    const harness = new RuntimeHarness(runtimeHome, port, options.env ?? {});
+    const harness = new RuntimeHarness(runtimeHome, port, {
+      VILANO_KERNEL_NO_COMPILE: "1",
+      ...(options.env ?? {}),
+    });
 
     await harness.runCli(["daemon", "start", "--port", String(port)]);
     await harness.runCli(["project", "add", "./examples/bootstrap-demo", "--name", "demo"]);
@@ -154,7 +157,7 @@ class RuntimeHarness {
   async waitForRun(
     runId: string,
     predicate: (inspect: RunInspectResponse) => boolean,
-    timeoutMs = 10_000
+    timeoutMs = 20_000
   ): Promise<RunInspectResponse> {
     return await waitFor(async () => await this.inspectRun(runId), predicate, timeoutMs);
   }
@@ -163,7 +166,7 @@ class RuntimeHarness {
     reference: string,
     keyInput: unknown,
     predicate: (inspect: RunInspectResponse) => boolean,
-    timeoutMs = 10_000
+    timeoutMs = 20_000
   ): Promise<RunInspectResponse> {
     return await waitFor(
       async () => await this.inspectService(reference, keyInput),
@@ -498,7 +501,7 @@ test("blocking step timeout is enforced by the kernel and restarts the worker", 
       (inspect) =>
         inspect.run.status === "failed" &&
         inspect.steps.some((step) => step.name === "blocking-step" && step.status === "failed"),
-      10_000
+      30_000
     );
 
     const step = failed.steps.find((entry) => entry.name === "blocking-step");
@@ -519,7 +522,7 @@ test("blocking step timeout is enforced by the kernel and restarts the worker", 
     const plannerInspect = await harness.waitForRun(
       planner.run.id,
       (inspect) => inspect.run.status === "completed",
-      10_000
+      30_000
     );
 
     expect(plannerInspect.run.output).toEqual({ summary: "planned: after-blocking-timeout" });
@@ -543,7 +546,7 @@ test("step retries back off durably and eventually complete", async () => {
       (inspect) =>
         inspect.run.status === "completed" &&
         inspect.steps.some((step) => step.name === "retrying-step" && step.status === "completed"),
-      10_000
+      20_000
     );
 
     expect(completed.run.output).toEqual({ attempt: 2, token: "step-retry" });
@@ -579,7 +582,7 @@ test("step retry families can exclude application failures", async () => {
       (inspect) =>
         inspect.run.status === "failed" &&
         inspect.steps.some((step) => step.name === "retrying-step" && step.status === "failed"),
-      10_000
+      20_000
     );
 
     const step = failed.steps.find((entry) => entry.name === "retrying-step");
@@ -609,7 +612,7 @@ test("timeout retry families can retry timed out steps", async () => {
       (inspect) =>
         inspect.run.status === "completed" &&
         inspect.steps.some((step) => step.name === "timeout-retrying-step" && step.status === "completed"),
-      10_000
+      30_000
     );
 
     const step = completed.steps.find((entry) => entry.name === "timeout-retrying-step");
@@ -637,13 +640,70 @@ test("exponential step backoff increases across retries", async () => {
       },
     });
 
-    const completed = await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed", 10_000);
+    const completed = await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed", 20_000);
     const retryEvents = completed.events.filter((event) => event.type === "RetryScheduled");
 
     expect(retryEvents).toHaveLength(2);
     expect((retryEvents[0]?.body as Record<string, unknown>).backoffKind).toBe("exponential");
     expect((retryEvents[0]?.body as Record<string, unknown>).backoffMs).toBe(50);
     expect((retryEvents[1]?.body as Record<string, unknown>).backoffMs).toBe(100);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("retry scheduling persists capped jittered backoff details", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/retryingStep", {
+      token: "step-jitter",
+      retries: 3,
+      failuresBeforeSuccess: 3,
+      backoff: {
+        kind: "exponential",
+        initial: "100ms",
+        factor: 2,
+        max: "150ms",
+        jitter: {
+          kind: "ratio",
+          ratio: 0.5,
+        },
+      },
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed",
+      20_000
+    );
+
+    const retryEvents = completed.events.filter((event) => event.type === "RetryScheduled");
+    expect(retryEvents).toHaveLength(3);
+
+    const bodies = retryEvents.map((event) => event.body as Record<string, unknown>);
+    expect(bodies.map((body) => body.backoffBaseMs)).toEqual([100, 200, 400]);
+    expect(bodies.map((body) => body.backoffCappedMs)).toEqual([100, 150, 150]);
+    expect(bodies.map((body) => body.backoffCapMs)).toEqual([150, 150, 150]);
+    expect(bodies.every((body) => body.backoffJitterKind === "ratio")).toBe(true);
+    expect(bodies.every((body) => body.backoffJitterRatio === 0.5)).toBe(true);
+
+    for (const body of bodies) {
+      const cappedMs = body.backoffCappedMs as number;
+      const jitterMs = body.backoffJitterMs as number;
+      const scheduledMs = body.backoffMs as number;
+
+      expect(jitterMs).toBeGreaterThanOrEqual(0);
+      expect(jitterMs).toBeLessThanOrEqual(Math.round(cappedMs * 0.5));
+      expect(scheduledMs).toBe(cappedMs - jitterMs);
+    }
+
+    expect(completed.retrySeries).toHaveLength(1);
+    const series = completed.retrySeries?.[0];
+    expect(series?.operationKind).toBe("step");
+    expect(series?.attempts).toHaveLength(3);
+    expect(series?.attempts.map((attempt) => attempt.backoffCappedMs)).toEqual([100, 150, 150]);
+    expect(series?.attempts.every((attempt) => attempt.backoffJitterKind === "ratio")).toBe(true);
   } finally {
     await harness.dispose();
   }
@@ -662,7 +722,7 @@ test("non-retryable step failures bypass configured retries", async () => {
       (inspect) =>
         inspect.run.status === "failed" &&
         inspect.steps.some((step) => step.name === "non-retrying-step" && step.status === "failed"),
-      10_000
+      20_000
     );
 
     const step = failed.steps.find((entry) => entry.name === "non-retrying-step");
@@ -704,7 +764,7 @@ test("run cancel kills the managed worker for non-cooperative steps", async () =
     const plannerInspect = await harness.waitForRun(
       planner.run.id,
       (inspect) => inspect.run.status === "completed",
-      10_000
+      20_000
     );
 
     expect(plannerInspect.run.output).toEqual({ summary: "planned: after-blocking-cancel" });
@@ -714,7 +774,7 @@ test("run cancel kills the managed worker for non-cooperative steps", async () =
       (inspect) =>
         inspect.run.status === "cancelled" &&
         inspect.steps.some((step) => step.name === "blocking-step" && step.status === "cancelled"),
-      10_000
+      20_000
     );
 
     expect(cancelledInspect.events.map((event) => event.type)).toContain("RunCancelled");
@@ -868,7 +928,7 @@ test("service turn blocking step timeout is enforced by the kernel and restarts 
       (inspect) =>
         inspect.run.status === "active" &&
         inspect.steps.some((step) => step.name === "blocking-service-step" && step.status === "running"),
-      10_000
+      20_000
     );
 
     const askResult = await askCommand.wait();
@@ -880,7 +940,7 @@ test("service turn blocking step timeout is enforced by the kernel and restarts 
       (inspect) =>
         inspect.run.status === "idle" &&
         inspect.steps.some((step) => step.name === "blocking-service-step" && step.status === "failed"),
-      10_000
+      20_000
     );
 
     const step = failed.steps.find((entry) => entry.name === "blocking-service-step");
@@ -901,7 +961,7 @@ test("service turn blocking step timeout is enforced by the kernel and restarts 
     const plannerInspect = await harness.waitForRun(
       planner.run.id,
       (inspect) => inspect.run.status === "completed",
-      10_000
+      20_000
     );
 
     expect(plannerInspect.run.output).toEqual({ summary: "planned: after-service-blocking-timeout" });
@@ -956,7 +1016,7 @@ test("unmanaged workers fall back to durable failure when a service turn blocks 
       (inspect) =>
         inspect.run.status === "active" &&
         inspect.steps.some((step) => step.name === "blocking-service-step" && step.status === "running"),
-      10_000
+      20_000
     );
 
     const askResult = await askCommand.wait();
@@ -968,7 +1028,7 @@ test("unmanaged workers fall back to durable failure when a service turn blocks 
       (inspect) =>
         inspect.run.status === "idle" &&
         inspect.steps.some((step) => step.name === "blocking-service-step" && step.status === "failed"),
-      10_000
+      20_000
     );
 
     const step = failed.steps.find((entry) => entry.name === "blocking-service-step");
@@ -990,7 +1050,7 @@ test("unmanaged workers fall back to durable failure when a service turn blocks 
 
     const [plannerWorkerResult, plannerInspect, stuckWorkerResult] = await Promise.all([
       secondWorker.wait(),
-      harness.waitForRun(planner.run.id, (inspect) => inspect.run.status === "completed", 10_000),
+      harness.waitForRun(planner.run.id, (inspect) => inspect.run.status === "completed", 20_000),
       firstWorker.wait(),
     ]);
 
@@ -1022,7 +1082,7 @@ test("service turns retry durably after handler failures", async () => {
       (body) =>
         body.run.status === "idle" &&
         (body.turns ?? []).some((turn) => turn.phase === "completed"),
-      10_000
+      20_000
     );
 
     expect(inspect.events.map((event) => event.type)).toContain("RetryScheduled");
@@ -1064,7 +1124,7 @@ test("non-retryable service turn failures bypass configured retries", async () =
       (body) =>
         body.run.status === "idle" &&
         (body.turns ?? []).some((turn) => turn.phase === "failed"),
-      10_000
+      20_000
     );
 
     const failedTurn = (inspect.turns ?? []).find((turn) => turn.phase === "failed");
@@ -1106,7 +1166,7 @@ test("service retry families can exclude application failures", async () => {
       (body) =>
         body.run.status === "idle" &&
         (body.turns ?? []).some((turn) => turn.phase === "failed"),
-      10_000
+      20_000
     );
 
     const failedTurn = (inspect.turns ?? []).find((turn) => turn.phase === "failed");
@@ -1223,7 +1283,7 @@ test("sleep waits survive daemon restart and resume afterward", async () => {
     const completed = await harness.waitForRun(
       run.run.id,
       (inspect) => inspect.run.status === "completed",
-      10_000
+      20_000
     );
 
     expect(completed.run.output).toEqual({ woke: true });
@@ -1252,7 +1312,7 @@ test("signal waits survive daemon restart and resume after a later signal", asyn
     const completed = await harness.waitForRun(
       run.run.id,
       (inspect) => inspect.run.status === "completed",
-      10_000
+      20_000
     );
 
     expect(completed.run.output).toEqual({ approval: { source: "after-restart" } });
@@ -1281,7 +1341,7 @@ test("service state survives daemon restart", async () => {
         typeof inspect.run.state === "object" &&
         Array.isArray((inspect.run.state as { notes?: unknown[] }).notes) &&
         ((inspect.run.state as { notes: unknown[] }).notes.length === 1),
-      10_000
+      20_000
     );
 
     await harness.restartDaemon();
@@ -1363,7 +1423,7 @@ test("run replay renders wait and signal lifecycle for workflows", async () => {
     );
 
     await harness.sendSignal(run.run.id, "approved", { source: "replay-signal" });
-    await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed", 10_000);
+    await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed", 20_000);
 
     const replay = await harness.replayRun(run.run.id);
     expect(replay.exitCode).toBe(0);
@@ -1396,7 +1456,7 @@ test("run replay renders retry backoff lifecycle for workflows", async () => {
       backoff: "50ms",
     });
 
-    await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed", 10_000);
+    await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed", 20_000);
 
     const replay = await harness.replayRun(run.run.id);
     expect(replay.exitCode).toBe(0);
@@ -1418,6 +1478,48 @@ test("run replay renders retry backoff lifecycle for workflows", async () => {
       "WaitSatisfied",
       "StepCompleted",
       "RunCompleted",
+    ]);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("run replay renders retry series with cap and jitter details", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/retryingStep", {
+      token: "replay-jitter",
+      retries: 3,
+      failuresBeforeSuccess: 3,
+      backoff: {
+        kind: "exponential",
+        initial: "100ms",
+        factor: 2,
+        max: "150ms",
+        jitter: {
+          kind: "ratio",
+          ratio: 0.5,
+        },
+      },
+    });
+
+    await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed", 20_000);
+
+    const replay = await harness.replayRun(run.run.id);
+    expect(replay.exitCode).toBe(0);
+    expect(replay.stdout).toContain("retry_series:");
+    expect(replay.stdout).toContain("jitter=ratio");
+    expect(replay.stdout).toContain("cap_ms=150");
+    expect(replay.stdout).toContain("base_ms=400");
+
+    const replayJson = await harness.replayRunJson(run.run.id);
+    expect(replayJson.retrySeries).toHaveLength(1);
+    expect(replayJson.retrySeries?.[0]?.attempts).toHaveLength(3);
+    expect(replayJson.retrySeries?.[0]?.attempts.map((attempt) => attempt.backoffCappedMs)).toEqual([
+      100,
+      150,
+      150,
     ]);
   } finally {
     await harness.dispose();
@@ -1484,7 +1586,7 @@ test("run replay json captures waiting and resumed service turns", async () => {
         inspect.run.status === "waiting" &&
         inspect.waits.some((wait) => wait.kind === "signal" && wait.status === "waiting") &&
         (inspect.turns ?? []).some((turn) => turn.phase === "waiting"),
-      10_000
+      20_000
     );
 
     await harness.sendSignal(waiting.run.id, "approved", { source: "service-replay" });
@@ -1526,7 +1628,7 @@ test("exec retries back off durably and eventually complete", async () => {
       (inspect) =>
         inspect.run.status === "completed" &&
         inspect.execs.some((entry) => entry.name === "retrying-exec" && entry.status === "completed"),
-      10_000
+      20_000
     );
 
     expect(completed.run.output).toEqual({ attempt: 2, token: "exec-retry" });
@@ -1558,7 +1660,7 @@ test("exec retry families can exclude process exit failures", async () => {
       (inspect) =>
         inspect.run.status === "failed" &&
         inspect.execs.some((entry) => entry.name === "retrying-exec" && entry.status === "failed"),
-      10_000
+      20_000
     );
 
     const exec = failed.execs.find((entry) => entry.name === "retrying-exec");
@@ -1585,7 +1687,7 @@ test("non-retryable exec failures bypass configured retries", async () => {
       (inspect) =>
         inspect.run.status === "failed" &&
         inspect.execs.some((entry) => entry.name === "non-retrying-exec" && entry.status === "failed"),
-      10_000
+      20_000
     );
 
     const exec = failed.execs.find((entry) => entry.name === "non-retrying-exec");

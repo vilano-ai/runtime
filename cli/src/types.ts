@@ -242,6 +242,38 @@ export interface RunTurnRecord {
   updatedAt: string;
 }
 
+export interface RunRetryAttemptRecord {
+  attempt: number;
+  failureEventType: string | null;
+  failureAt: string | null;
+  scheduledAt: string | null;
+  retryDecision?: string | null;
+  retryFamily?: string | null;
+  retryable?: boolean | null;
+  willRetry?: boolean | null;
+  nextAttempt?: number | null;
+  retryWakeAt?: string | null;
+  backoffKind?: string | null;
+  backoffMs?: number | null;
+  backoffBaseMs?: number | null;
+  backoffCappedMs?: number | null;
+  backoffCapMs?: number | null;
+  backoffJitterKind?: string | null;
+  backoffJitterRatio?: number | null;
+  backoffJitterMs?: number | null;
+}
+
+export interface RunRetrySeriesRecord {
+  seriesKey: string;
+  operationKind: string;
+  operationKey: string;
+  name: string;
+  retryOn: string[];
+  attempts: RunRetryAttemptRecord[];
+  lastDecision?: string | null;
+  lastFamily?: string | null;
+}
+
 export interface RunListResponse {
   ok: true;
   project: string | null;
@@ -259,6 +291,7 @@ export interface RunInspectResponse {
   children: RunChildRecord[];
   envelopes: RunEnvelopeRecord[];
   turns?: RunTurnRecord[];
+  retrySeries?: RunRetrySeriesRecord[];
 }
 
 export interface RunReplayEntry {
