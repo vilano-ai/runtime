@@ -10,7 +10,10 @@ import type {
   ExecArtifact,
   ExecResult,
   ExecSpec,
+  RunStatus,
+  SpawnOptions,
   StepOptions,
+  WorkflowHandle,
   WorkflowContext,
   WorkflowDefinition,
 } from "@vilano/runtime";
@@ -174,8 +177,49 @@ function createWorkflowContext(client: WorkerClient, activation: WorkflowActivat
     async log(message: string, fields?: Record<string, unknown>) {
       console.log("[vilano-worker]", activation.run.id, message, fields ?? {});
     },
-    spawn() {
-      throw new Error("ctx.spawn() is not implemented yet");
+    spawn<TInput, TOutput>(
+      definition: WorkflowDefinition<TInput, TOutput>,
+      input: TInput,
+      options: SpawnOptions = {}
+    ): WorkflowHandle<TOutput> {
+      const key = options.key ?? definition.name;
+      const childRunId = deterministicChildRunId(activation.run.id, key);
+      const spawnPromise = client.resolveSpawn(activation.leaseId, {
+        name: definition.name,
+        key,
+        childRunId,
+        input,
+      });
+
+      return {
+        id: childRunId,
+        async result() {
+          await spawnPromise;
+
+          const resolved = await client.resolveChildResult(activation.leaseId, {
+            childRunId,
+            key,
+          });
+
+          if (resolved.status === "completed") {
+            return resolved.output as TOutput;
+          }
+
+          if (resolved.status === "failed") {
+            throw toChildRunError(childRunId, resolved.error);
+          }
+
+          throw new RunSuspendedError("child_result", `child_result:${childRunId}`);
+        },
+        async status() {
+          await spawnPromise;
+          return (await client.getRunStatus(childRunId)) as RunStatus;
+        },
+        async signal(name: string, payload?: unknown) {
+          await spawnPromise;
+          await client.sendRunSignal(childRunId, name, payload ?? null);
+        },
+      };
     },
     async connect() {
       throw new Error("ctx.connect() is not implemented yet");
@@ -576,9 +620,22 @@ function toExecError(name: string, error: unknown): Error {
   return new Error(`Exec '${name}' failed`);
 }
 
+function toChildRunError(childRunId: string, error: unknown): Error {
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return Object.assign(new Error(error.message), { cause: error, childRunId });
+  }
+
+  return new Error(`Child run '${childRunId}' failed`);
+}
+
+function deterministicChildRunId(parentRunId: string, key: string): string {
+  const digest = crypto.createHash("sha256").update(`${parentRunId}:${key}`).digest("hex").slice(0, 32);
+  return `run_${digest}`;
+}
+
 class RunSuspendedError extends Error {
   constructor(
-    readonly waitKind: "sleep" | "signal",
+    readonly waitKind: "sleep" | "signal" | "child_result",
     readonly key: string
   ) {
     super(`Run suspended on ${waitKind}:${key}`);

@@ -44,6 +44,34 @@ interface WaitResolveResponse {
     | { status: "suspended"; wait: { key: string; kind: string; name: string } };
 }
 
+interface SpawnResolveResponse {
+  ok: true;
+  spawn: {
+    status: "created" | "existing";
+    childRun: {
+      id: string;
+      status: string;
+      output: unknown | null;
+      error: unknown | null;
+    };
+  };
+}
+
+interface ChildResultResponse {
+  ok: true;
+  child:
+    | { status: "completed"; output: unknown }
+    | { status: "failed"; error: unknown }
+    | { status: "suspended"; wait: { key: string; kind: string; name: string } };
+}
+
+interface RunStatusResponse {
+  ok: true;
+  run: {
+    status: string;
+  };
+}
+
 export class WorkerClient {
   constructor(
     private readonly serverUrl: string,
@@ -159,6 +187,44 @@ export class WorkerClient {
     );
 
     return response.wait;
+  }
+
+  async resolveSpawn(
+    leaseId: string,
+    spec: { name: string; key: string; childRunId: string; input: unknown }
+  ): Promise<SpawnResolveResponse["spawn"]> {
+    const response = await this.request<SpawnResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/spawns/resolve`,
+      spec
+    );
+
+    return response.spawn;
+  }
+
+  async resolveChildResult(
+    leaseId: string,
+    spec: { childRunId: string; key: string }
+  ): Promise<ChildResultResponse["child"]> {
+    const response = await this.request<ChildResultResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/children/result`,
+      spec
+    );
+
+    return response.child;
+  }
+
+  async getRunStatus(runId: string): Promise<string> {
+    const response = await this.request<RunStatusResponse>("GET", `/v1/runs/${encodeURIComponent(runId)}`);
+    return response.run.status;
+  }
+
+  async sendRunSignal(runId: string, name: string, payload: unknown): Promise<void> {
+    await this.request("POST", `/v1/runs/${encodeURIComponent(runId)}/signals`, {
+      name,
+      payload,
+    });
   }
 
   async completeRun(leaseId: string, result: unknown): Promise<void> {
