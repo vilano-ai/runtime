@@ -1026,6 +1026,22 @@ function renderRunInspect(
               }
             }
 
+            if (step.retryDecision) {
+              parts.push(`retry=${step.retryDecision}`);
+            }
+
+            if (step.retryable === false) {
+              parts.push("retryable=false");
+            }
+
+            if (step.willRetry === true) {
+              parts.push("will_retry=true");
+            }
+
+            if (typeof step.nextAttempt === "number") {
+              parts.push(`next_attempt=${step.nextAttempt}`);
+            }
+
             return parts.join("\t");
           }),
         ];
@@ -1058,6 +1074,22 @@ function renderRunInspect(
 
             if (refs) {
               parts.push(`refs=${refs}`);
+            }
+
+            if (exec.retryDecision) {
+              parts.push(`retry=${exec.retryDecision}`);
+            }
+
+            if (exec.retryable === false) {
+              parts.push("retryable=false");
+            }
+
+            if (exec.willRetry === true) {
+              parts.push("will_retry=true");
+            }
+
+            if (typeof exec.nextAttempt === "number") {
+              parts.push(`next_attempt=${exec.nextAttempt}`);
             }
 
             return parts.join("\t");
@@ -1140,6 +1172,22 @@ function renderRunInspect(
               parts.push(`correlation=${turn.correlationId}`);
             }
 
+            if (turn.retryDecision) {
+              parts.push(`retry=${turn.retryDecision}`);
+            }
+
+            if (turn.retryable === false) {
+              parts.push("retryable=false");
+            }
+
+            if (turn.willRetry === true) {
+              parts.push("will_retry=true");
+            }
+
+            if (typeof turn.nextAttempt === "number") {
+              parts.push(`next_attempt=${turn.nextAttempt}`);
+            }
+
             return parts.join("\t");
           }),
         ];
@@ -1191,6 +1239,7 @@ function decorateRunInspect<T extends {
 function deriveStepViews(steps: RunStepRecord[], events: RunEventRecord[]): RunStepRecord[] {
   const attempts = new Map<string, number>();
   const lastEvent = new Map<string, { type: string; at: string }>();
+  const lastFailure = new Map<string, ReturnType<typeof retryFieldsFromEventBody>>();
 
   for (const event of events) {
     const body = asRecord(event.body);
@@ -1211,6 +1260,10 @@ function deriveStepViews(steps: RunStepRecord[], events: RunEventRecord[]): RunS
     ) {
       lastEvent.set(key, { type: event.type, at: event.createdAt });
     }
+
+    if (event.type === "StepFailed") {
+      lastFailure.set(key, retryFieldsFromEventBody(body));
+    }
   }
 
   return steps.map((step) => ({
@@ -1218,12 +1271,14 @@ function deriveStepViews(steps: RunStepRecord[], events: RunEventRecord[]): RunS
     attempts: attempts.get(step.key) ?? step.attempt ?? 1,
     lastEventType: lastEvent.get(step.key)?.type ?? null,
     lastEventAt: lastEvent.get(step.key)?.at ?? null,
+    ...lastFailure.get(step.key),
   }));
 }
 
 function deriveExecViews(execs: RunExecRecord[], events: RunEventRecord[]): RunExecRecord[] {
   const attempts = new Map<string, number>();
   const lastEvent = new Map<string, { type: string; at: string }>();
+  const lastFailure = new Map<string, ReturnType<typeof retryFieldsFromEventBody>>();
 
   for (const event of events) {
     const body = asRecord(event.body);
@@ -1244,6 +1299,10 @@ function deriveExecViews(execs: RunExecRecord[], events: RunEventRecord[]): RunE
     ) {
       lastEvent.set(key, { type: event.type, at: event.createdAt });
     }
+
+    if (event.type === "ProcessFailed") {
+      lastFailure.set(key, retryFieldsFromEventBody(body));
+    }
   }
 
   return execs.map((exec) => ({
@@ -1251,6 +1310,7 @@ function deriveExecViews(execs: RunExecRecord[], events: RunEventRecord[]): RunE
     attempts: attempts.get(exec.key) ?? exec.attempt,
     lastEventType: lastEvent.get(exec.key)?.type ?? null,
     lastEventAt: lastEvent.get(exec.key)?.at ?? null,
+    ...lastFailure.get(exec.key),
   }));
 }
 
@@ -1325,6 +1385,7 @@ function deriveServiceTurns(
 
     if (event.type === "TurnFailed") {
       turn.phase = "failed";
+      Object.assign(turn, retryFieldsFromEventBody(body));
     }
   }
 
@@ -1360,6 +1421,9 @@ function renderEventSummary(event: RunEventRecord): string {
         envelope: body.envelopeId,
         kind: body.kind,
         name: body.name,
+        retry: body.retryDecision,
+        retryable: body.retryable,
+        willRetry: body.willRetry,
       });
     case "RunCancelled":
       return formatSummary({
@@ -1377,10 +1441,14 @@ function renderEventSummary(event: RunEventRecord): string {
       });
     case "StepCancelled":
     case "StepFailed":
+    case "ProcessFailed":
     case "ProcessCancelled":
       return formatSummary({
         key: body.key,
         name: body.name,
+        retry: body.retryDecision,
+        retryable: body.retryable,
+        willRetry: body.willRetry,
       });
     case "WaitSatisfied":
       return formatSummary({
@@ -1403,6 +1471,22 @@ function formatSummary(fields: Record<string, unknown>): string {
     .map(([key, value]) => `${key}=${String(value)}`);
 
   return parts.length > 0 ? `\t${parts.join("\t")}` : "";
+}
+
+function retryFieldsFromEventBody(body: Record<string, unknown>): {
+  retryDecision?: string | null;
+  retryable?: boolean | null;
+  willRetry?: boolean | null;
+  nextAttempt?: number | null;
+  retryWakeAt?: string | null;
+} {
+  return {
+    retryDecision: typeof body.retryDecision === "string" ? body.retryDecision : null,
+    retryable: typeof body.retryable === "boolean" ? body.retryable : null,
+    willRetry: typeof body.willRetry === "boolean" ? body.willRetry : null,
+    nextAttempt: typeof body.nextAttempt === "number" ? body.nextAttempt : null,
+    retryWakeAt: typeof body.wakeAt === "string" ? body.wakeAt : null,
+  };
 }
 
 function errorMessage(value: unknown): string | undefined {

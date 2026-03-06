@@ -172,6 +172,7 @@ Current retry behavior is fixed-count plus fixed-backoff:
 
 - `retries: 1` means at most 2 attempts total
 - `backoff: "50ms"` schedules a durable timed retry wait in the kernel
+- `run inspect` and `run replay` surface the retry decision directly as `scheduled`, `non_retryable`, `retries_disabled`, or `attempts_exhausted`
 
 ## Operator Surface
 

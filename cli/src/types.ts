@@ -127,6 +127,11 @@ export interface RunStepRecord {
   attempts?: number;
   lastEventType?: string | null;
   lastEventAt?: string | null;
+  retryDecision?: string | null;
+  retryable?: boolean | null;
+  willRetry?: boolean | null;
+  nextAttempt?: number | null;
+  retryWakeAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -152,6 +157,11 @@ export interface RunExecRecord {
   attempts?: number;
   lastEventType?: string | null;
   lastEventAt?: string | null;
+  retryDecision?: string | null;
+  retryable?: boolean | null;
+  willRetry?: boolean | null;
+  nextAttempt?: number | null;
+  retryWakeAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -220,6 +230,11 @@ export interface RunTurnRecord {
   lastEventAt: string | null;
   reply: unknown | null;
   error: unknown | null;
+  retryDecision?: string | null;
+  retryable?: boolean | null;
+  willRetry?: boolean | null;
+  nextAttempt?: number | null;
+  retryWakeAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }

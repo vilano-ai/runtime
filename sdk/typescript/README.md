@@ -137,6 +137,8 @@ That works for:
 - service handler failures
 - `exec()` parse failures
 
+`vilano run inspect` and `vilano run replay` now surface the retry decision directly so operators can see whether a failure was `scheduled`, `non_retryable`, `retries_disabled`, or `attempts_exhausted`.
+
 ## Current Limits
 
 - no arbitrary JS continuation capture

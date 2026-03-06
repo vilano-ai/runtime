@@ -469,6 +469,9 @@ test("cooperative step timeouts fail the step and run durably", async () => {
     expect(step).toBeTruthy();
     expect(step?.timeoutMs).toBe(200);
     expect(step?.status).toBe("failed");
+    expect(step?.retryDecision).toBe("retries_disabled");
+    expect(step?.retryable).toBe(true);
+    expect(step?.willRetry).toBe(false);
     expect(
       step?.error && typeof step.error === "object"
         ? (step.error as Record<string, unknown>).timedOut
@@ -503,6 +506,9 @@ test("blocking step timeout is enforced by the kernel and restarts the worker", 
     expect(step?.error && typeof step.error === "object" ? (step.error as Record<string, unknown>).timedOut : null).toBe(
       true
     );
+    expect(step?.retryDecision).toBe("retries_disabled");
+    expect(step?.retryable).toBe(true);
+    expect(step?.willRetry).toBe(false);
     expect(
       step?.error && typeof step.error === "object"
         ? (step.error as Record<string, unknown>).forcedTermination
@@ -546,6 +552,10 @@ test("step retries back off durably and eventually complete", async () => {
     const step = completed.steps.find((entry) => entry.name === "retrying-step");
     expect(step?.attempts).toBe(2);
     expect(step?.status).toBe("completed");
+    expect(step?.retryDecision).toBe("scheduled");
+    expect(step?.retryable).toBe(true);
+    expect(step?.willRetry).toBe(true);
+    expect(step?.nextAttempt).toBe(2);
     expect(
       completed.waits.some((wait) => wait.kind === "retry_backoff" && wait.status === "completed")
     ).toBe(true);
@@ -577,7 +587,13 @@ test("non-retryable step failures bypass configured retries", async () => {
         ? (step.error as Record<string, unknown>).retryable
         : null
     ).toBe(false);
+    expect(step?.retryDecision).toBe("non_retryable");
+    expect(step?.retryable).toBe(false);
+    expect(step?.willRetry).toBe(false);
     expect(failed.events.map((event) => event.type)).not.toContain("RetryScheduled");
+
+    const replay = await harness.replayRun(run.run.id);
+    expect(replay.stdout).toContain("retry=non_retryable");
   } finally {
     await harness.dispose();
   }
@@ -784,6 +800,9 @@ test("service turn blocking step timeout is enforced by the kernel and restarts 
 
     const step = failed.steps.find((entry) => entry.name === "blocking-service-step");
     expect(step).toBeTruthy();
+    expect(step?.retryDecision).toBe("retries_disabled");
+    expect(step?.retryable).toBe(true);
+    expect(step?.willRetry).toBe(false);
     expect(
       step?.error && typeof step.error === "object"
         ? (step.error as Record<string, unknown>).forcedTermination
@@ -923,6 +942,7 @@ test("service turns retry durably after handler failures", async () => {
 
     expect(inspect.events.map((event) => event.type)).toContain("RetryScheduled");
     expect((inspect.turns ?? []).map((turn) => turn.attempts)).toContain(2);
+    expect((inspect.turns ?? []).some((turn) => turn.retryDecision === "scheduled")).toBe(true);
     expect(
       inspect.waits.some((wait) => wait.kind === "retry_backoff" && wait.status === "completed")
     ).toBe(true);
@@ -964,6 +984,9 @@ test("non-retryable service turn failures bypass configured retries", async () =
 
     const failedTurn = (inspect.turns ?? []).find((turn) => turn.phase === "failed");
     expect(failedTurn?.attempts).toBe(1);
+    expect(failedTurn?.retryDecision).toBe("non_retryable");
+    expect(failedTurn?.retryable).toBe(false);
+    expect(failedTurn?.willRetry).toBe(false);
     expect(inspect.events.map((event) => event.type)).not.toContain("RetryScheduled");
   } finally {
     await harness.dispose();
@@ -1251,6 +1274,7 @@ test("run replay renders retry backoff lifecycle for workflows", async () => {
     const replay = await harness.replayRun(run.run.id);
     expect(replay.exitCode).toBe(0);
     expect(replay.stdout).toContain("RetryScheduled");
+    expect(replay.stdout).toContain("retry=scheduled");
     expect(replay.stdout).toContain("kind=step");
     expect(replay.stdout).toContain("WaitRegistered");
     expect(replay.stdout).toContain("kind=retry_backoff");
@@ -1415,6 +1439,9 @@ test("non-retryable exec failures bypass configured retries", async () => {
         ? (exec.error as Record<string, unknown>).retryable
         : null
     ).toBe(false);
+    expect(exec?.retryDecision).toBe("non_retryable");
+    expect(exec?.retryable).toBe(false);
+    expect(exec?.willRetry).toBe(false);
     expect(failed.events.map((event) => event.type)).not.toContain("RetryScheduled");
   } finally {
     await harness.dispose();

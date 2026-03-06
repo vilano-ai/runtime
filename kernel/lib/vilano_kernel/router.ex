@@ -803,6 +803,9 @@ defmodule VilanoKernel.Router do
           key: Map.get(body, "key"),
           attempt: Map.get(body, "attempt"),
           timedOut: Map.get(body_record(Map.get(body, "error")), "timedOut"),
+          retry: Map.get(body, "retryDecision"),
+          retryable: Map.get(body, "retryable"),
+          willRetry: Map.get(body, "willRetry"),
           error: error_message(Map.get(body, "error"))
         })
 
@@ -829,6 +832,9 @@ defmodule VilanoKernel.Router do
           signal: Map.get(body, "signalCode"),
           stdout: Map.get(body, "stdoutRef"),
           stderr: Map.get(body, "stderrRef"),
+          retry: Map.get(body, "retryDecision"),
+          retryable: Map.get(body, "retryable"),
+          willRetry: Map.get(body, "willRetry"),
           error: if(type == "ProcessCompleted", do: nil, else: error_message(Map.get(body, "error")))
         })
 
@@ -894,6 +900,9 @@ defmodule VilanoKernel.Router do
           reason: Map.get(body, "reason"),
           wait: Map.get(body, "waitKind"),
           key: Map.get(body, "key"),
+          retry: Map.get(body, "retryDecision"),
+          retryable: Map.get(body, "retryable"),
+          willRetry: Map.get(body, "willRetry"),
           error: if(type == "TurnFailed", do: error_message(Map.get(body, "error")), else: nil)
         })
 
