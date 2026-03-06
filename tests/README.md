@@ -8,6 +8,8 @@ Current coverage:
 - parent/child cancellation propagation
 - workflow-to-service ask cancellation propagation
 - active `exec()` cancellation
+- workflow replay after worker loss and lease expiry
+- service turn replay after worker loss and lease expiry
 
 Run it from the dev shell:
 
@@ -15,7 +17,6 @@ Run it from the dev shell:
 
 Next high-value additions:
 
-- workflow replay after worker loss
-- service turn lease-expiry recovery
 - durable signal delivery
 - subprocess timeout and artifact capture
+- worker-managed cancellation preemption for long JS `step()` bodies

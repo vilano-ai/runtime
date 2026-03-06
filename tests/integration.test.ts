@@ -13,17 +13,23 @@ import type {
 
 const ROOT = path.resolve(import.meta.dir, "..");
 const CLI_ENTRY = path.join(ROOT, "cli", "bin", "vilano.ts");
+const WORKER_ENTRY = path.join(ROOT, "worker", "bun", "src", "cli.ts");
 
 class RuntimeHarness {
   private constructor(
     private readonly runtimeHome: string,
-    private readonly port: number
+    private readonly port: number,
+    private readonly envOverrides: Record<string, string>
   ) {}
 
-  static async create(): Promise<RuntimeHarness> {
+  static async create(
+    options: {
+      env?: Record<string, string>;
+    } = {}
+  ): Promise<RuntimeHarness> {
     const runtimeHome = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-test-"));
     const port = await reservePort();
-    const harness = new RuntimeHarness(runtimeHome, port);
+    const harness = new RuntimeHarness(runtimeHome, port, options.env ?? {});
 
     await harness.runCli(["daemon", "start", "--port", String(port)]);
     await harness.runCli(["project", "add", "./examples/bootstrap-demo", "--name", "demo"]);
@@ -67,6 +73,33 @@ class RuntimeHarness {
     ]);
   }
 
+  async askService(reference: string, messageName: string, keyInput: unknown, input: unknown): Promise<unknown> {
+    const response = await this.runCliJson<{ ok: true; reply: unknown }>([
+      "service",
+      "ask",
+      reference,
+      messageName,
+      "--key-json",
+      JSON.stringify(keyInput),
+      "--input",
+      JSON.stringify(input),
+      "--timeout",
+      "20s",
+    ]);
+
+    return response.reply;
+  }
+
+  async ensureService(reference: string, keyInput: unknown): Promise<void> {
+    await this.runCli([
+      "service",
+      "ensure",
+      reference,
+      "--key-json",
+      JSON.stringify(keyInput),
+    ]);
+  }
+
   async waitForRun(
     runId: string,
     predicate: (inspect: RunInspectResponse) => boolean,
@@ -88,6 +121,28 @@ class RuntimeHarness {
     );
   }
 
+  async spawnWorker(options: { workerId?: string; once?: boolean } = {}): Promise<SpawnedCommand> {
+    const args = [process.execPath, WORKER_ENTRY, "--server", this.serverUrl];
+
+    if (options.workerId) {
+      args.push("--worker-id", options.workerId);
+    }
+
+    if (options.once) {
+      args.push("--once");
+    }
+
+    return this.spawnCommand(args);
+  }
+
+  spawnCliCommand(args: string[]): SpawnedCommand {
+    return this.spawnCommand([process.execPath, CLI_ENTRY, ...args]);
+  }
+
+  get serverUrl(): string {
+    return `http://127.0.0.1:${this.port}`;
+  }
+
   private async runCliJson<T>(args: string[]): Promise<T> {
     const result = await this.runCli([...args, "--json"]);
     return JSON.parse(result.stdout) as T;
@@ -97,21 +152,8 @@ class RuntimeHarness {
     args: string[],
     options: { allowFailure?: boolean } = {}
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    const proc = Bun.spawn([process.execPath, CLI_ENTRY, ...args], {
-      cwd: ROOT,
-      env: {
-        ...process.env,
-        VILANO_HOME: this.runtimeHome,
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      streamToText(proc.stdout),
-      streamToText(proc.stderr),
-      proc.exited,
-    ]);
+    const proc = this.spawnCommand([process.execPath, CLI_ENTRY, ...args]);
+    const { stdout, stderr, exitCode } = await proc.wait();
 
     if (!options.allowFailure && exitCode !== 0) {
       throw new Error(
@@ -130,6 +172,39 @@ class RuntimeHarness {
       stderr,
       exitCode,
     };
+  }
+
+  private spawnCommand(command: string[]): SpawnedCommand {
+    const proc = Bun.spawn(command, {
+      cwd: ROOT,
+      env: {
+        ...process.env,
+        VILANO_HOME: this.runtimeHome,
+        ...this.envOverrides,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    return new SpawnedCommand(proc);
+  }
+}
+
+class SpawnedCommand {
+  constructor(private readonly proc: Bun.Subprocess<any, "pipe", "pipe">) {}
+
+  kill(signal: NodeJS.Signals = "SIGKILL"): void {
+    process.kill(this.proc.pid, signal);
+  }
+
+  async wait(): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    const [stdout, stderr, exitCode] = await Promise.all([
+      streamToText(this.proc.stdout),
+      streamToText(this.proc.stderr),
+      this.proc.exited,
+    ]);
+
+    return { stdout, stderr, exitCode };
   }
 }
 
@@ -276,6 +351,124 @@ test("run cancel marks active exec work cancelled", async () => {
     expect(inspect.execs.map((exec) => exec.status)).toContain("cancelled");
     expect(inspect.execs.map((exec) => exec.lastEventType)).toContain("ProcessCancelled");
     expect(inspect.events.map((event) => event.type)).toContain("RunCancelled");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("workflow runs resume after worker loss and lease expiry", async () => {
+  const harness = await RuntimeHarness.create({
+    env: {
+      VILANO_MANAGED_WORKERS: "0",
+      VILANO_LEASE_DURATION_SECONDS: "2",
+    },
+  });
+
+  try {
+    const run = await harness.startWorkflow("demo/slowWorkflowStep", { durationMs: 1500 });
+    const firstWorker = await harness.spawnWorker({ workerId: "test-replay-workflow-1", once: true });
+
+    await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "running" &&
+        inspect.steps.some((step) => step.status === "running")
+    );
+
+    firstWorker.kill();
+    await firstWorker.wait();
+    await sleep(2_300);
+
+    const secondWorker = await harness.spawnWorker({ workerId: "test-replay-workflow-2", once: true });
+    const secondResult = await secondWorker.wait();
+    expect(secondResult.exitCode).toBe(0);
+
+    const inspect = await harness.waitForRun(
+      run.run.id,
+      (body) =>
+        body.run.status === "completed" &&
+        body.steps.some((step) => step.status === "completed")
+    );
+
+    expect(inspect.steps.map((step) => step.attempts)).toContain(2);
+    expect(inspect.events.filter((event) => event.type === "RunLeaseGranted")).toHaveLength(2);
+    expect(inspect.events.map((event) => event.type)).toContain("RunCompleted");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("service turns resume after worker loss and lease expiry", async () => {
+  const harness = await RuntimeHarness.create({
+    env: {
+      VILANO_MANAGED_WORKERS: "0",
+      VILANO_LEASE_DURATION_SECONDS: "4",
+    },
+  });
+
+  const keyInput = { sessionId: "lease-recovery" };
+
+  try {
+    await harness.ensureService("demo/operator", keyInput);
+
+    const askCommand = harness.spawnCliCommand([
+        "service",
+        "ask",
+        "demo/operator",
+        "slowStep",
+        "--key-json",
+        JSON.stringify(keyInput),
+        "--input",
+        JSON.stringify({ durationMs: 2500 }),
+        "--timeout",
+        "20s",
+        "--json",
+      ]);
+
+    await harness.waitForService(
+      "demo/operator",
+      keyInput,
+      (inspect) =>
+        inspect.run.status === "pending" &&
+        inspect.envelopes.some((envelope) => envelope.status === "queued"),
+      5_000
+    );
+
+    const firstWorker = await harness.spawnWorker({ workerId: "test-replay-service-1", once: true });
+
+    await harness.waitForService(
+      "demo/operator",
+      keyInput,
+      (inspect) =>
+        inspect.run.status === "active" &&
+        inspect.turns?.some((turn) => turn.phase === "running") === true &&
+        inspect.steps.some((step) => step.status === "running")
+    );
+
+    firstWorker.kill();
+    await firstWorker.wait();
+    await sleep(4_300);
+
+    const secondWorker = await harness.spawnWorker({ workerId: "test-replay-service-2", once: true });
+    const [secondResult, askResult] = await Promise.all([secondWorker.wait(), askCommand.wait()]);
+
+    expect(secondResult.exitCode).toBe(0);
+    expect(askResult.exitCode).toBe(0);
+
+    const askBody = JSON.parse(askResult.stdout) as { ok: true; reply: { waitedMs: number } };
+    expect(askBody.reply.waitedMs).toBe(2500);
+
+    const inspect = await harness.waitForService(
+      "demo/operator",
+      keyInput,
+      (body) =>
+        body.run.status === "idle" &&
+        (body.turns ?? []).some((turn) => turn.phase === "completed")
+    );
+
+    expect((inspect.turns ?? []).map((turn) => turn.attempts)).toContain(2);
+    expect((inspect.turns ?? []).map((turn) => turn.lastResumeReason)).toContain("lease_expired");
+    expect(inspect.steps.map((step) => step.attempts)).toContain(2);
   } finally {
     await harness.dispose();
   }
