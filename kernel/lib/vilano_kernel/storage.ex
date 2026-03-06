@@ -3586,6 +3586,8 @@ defmodule VilanoKernel.Storage do
     attempt = step_attempt(step)
     max_attempts = normalize_max_attempts(step["max_attempts"])
     backoff_ms = normalize_backoff_ms(step["backoff_ms"])
+    decision = retry_decision(error_body, attempt, max_attempts)
+    wake_at = if decision["willRetry"], do: shift_milliseconds(now, backoff_ms), else: nil
 
     append_event!(
       run["id"],
@@ -3596,14 +3598,18 @@ defmodule VilanoKernel.Storage do
         "attempt" => attempt,
         "maxAttempts" => max_attempts,
         "backoffMs" => backoff_ms,
+        "retryable" => decision["retryable"],
+        "willRetry" => decision["willRetry"],
+        "retryDecision" => decision["retryDecision"],
+        "nextAttempt" => if(decision["willRetry"], do: attempt + 1, else: nil),
+        "wakeAt" => wake_at,
         "error" => error_body
       },
       now
     )
 
-    if retryable_failure?(error_body) and attempt < max_attempts do
+    if decision["willRetry"] do
       wait_key = retry_wait_key("step", step["op_key"])
-      wake_at = shift_milliseconds(now, backoff_ms)
 
       SQL.query!(
         Repo,
@@ -3673,6 +3679,8 @@ defmodule VilanoKernel.Storage do
     attempt = exec["attempt"] || 1
     max_attempts = normalize_max_attempts(Map.get(body, "maxAttempts"))
     backoff_ms = normalize_backoff_ms(Map.get(body, "backoffMs"))
+    decision = retry_decision(error_body, attempt, max_attempts)
+    wake_at = if decision["willRetry"], do: shift_milliseconds(now, backoff_ms), else: nil
 
     append_event!(
       run["id"],
@@ -3683,6 +3691,11 @@ defmodule VilanoKernel.Storage do
         "attempt" => attempt,
         "maxAttempts" => max_attempts,
         "backoffMs" => backoff_ms,
+        "retryable" => decision["retryable"],
+        "willRetry" => decision["willRetry"],
+        "retryDecision" => decision["retryDecision"],
+        "nextAttempt" => if(decision["willRetry"], do: attempt + 1, else: nil),
+        "wakeAt" => wake_at,
         "exitCode" => Map.get(body, "exitCode"),
         "signalCode" => Map.get(body, "signalCode"),
         "stdoutRef" => Map.get(body, "stdoutRef"),
@@ -3693,9 +3706,8 @@ defmodule VilanoKernel.Storage do
       now
     )
 
-    if retryable_failure?(error_body) and attempt < max_attempts do
+    if decision["willRetry"] do
       wait_key = retry_wait_key("exec", op_key)
-      wake_at = shift_milliseconds(now, backoff_ms)
 
       SQL.query!(
         Repo,
@@ -3794,6 +3806,12 @@ defmodule VilanoKernel.Storage do
   end
 
   defp fail_service_turn_attempt!(service_run, envelope, error_body, retry_options, now) do
+    max_attempts = normalize_max_attempts(Map.get(retry_options, "maxAttempts"))
+    backoff_ms = normalize_backoff_ms(Map.get(retry_options, "backoffMs"))
+    attempt = envelope["attempt"] || 1
+    decision = retry_decision(error_body, attempt, max_attempts)
+    wake_at = if decision["willRetry"], do: shift_milliseconds(now, backoff_ms), else: nil
+
     append_event!(
       service_run["id"],
       "TurnFailed",
@@ -3801,19 +3819,21 @@ defmodule VilanoKernel.Storage do
         "envelopeId" => envelope["id"],
         "kind" => envelope["kind"],
         "name" => envelope["name"],
-        "attempt" => envelope["attempt"] || 1,
+        "attempt" => attempt,
+        "maxAttempts" => max_attempts,
+        "backoffMs" => backoff_ms,
+        "retryable" => decision["retryable"],
+        "willRetry" => decision["willRetry"],
+        "retryDecision" => decision["retryDecision"],
+        "nextAttempt" => if(decision["willRetry"], do: attempt + 1, else: nil),
+        "wakeAt" => wake_at,
         "error" => error_body
       },
       now
     )
 
-    max_attempts = normalize_max_attempts(Map.get(retry_options, "maxAttempts"))
-    backoff_ms = normalize_backoff_ms(Map.get(retry_options, "backoffMs"))
-    attempt = envelope["attempt"] || 1
-
-    if retryable_failure?(error_body) and attempt < max_attempts do
+    if decision["willRetry"] do
       next_attempt = attempt + 1
-      wake_at = shift_milliseconds(now, backoff_ms)
       wait_key = retry_wait_key("turn", envelope["id"])
 
       SQL.query!(
@@ -4007,6 +4027,25 @@ defmodule VilanoKernel.Storage do
   end
 
   defp retryable_failure?(_error_body), do: true
+
+  defp retry_decision(error_body, attempt, max_attempts) do
+    retryable = retryable_failure?(error_body)
+    will_retry = retryable and attempt < max_attempts
+
+    decision =
+      cond do
+        will_retry -> "scheduled"
+        not retryable -> "non_retryable"
+        max_attempts <= 1 -> "retries_disabled"
+        true -> "attempts_exhausted"
+      end
+
+    %{
+      "retryable" => retryable,
+      "willRetry" => will_retry,
+      "retryDecision" => decision
+    }
+  end
 
   defp normalize_max_attempts(value) when is_integer(value) and value > 0, do: value
   defp normalize_max_attempts(_value), do: 1

@@ -107,6 +107,7 @@ defmodule VilanoKernel.StepDeadlineManager do
       "key" => op_key,
       "message" => "Step '#{step_name}' timed out after #{timeout_ms}ms",
       "timedOut" => true,
+      "retryable" => true,
       "timeoutMs" => timeout_ms,
       "forcedTermination" => true,
       "source" => "kernel_deadline_manager",
