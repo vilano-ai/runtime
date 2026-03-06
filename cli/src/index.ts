@@ -1,5 +1,6 @@
+import { spawn } from "node:child_process";
 import process from "node:process";
-
+import { fileURLToPath } from "node:url";
 import {
   addProject,
   ensureDaemonStarted,
@@ -44,6 +45,7 @@ function renderHelp(): string {
     "  vilano project add|list|inspect|sync|remove",
     "  vilano workflow list|inspect",
     "  vilano run start|list|inspect",
+    "  vilano worker start",
     "  vilano service list",
     "",
     "Everything important should eventually remain scriptable with --json.",
@@ -69,6 +71,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         return handleWorkflow(rest, parsed.flags);
       case "run":
         return handleRun(rest, parsed.flags);
+      case "worker":
+        return handleWorker(rest, parsed.flags);
       case "service":
         return handleService(rest, parsed.flags);
       default:
@@ -283,6 +287,44 @@ async function handleService(
     }
     default:
       throw new CliError("Usage: vilano service list");
+  }
+}
+
+async function handleWorker(args: string[], flags: Record<string, string | boolean>): Promise<number> {
+  const command = args[0];
+
+  switch (command) {
+    case "start": {
+      const serverUrl =
+        typeof flags.server === "string"
+          ? flags.server
+          : typeof flags.url === "string"
+            ? flags.url
+            : "http://127.0.0.1:4141";
+      const workerEntry = fileURLToPath(new URL("../../worker/bun/src/cli.ts", import.meta.url));
+      const childArgs = [workerEntry, "--server", serverUrl];
+
+      if (typeof flags["worker-id"] === "string") {
+        childArgs.push("--worker-id", flags["worker-id"]);
+      }
+
+      if (flags.once) {
+        childArgs.push("--once");
+      }
+
+      const exitCode = await new Promise<number>((resolve, reject) => {
+        const child = spawn(process.execPath, childArgs, {
+          stdio: "inherit",
+        });
+
+        child.once("error", reject);
+        child.once("exit", (code) => resolve(code ?? 1));
+      });
+
+      return exitCode;
+    }
+    default:
+      throw new CliError("Usage: vilano worker start [--once] [--worker-id <id>] [--server <url>]");
   }
 }
 

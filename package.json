@@ -11,6 +11,9 @@
     "build": "bun run typecheck",
     "typecheck": "tsc -p cli/tsconfig.json && tsc -p sdk/typescript/tsconfig.json && tsc -p worker/bun/tsconfig.json"
   },
+  "dependencies": {
+    "@vilano/runtime": "workspace:*"
+  },
   "devDependencies": {
     "@types/bun": "^1.3.1",
     "@types/node": "^22.13.10",

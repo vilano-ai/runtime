@@ -2,9 +2,15 @@ import { service, workflow } from "@vilano/runtime";
 
 export const planner = workflow({
   name: "planner",
-  run: async (input: { topic: string }) => {
+  run: async (input: { topic: string }, ctx) => {
+    const summary = await ctx.step(
+      "summarize",
+      async () => `planned: ${input.topic}`,
+      { key: "summary" }
+    );
+
     return {
-      summary: `planned: ${input.topic}`,
+      summary,
     };
   },
 });
