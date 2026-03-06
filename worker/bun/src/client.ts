@@ -29,6 +29,14 @@ interface StepResolveResponse {
   step: { status: "pending" } | { status: "completed"; output: unknown };
 }
 
+interface ExecResolveResponse {
+  ok: true;
+  exec:
+    | { status: "execute"; attempt: number }
+    | { status: "completed"; output: unknown }
+    | { status: "failed"; error: unknown };
+}
+
 export class WorkerClient {
   constructor(
     private readonly serverUrl: string,
@@ -65,6 +73,59 @@ export class WorkerClient {
       key,
       output,
     });
+  }
+
+  async resolveExec(
+    leaseId: string,
+    spec: {
+      name: string;
+      key: string;
+      cmd: string;
+      args: string[];
+      cwd?: string;
+      env?: Record<string, string>;
+      timeoutMs?: number;
+    }
+  ): Promise<ExecResolveResponse["exec"]> {
+    const response = await this.request<ExecResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/execs/resolve`,
+      spec
+    );
+
+    return response.exec;
+  }
+
+  async completeExec(
+    leaseId: string,
+    spec: {
+      name: string;
+      key: string;
+      exitCode: number;
+      signalCode: string | null;
+      stdoutRef?: string;
+      stderrRef?: string;
+      artifacts: Array<{ path: string; ref: string }>;
+      output: unknown;
+    }
+  ): Promise<void> {
+    await this.request("POST", `/v1/leases/${encodeURIComponent(leaseId)}/execs/complete`, spec);
+  }
+
+  async failExec(
+    leaseId: string,
+    spec: {
+      name: string;
+      key: string;
+      exitCode: number | null;
+      signalCode: string | null;
+      stdoutRef?: string;
+      stderrRef?: string;
+      artifacts: Array<{ path: string; ref: string }>;
+      error: unknown;
+    }
+  ): Promise<void> {
+    await this.request("POST", `/v1/leases/${encodeURIComponent(leaseId)}/execs/fail`, spec);
   }
 
   async completeRun(leaseId: string, result: unknown): Promise<void> {

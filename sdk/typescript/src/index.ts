@@ -62,7 +62,7 @@ export interface ServiceTurnContext {
     fn: () => Promise<TOutput> | TOutput,
     options?: StepOptions
   ): Promise<TOutput>;
-  exec<TOutput = unknown>(spec: ExecSpec<TOutput>): Promise<TOutput>;
+  exec<TOutput = ExecResult>(spec: ExecSpec<TOutput>): Promise<TOutput>;
   sleep(duration: string, options?: { key?: string }): Promise<void>;
   waitForSignal(name: string, options?: { key?: string }): Promise<unknown>;
   log(message: string, fields?: Record<string, unknown>): Promise<void>;
@@ -89,6 +89,7 @@ export interface WorkflowContext extends ServiceTurnContext {
 
 export interface ExecSpec<TOutput = unknown> {
   name: string;
+  key?: string;
   cmd: string;
   args?: string[];
   timeout?: string;
@@ -100,6 +101,21 @@ export interface ExecSpec<TOutput = unknown> {
     artifacts?: string[];
   };
   parse?: (stdout: string) => TOutput;
+}
+
+export interface ExecArtifact {
+  path: string;
+  ref: string;
+}
+
+export interface ExecResult {
+  exitCode: number;
+  signalCode: string | null;
+  stdout: string;
+  stderr: string;
+  stdoutRef?: string;
+  stderrRef?: string;
+  artifacts: ExecArtifact[];
 }
 
 export type SendHandler<TPayload, TState> = (
