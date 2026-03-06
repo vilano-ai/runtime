@@ -468,6 +468,8 @@ async function handleService(
           `run: ${body.run.id}`,
           `status: ${body.run.status}`,
           `stopped_envelopes: ${body.stoppedEnvelopeCount}`,
+          `cancelled_waits: ${body.cancelledWaitCount}`,
+          `had_in_flight_turn: ${body.hadInFlightTurn}`,
         ].join("\n")
       );
       return 0;
@@ -964,7 +966,23 @@ function renderRunInspect(
   const stepLines =
     steps.length === 0
       ? ["steps: none"]
-      : ["steps:", ...steps.map((step) => `  ${step.name}\tkey=${step.key}\tstatus=${step.status}`)];
+      : [
+          "steps:",
+          ...steps.map((step) => {
+            const parts = [
+              `  ${step.name}`,
+              `key=${step.key}`,
+              `status=${step.status}`,
+              `attempts=${step.attempts ?? 1}`,
+            ];
+
+            if (step.lastEventType) {
+              parts.push(`last_event=${step.lastEventType}`);
+            }
+
+            return parts.join("\t");
+          }),
+        ];
   const execLines =
     execs.length === 0
       ? ["execs: none"]
@@ -972,7 +990,31 @@ function renderRunInspect(
           "execs:",
           ...execs.map((exec) => {
             const refs = [exec.stdoutRef, exec.stderrRef].filter(Boolean).join(",");
-            return `  ${exec.name}\tkey=${exec.key}\tstatus=${exec.status}\tattempt=${exec.attempt}\tcmd=${[exec.cmd, ...exec.args].join(" ")}${refs ? `\trefs=${refs}` : ""}`;
+            const parts = [
+              `  ${exec.name}`,
+              `key=${exec.key}`,
+              `status=${exec.status}`,
+              `attempts=${exec.attempts ?? exec.attempt}`,
+              `cmd=${[exec.cmd, ...exec.args].join(" ")}`,
+            ];
+
+            if (exec.lastEventType) {
+              parts.push(`last_event=${exec.lastEventType}`);
+            }
+
+            if (exec.exitCode !== null) {
+              parts.push(`exit_code=${exec.exitCode}`);
+            }
+
+            if (exec.signalCode) {
+              parts.push(`signal=${exec.signalCode}`);
+            }
+
+            if (refs) {
+              parts.push(`refs=${refs}`);
+            }
+
+            return parts.join("\t");
           }),
         ];
   const waitLines =
@@ -1071,12 +1113,78 @@ function renderRunInspect(
 
 function decorateRunInspect<T extends {
   events: RunEventRecord[];
+  steps: RunStepRecord[];
+  execs: RunExecRecord[];
   envelopes: RunEnvelopeRecord[];
 }>(body: T): T & { turns: RunTurnRecord[] } {
   return {
     ...body,
+    steps: deriveStepViews(body.steps, body.events),
+    execs: deriveExecViews(body.execs, body.events),
     turns: deriveServiceTurns(body.events, body.envelopes),
   };
+}
+
+function deriveStepViews(steps: RunStepRecord[], events: RunEventRecord[]): RunStepRecord[] {
+  const attempts = new Map<string, number>();
+  const lastEvent = new Map<string, { type: string; at: string }>();
+
+  for (const event of events) {
+    const body = asRecord(event.body);
+    const key = typeof body.key === "string" ? body.key : null;
+    if (!key) {
+      continue;
+    }
+
+    if (event.type === "StepStarted") {
+      attempts.set(key, (attempts.get(key) ?? 0) + 1);
+      lastEvent.set(key, { type: event.type, at: event.createdAt });
+    }
+
+    if (event.type === "StepCompleted" || event.type === "StepCancelled") {
+      lastEvent.set(key, { type: event.type, at: event.createdAt });
+    }
+  }
+
+  return steps.map((step) => ({
+    ...step,
+    attempts: attempts.get(step.key) ?? 1,
+    lastEventType: lastEvent.get(step.key)?.type ?? null,
+    lastEventAt: lastEvent.get(step.key)?.at ?? null,
+  }));
+}
+
+function deriveExecViews(execs: RunExecRecord[], events: RunEventRecord[]): RunExecRecord[] {
+  const attempts = new Map<string, number>();
+  const lastEvent = new Map<string, { type: string; at: string }>();
+
+  for (const event of events) {
+    const body = asRecord(event.body);
+    const key = typeof body.key === "string" ? body.key : null;
+    if (!key) {
+      continue;
+    }
+
+    if (event.type === "ProcessStarted") {
+      attempts.set(key, (attempts.get(key) ?? 0) + 1);
+      lastEvent.set(key, { type: event.type, at: event.createdAt });
+    }
+
+    if (
+      event.type === "ProcessCompleted" ||
+      event.type === "ProcessFailed" ||
+      event.type === "ProcessCancelled"
+    ) {
+      lastEvent.set(key, { type: event.type, at: event.createdAt });
+    }
+  }
+
+  return execs.map((exec) => ({
+    ...exec,
+    attempts: attempts.get(exec.key) ?? exec.attempt,
+    lastEventType: lastEvent.get(exec.key)?.type ?? null,
+    lastEventAt: lastEvent.get(exec.key)?.at ?? null,
+  }));
 }
 
 function deriveServiceTurns(
@@ -1185,6 +1293,12 @@ function renderEventSummary(event: RunEventRecord): string {
       return formatSummary({
         envelope: body.envelopeId,
         kind: body.kind,
+        name: body.name,
+      });
+    case "StepCancelled":
+    case "ProcessCancelled":
+      return formatSummary({
+        key: body.key,
         name: body.name,
       });
     case "WaitSatisfied":

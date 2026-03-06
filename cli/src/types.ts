@@ -108,6 +108,9 @@ export interface RunStepRecord {
   name: string;
   status: string;
   output: unknown | null;
+  attempts?: number;
+  lastEventType?: string | null;
+  lastEventAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -130,6 +133,9 @@ export interface RunExecRecord {
   artifacts: Array<{ path: string; ref: string }>;
   output: unknown | null;
   error: unknown | null;
+  attempts?: number;
+  lastEventType?: string | null;
+  lastEventAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -240,6 +246,8 @@ export interface ServiceStopResponse {
   ok: true;
   run: RunRecord;
   stoppedEnvelopeCount: number;
+  cancelledWaitCount: number;
+  hadInFlightTurn: boolean;
 }
 
 export interface ServiceRunListResponse {
