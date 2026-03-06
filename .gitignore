@@ -2,8 +2,11 @@
 node_modules/
 dist/
 coverage/
+.direnv/
 .DS_Store
 *.log
 _build/
 deps/
+.mix/
+.hex/
 .elixir_ls/
