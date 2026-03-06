@@ -9,8 +9,8 @@ defmodule VilanoKernel.WaitManager do
     GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
   end
 
-  def schedule_sleep(wait) do
-    GenServer.cast(__MODULE__, {:schedule_sleep, wait})
+  def schedule_timed_wait(wait) do
+    GenServer.cast(__MODULE__, {:schedule_timed_wait, wait})
   end
 
   @impl true
@@ -22,19 +22,19 @@ defmodule VilanoKernel.WaitManager do
   @impl true
   def handle_info(:bootstrap, state) do
     next_state =
-      Storage.list_waiting_sleep_waits()
+      Storage.list_waiting_timed_waits()
       |> Enum.reduce(state, fn wait, acc -> schedule_timer(wait, acc) end)
 
     {:noreply, next_state}
   end
 
-  def handle_info({:fire_sleep, run_id, op_key}, state) do
-    _ = Storage.satisfy_sleep_wait(run_id, op_key)
+  def handle_info({:fire_timed_wait, run_id, op_key}, state) do
+    _ = Storage.satisfy_timed_wait(run_id, op_key)
     {:noreply, Map.delete(state, {run_id, op_key})}
   end
 
   @impl true
-  def handle_cast({:schedule_sleep, wait}, state) do
+  def handle_cast({:schedule_timed_wait, wait}, state) do
     {:noreply, schedule_timer(wait, state)}
   end
 
@@ -47,7 +47,7 @@ defmodule VilanoKernel.WaitManager do
     end
 
     delay_ms = wait_delay_ms(wait["wakeAt"])
-    timer_ref = Process.send_after(self(), {:fire_sleep, wait["runId"], wait["key"]}, delay_ms)
+    timer_ref = Process.send_after(self(), {:fire_timed_wait, wait["runId"], wait["key"]}, delay_ms)
     Map.put(state, key, timer_ref)
   end
 

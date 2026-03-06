@@ -70,6 +70,9 @@ defmodule VilanoKernel.Storage do
         op_key text not null,
         name text not null,
         status text not null,
+        attempt integer,
+        max_attempts integer,
+        backoff_ms integer,
         timeout_ms integer,
         output_json text,
         error_json text,
@@ -81,6 +84,9 @@ defmodule VilanoKernel.Storage do
       []
     )
 
+    ensure_column!("run_steps", "attempt", "integer")
+    ensure_column!("run_steps", "max_attempts", "integer")
+    ensure_column!("run_steps", "backoff_ms", "integer")
     ensure_column!("run_steps", "timeout_ms", "integer")
     ensure_column!("run_steps", "error_json", "text")
 
@@ -174,6 +180,7 @@ defmodule VilanoKernel.Storage do
         service_run_id text not null,
         kind text not null,
         name text not null,
+        attempt integer,
         payload_json text,
         correlation_id text,
         sender_run_id text,
@@ -186,6 +193,8 @@ defmodule VilanoKernel.Storage do
       """,
       []
     )
+
+    ensure_column!("service_envelopes", "attempt", "integer")
 
     SQL.query!(
       Repo,
@@ -1160,7 +1169,7 @@ defmodule VilanoKernel.Storage do
     |> unwrap_transaction_result()
   end
 
-  def fail_service_turn(lease_id, envelope_id, error_body) do
+  def fail_service_turn(lease_id, envelope_id, error_body, retry_options \\ %{}) do
     now = now_iso8601()
 
     Repo.transaction(fn ->
@@ -1173,53 +1182,7 @@ defmodule VilanoKernel.Storage do
 
         {service_run, envelope} ->
           if envelope["service_run_id"] == service_run["id"] do
-            SQL.query!(
-              Repo,
-              """
-              update service_envelopes
-              set
-                status = 'failed',
-                error_json = ?,
-                updated_at = ?
-              where id = ?
-              """,
-              [Jason.encode!(error_body), now, envelope_id]
-            )
-
-            append_event!(
-              service_run["id"],
-              "TurnFailed",
-              %{
-                "envelopeId" => envelope_id,
-                "kind" => envelope["kind"],
-                "name" => envelope["name"],
-                "error" => error_body
-              },
-              now
-            )
-
-            if envelope["kind"] == "ask" do
-              wake_service_ask_waiter!(envelope["correlation_id"], "failed", error_body, now)
-            end
-
-            next_status = service_next_status(service_run["id"], false)
-
-            SQL.query!(
-              Repo,
-              """
-              update runs
-              set
-                status = ?,
-                lease_id = null,
-                lease_worker_id = null,
-                lease_expires_at = null,
-                updated_at = ?
-              where id = ?
-              """,
-              [next_status, now, service_run["id"]]
-            )
-
-            get_run(service_run["id"])
+            fail_service_turn_attempt!(service_run, envelope, error_body, retry_options, now)
           else
             nil
           end
@@ -1273,6 +1236,17 @@ defmodule VilanoKernel.Storage do
           lease_id = "lease_" <> Ecto.UUID.generate()
           run_id = candidate["service_run_id"]
           envelope_id = candidate["id"]
+          attempt =
+            cond do
+              candidate["envelope_status"] == "queued" ->
+                candidate["attempt"] || 1
+
+              candidate["run_status"] == "active" and not is_nil(candidate["run_lease_expires_at"]) ->
+                (candidate["attempt"] || 0) + 1
+
+              true ->
+                candidate["attempt"] || 1
+            end
 
           SQL.query!(
             Repo,
@@ -1296,10 +1270,11 @@ defmodule VilanoKernel.Storage do
               update service_envelopes
               set
                 status = 'processing',
+                attempt = ?,
                 updated_at = ?
               where id = ?
               """,
-              [now, envelope_id]
+              [attempt, now, envelope_id]
             )
 
             append_event!(
@@ -1309,7 +1284,8 @@ defmodule VilanoKernel.Storage do
                 "envelopeId" => envelope_id,
                 "kind" => candidate["kind"],
                 "name" => candidate["name"],
-                "correlationId" => candidate["correlation_id"]
+                "correlationId" => candidate["correlation_id"],
+                "attempt" => attempt
               },
               now
             )
@@ -1318,10 +1294,12 @@ defmodule VilanoKernel.Storage do
               Repo,
               """
               update service_envelopes
-              set updated_at = ?
+              set
+                attempt = ?,
+                updated_at = ?
               where id = ?
               """,
-              [now, envelope_id]
+              [attempt, now, envelope_id]
             )
 
             append_event!(
@@ -1332,7 +1310,8 @@ defmodule VilanoKernel.Storage do
                 "kind" => candidate["kind"],
                 "name" => candidate["name"],
                 "correlationId" => candidate["correlation_id"],
-                "reason" => service_turn_resume_reason(candidate)
+                "reason" => service_turn_resume_reason(candidate),
+                "attempt" => attempt
               },
               now
             )
@@ -1488,10 +1467,14 @@ defmodule VilanoKernel.Storage do
   end
 
   def resolve_step(lease_id, name, op_key) do
-    resolve_step(lease_id, name, op_key, nil)
+    resolve_step(lease_id, name, op_key, nil, nil, nil)
   end
 
   def resolve_step(lease_id, name, op_key, timeout_ms) do
+    resolve_step(lease_id, name, op_key, timeout_ms, nil, nil)
+  end
+
+  def resolve_step(lease_id, name, op_key, timeout_ms, max_attempts, backoff_ms) do
     now = now_iso8601()
 
     result =
@@ -1505,7 +1488,19 @@ defmodule VilanoKernel.Storage do
               Repo
               |> SQL.query!(
                 """
-                select run_id, op_key, name, status, timeout_ms, output_json, error_json, created_at, updated_at
+                select
+                  run_id,
+                  op_key,
+                  name,
+                  status,
+                  attempt,
+                  max_attempts,
+                  backoff_ms,
+                  timeout_ms,
+                  output_json,
+                  error_json,
+                  created_at,
+                  updated_at
                 from run_steps
                 where run_id = ? and op_key = ?
                 """,
@@ -1528,6 +1523,36 @@ defmodule VilanoKernel.Storage do
                 }
 
               true ->
+                attempt =
+                  case existing do
+                    nil -> 1
+                    row -> (row["attempt"] || 0) + 1
+                  end
+
+                persisted_max_attempts =
+                  cond do
+                    is_integer(max_attempts) and max_attempts > 0 ->
+                      max_attempts
+
+                    existing && is_integer(existing["max_attempts"]) && existing["max_attempts"] > 0 ->
+                      existing["max_attempts"]
+
+                    true ->
+                      1
+                  end
+
+                persisted_backoff_ms =
+                  cond do
+                    is_integer(backoff_ms) and backoff_ms >= 0 ->
+                      backoff_ms
+
+                    existing && is_integer(existing["backoff_ms"]) && existing["backoff_ms"] >= 0 ->
+                      existing["backoff_ms"]
+
+                    true ->
+                      0
+                  end
+
                 SQL.query!(
                   Repo,
                   """
@@ -1536,26 +1561,50 @@ defmodule VilanoKernel.Storage do
                     op_key,
                     name,
                     status,
+                    attempt,
+                    max_attempts,
+                    backoff_ms,
                     timeout_ms,
                     output_json,
                     error_json,
                     created_at,
                     updated_at
-                  ) values (?, ?, ?, 'running', ?, null, null, ?, ?)
+                  ) values (?, ?, ?, 'running', ?, ?, ?, ?, null, null, ?, ?)
                   on conflict(run_id, op_key) do update set
                     name = excluded.name,
                     status = 'running',
+                    attempt = excluded.attempt,
+                    max_attempts = excluded.max_attempts,
+                    backoff_ms = excluded.backoff_ms,
                     timeout_ms = excluded.timeout_ms,
                     error_json = null,
+                    output_json = null,
                     updated_at = excluded.updated_at
                   """,
-                  [run["id"], op_key, name, timeout_ms, now, now]
+                  [
+                    run["id"],
+                    op_key,
+                    name,
+                    attempt,
+                    persisted_max_attempts,
+                    persisted_backoff_ms,
+                    timeout_ms,
+                    now,
+                    now
+                  ]
                 )
 
                 append_event!(
                   run["id"],
                   "StepStarted",
-                  %{"name" => name, "key" => op_key, "timeoutMs" => timeout_ms},
+                  %{
+                    "name" => name,
+                    "key" => op_key,
+                    "attempt" => attempt,
+                    "maxAttempts" => persisted_max_attempts,
+                    "backoffMs" => persisted_backoff_ms,
+                    "timeoutMs" => timeout_ms
+                  },
                   now
                 )
 
@@ -1565,6 +1614,7 @@ defmodule VilanoKernel.Storage do
                   "leaseId" => lease_id,
                   "name" => name,
                   "key" => op_key,
+                  "attempt" => attempt,
                   "timeoutMs" => timeout_ms,
                   "startedAt" => now
                 }
@@ -1589,42 +1639,39 @@ defmodule VilanoKernel.Storage do
           nil ->
             nil
 
-          run ->
-            SQL.query!(
-              Repo,
-              """
-              insert into run_steps (
-                run_id,
-                op_key,
-                name,
-                status,
-                timeout_ms,
-                output_json,
-                error_json,
-                created_at,
-                updated_at
-              ) values (?, ?, ?, 'completed', null, ?, null, ?, ?)
-              on conflict(run_id, op_key) do update set
-                name = excluded.name,
-                status = 'completed',
-                output_json = excluded.output_json,
-                error_json = excluded.error_json,
-                updated_at = excluded.updated_at
-              """,
-              [run["id"], op_key, name, Jason.encode!(output), now, now]
-            )
+        run ->
+          case get_run_step_row(run["id"], op_key) do
+            nil ->
+              nil
 
-            append_event!(
-              run["id"],
-              "StepCompleted",
-              %{"name" => name, "key" => op_key, "output" => output},
-              now
-            )
+            _step ->
+              SQL.query!(
+                Repo,
+                """
+                update run_steps
+                set
+                  name = ?,
+                  status = 'completed',
+                  output_json = ?,
+                  error_json = null,
+                  updated_at = ?
+                where run_id = ? and op_key = ?
+                """,
+                [name, Jason.encode!(output), now, run["id"], op_key]
+              )
 
-            %{"status" => "completed", "output" => output, "runId" => run["id"], "key" => op_key}
-        end
-      end)
-      |> unwrap_transaction_result()
+              append_event!(
+                run["id"],
+                "StepCompleted",
+                %{"name" => name, "key" => op_key, "output" => output},
+                now
+              )
+
+              %{"status" => "completed", "output" => output, "runId" => run["id"], "key" => op_key}
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
 
     if is_map(result) && result["status"] == "completed" do
       VilanoKernel.StepDeadlineManager.clear_step(result["runId"], result["key"])
@@ -1642,34 +1689,19 @@ defmodule VilanoKernel.Storage do
           nil ->
             nil
 
-          run ->
-            SQL.query!(
-              Repo,
-              """
-              update run_steps
-              set
-                name = ?,
-                status = 'failed',
-                error_json = ?,
-                updated_at = ?
-              where run_id = ? and op_key = ?
-              """,
-              [name, Jason.encode!(error_body), now, run["id"], op_key]
-            )
+        run ->
+          case get_run_step_row(run["id"], op_key) do
+            nil ->
+              nil
 
-            append_event!(
-              run["id"],
-              "StepFailed",
-              %{"name" => name, "key" => op_key, "error" => error_body},
-              now
-            )
+            step ->
+              fail_step_attempt!(run, step, name, error_body, now)
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
 
-            %{"status" => "failed", "error" => error_body, "runId" => run["id"], "key" => op_key}
-        end
-      end)
-      |> unwrap_transaction_result()
-
-    if is_map(result) && result["status"] == "failed" do
+    if is_map(result) && result["status"] in ["failed", "retry_waiting"] do
       VilanoKernel.StepDeadlineManager.clear_step(result["runId"], result["key"])
     end
 
@@ -1694,34 +1726,25 @@ defmodule VilanoKernel.Storage do
                 if step["status"] != "running" do
                   nil
                 else
-                  SQL.query!(
-                    Repo,
-                    """
-                    update run_steps
-                    set
-                      status = 'failed',
-                      error_json = ?,
-                      updated_at = ?
-                    where run_id = ? and op_key = ?
-                    """,
-                    [Jason.encode!(error_body), now, run["id"], op_key]
-                  )
+                  case fail_step_attempt!(run, step, step["name"], error_body, now) do
+                    %{"status" => "retry_waiting", "wait" => wait} ->
+                      %{
+                        "run" => get_run(run["id"]),
+                        "status" => "waiting",
+                        "activeLeaseWorkerId" => run["leaseWorkerId"],
+                        "wait" => wait
+                      }
 
-                  append_event!(
-                    run["id"],
-                    "StepFailed",
-                    %{"name" => step["name"], "key" => op_key, "error" => error_body},
-                    now
-                  )
-
-                  timeout_result_for_run!(run, error_body, now)
+                    _ ->
+                      timeout_result_for_run!(run, error_body, now)
+                  end
                 end
             end
         end
       end)
       |> unwrap_transaction_result()
 
-    if is_map(result) && result["status"] in ["failed", "idle", "pending"] do
+    if is_map(result) && result["status"] in ["failed", "idle", "pending", "waiting"] do
       VilanoKernel.StepDeadlineManager.clear_step(result["run"]["id"], op_key)
     end
 
@@ -1920,56 +1943,7 @@ defmodule VilanoKernel.Storage do
               nil
 
             existing ->
-              SQL.query!(
-                Repo,
-                """
-                update run_execs
-                set
-                  name = ?,
-                  status = 'failed',
-                  exit_code = ?,
-                  signal_code = ?,
-                  stdout_ref = ?,
-                  stderr_ref = ?,
-                  artifacts_json = ?,
-                  output_json = null,
-                  error_json = ?,
-                  updated_at = ?
-                where run_id = ? and op_key = ?
-                """,
-                [
-                  name,
-                  Map.get(body, "exitCode"),
-                  Map.get(body, "signalCode"),
-                  Map.get(body, "stdoutRef"),
-                  Map.get(body, "stderrRef"),
-                  Jason.encode!(Map.get(body, "artifacts", [])),
-                  Jason.encode!(Map.get(body, "error", %{})),
-                  now,
-                  run["id"],
-                  op_key
-                ]
-              )
-
-              append_event!(
-                run["id"],
-                "ProcessFailed",
-                %{
-                  "name" => name,
-                  "key" => op_key,
-                  "attempt" => existing["attempt"],
-                  "exitCode" => Map.get(body, "exitCode"),
-                  "signalCode" => Map.get(body, "signalCode"),
-                  "stdoutRef" => Map.get(body, "stdoutRef"),
-                  "stderrRef" => Map.get(body, "stderrRef"),
-                  "artifacts" => Map.get(body, "artifacts", []),
-                  "error" => Map.get(body, "error", %{})
-                },
-                now
-              )
-
-              exec = get_run_exec(run["id"], op_key)
-              %{"status" => "failed", "error" => decode_json_value(exec["error_json"], nil)}
+              fail_exec_attempt!(run, existing, name, op_key, body, now)
           end
       end
     end)
@@ -2076,7 +2050,7 @@ defmodule VilanoKernel.Storage do
     |> unwrap_transaction_result()
   end
 
-  def satisfy_sleep_wait(run_id, op_key) do
+  def satisfy_timed_wait(run_id, op_key) do
     now = now_iso8601()
 
     Repo.transaction(fn ->
@@ -2085,7 +2059,7 @@ defmodule VilanoKernel.Storage do
           nil
 
         wait ->
-          if wait["status"] != "waiting" do
+          if wait["status"] != "waiting" or is_nil(wait["wake_at"]) do
             nil
           else
             SQL.query!(
@@ -2112,12 +2086,22 @@ defmodule VilanoKernel.Storage do
               [now, run_id]
             )
 
-            append_event!(run_id, "TimerFired", %{"key" => op_key, "wakeAt" => wait["wake_at"]}, now)
+            append_event!(
+              run_id,
+              "TimerFired",
+              %{"kind" => wait["wait_kind"], "key" => op_key, "wakeAt" => wait["wake_at"]},
+              now
+            )
 
             append_event!(
               run_id,
               "WaitSatisfied",
-              %{"kind" => "sleep", "key" => op_key, "wakeAt" => wait["wake_at"]},
+              %{
+                "kind" => wait["wait_kind"],
+                "key" => op_key,
+                "name" => wait["wait_name"],
+                "wakeAt" => wait["wake_at"]
+              },
               now
             )
 
@@ -2128,7 +2112,7 @@ defmodule VilanoKernel.Storage do
     |> unwrap_transaction_result()
   end
 
-  def list_waiting_sleep_waits do
+  def list_waiting_timed_waits do
     Repo
     |> SQL.query!(
       """
@@ -2143,7 +2127,7 @@ defmodule VilanoKernel.Storage do
         created_at,
         updated_at
       from run_waits
-      where wait_kind = 'sleep' and status = 'waiting'
+      where wake_at is not null and status = 'waiting'
       order by wake_at asc
       """,
       []
@@ -2563,6 +2547,9 @@ defmodule VilanoKernel.Storage do
         op_key,
         name,
         status,
+        attempt,
+        max_attempts,
+        backoff_ms,
         timeout_ms,
         output_json,
         error_json,
@@ -2725,6 +2712,7 @@ defmodule VilanoKernel.Storage do
         service_run_id,
         kind,
         name,
+        attempt,
         payload_json,
         correlation_id,
         sender_run_id,
@@ -2794,6 +2782,9 @@ defmodule VilanoKernel.Storage do
       "key" => row["op_key"],
       "name" => row["name"],
       "status" => row["status"],
+      "attempt" => row["attempt"],
+      "maxAttempts" => row["max_attempts"],
+      "backoffMs" => row["backoff_ms"],
       "timeoutMs" => row["timeout_ms"],
       "output" => decode_json_value(row["output_json"], nil),
       "error" => decode_json_value(row["error_json"], nil),
@@ -2879,6 +2870,7 @@ defmodule VilanoKernel.Storage do
       "serviceRunId" => row["service_run_id"],
       "kind" => row["kind"],
       "name" => row["name"],
+      "attempt" => row["attempt"],
       "payload" => decode_json_value(row["payload_json"], nil),
       "correlationId" => row["correlation_id"],
       "senderRunId" => row["sender_run_id"],
@@ -2993,6 +2985,9 @@ defmodule VilanoKernel.Storage do
         op_key,
         name,
         status,
+        attempt,
+        max_attempts,
+        backoff_ms,
         timeout_ms,
         output_json,
         error_json,
@@ -3178,6 +3173,7 @@ defmodule VilanoKernel.Storage do
         service_run_id,
         kind,
         name,
+        attempt,
         payload_json,
         correlation_id,
         sender_run_id,
@@ -3204,6 +3200,7 @@ defmodule VilanoKernel.Storage do
         service_run_id,
         kind,
         name,
+        attempt,
         payload_json,
         correlation_id,
         sender_run_id,
@@ -3584,6 +3581,440 @@ defmodule VilanoKernel.Storage do
     end
   end
 
+  defp fail_step_attempt!(run, step, name, error_body, now) do
+    encoded_error = Jason.encode!(error_body)
+    attempt = step_attempt(step)
+    max_attempts = normalize_max_attempts(step["max_attempts"])
+    backoff_ms = normalize_backoff_ms(step["backoff_ms"])
+
+    append_event!(
+      run["id"],
+      "StepFailed",
+      %{
+        "name" => name,
+        "key" => step["op_key"],
+        "attempt" => attempt,
+        "maxAttempts" => max_attempts,
+        "backoffMs" => backoff_ms,
+        "error" => error_body
+      },
+      now
+    )
+
+    if retryable_failure?(error_body) and attempt < max_attempts do
+      wait_key = retry_wait_key("step", step["op_key"])
+      wake_at = shift_milliseconds(now, backoff_ms)
+
+      SQL.query!(
+        Repo,
+        """
+        update run_steps
+        set
+          name = ?,
+          status = 'retry_waiting',
+          error_json = ?,
+          updated_at = ?
+        where run_id = ? and op_key = ?
+        """,
+        [name, encoded_error, now, run["id"], step["op_key"]]
+      )
+
+      schedule_retry_wait!(
+        run,
+        wait_key,
+        %{
+          "operationKind" => "step",
+          "operationKey" => step["op_key"],
+          "operationName" => name,
+          "attempt" => attempt,
+          "nextAttempt" => attempt + 1,
+          "maxAttempts" => max_attempts,
+          "backoffMs" => backoff_ms,
+          "wakeAt" => wake_at
+        },
+        now
+      )
+
+      %{
+        "status" => "retry_waiting",
+        "runId" => run["id"],
+        "key" => step["op_key"],
+        "wait" => %{
+          "runId" => run["id"],
+          "key" => wait_key,
+          "kind" => "retry_backoff",
+          "name" => name,
+          "status" => "waiting",
+          "wakeAt" => wake_at
+        }
+      }
+    else
+      SQL.query!(
+        Repo,
+        """
+        update run_steps
+        set
+          name = ?,
+          status = 'failed',
+          error_json = ?,
+          updated_at = ?
+        where run_id = ? and op_key = ?
+        """,
+        [name, encoded_error, now, run["id"], step["op_key"]]
+      )
+
+      %{"status" => "failed", "error" => error_body, "runId" => run["id"], "key" => step["op_key"]}
+    end
+  end
+
+  defp fail_exec_attempt!(run, exec, name, op_key, body, now) do
+    error_body = Map.get(body, "error", %{})
+    encoded_error = Jason.encode!(error_body)
+    attempt = exec["attempt"] || 1
+    max_attempts = normalize_max_attempts(Map.get(body, "maxAttempts"))
+    backoff_ms = normalize_backoff_ms(Map.get(body, "backoffMs"))
+
+    append_event!(
+      run["id"],
+      "ProcessFailed",
+      %{
+        "name" => name,
+        "key" => op_key,
+        "attempt" => attempt,
+        "maxAttempts" => max_attempts,
+        "backoffMs" => backoff_ms,
+        "exitCode" => Map.get(body, "exitCode"),
+        "signalCode" => Map.get(body, "signalCode"),
+        "stdoutRef" => Map.get(body, "stdoutRef"),
+        "stderrRef" => Map.get(body, "stderrRef"),
+        "artifacts" => Map.get(body, "artifacts", []),
+        "error" => error_body
+      },
+      now
+    )
+
+    if retryable_failure?(error_body) and attempt < max_attempts do
+      wait_key = retry_wait_key("exec", op_key)
+      wake_at = shift_milliseconds(now, backoff_ms)
+
+      SQL.query!(
+        Repo,
+        """
+        update run_execs
+        set
+          name = ?,
+          status = 'retry_waiting',
+          exit_code = ?,
+          signal_code = ?,
+          stdout_ref = ?,
+          stderr_ref = ?,
+          artifacts_json = ?,
+          output_json = null,
+          error_json = ?,
+          updated_at = ?
+        where run_id = ? and op_key = ?
+        """,
+        [
+          name,
+          Map.get(body, "exitCode"),
+          Map.get(body, "signalCode"),
+          Map.get(body, "stdoutRef"),
+          Map.get(body, "stderrRef"),
+          Jason.encode!(Map.get(body, "artifacts", [])),
+          encoded_error,
+          now,
+          run["id"],
+          op_key
+        ]
+      )
+
+      schedule_retry_wait!(
+        run,
+        wait_key,
+        %{
+          "operationKind" => "exec",
+          "operationKey" => op_key,
+          "operationName" => name,
+          "attempt" => attempt,
+          "nextAttempt" => attempt + 1,
+          "maxAttempts" => max_attempts,
+          "backoffMs" => backoff_ms,
+          "wakeAt" => wake_at
+        },
+        now
+      )
+
+      %{
+        "status" => "retry_waiting",
+        "error" => error_body,
+        "wait" => %{
+          "runId" => run["id"],
+          "key" => wait_key,
+          "kind" => "retry_backoff",
+          "name" => name,
+          "status" => "waiting",
+          "wakeAt" => wake_at
+        }
+      }
+    else
+      SQL.query!(
+        Repo,
+        """
+        update run_execs
+        set
+          name = ?,
+          status = 'failed',
+          exit_code = ?,
+          signal_code = ?,
+          stdout_ref = ?,
+          stderr_ref = ?,
+          artifacts_json = ?,
+          output_json = null,
+          error_json = ?,
+          updated_at = ?
+        where run_id = ? and op_key = ?
+        """,
+        [
+          name,
+          Map.get(body, "exitCode"),
+          Map.get(body, "signalCode"),
+          Map.get(body, "stdoutRef"),
+          Map.get(body, "stderrRef"),
+          Jason.encode!(Map.get(body, "artifacts", [])),
+          encoded_error,
+          now,
+          run["id"],
+          op_key
+        ]
+      )
+
+      exec = get_run_exec(run["id"], op_key)
+      %{"status" => "failed", "error" => decode_json_value(exec["error_json"], nil)}
+    end
+  end
+
+  defp fail_service_turn_attempt!(service_run, envelope, error_body, retry_options, now) do
+    append_event!(
+      service_run["id"],
+      "TurnFailed",
+      %{
+        "envelopeId" => envelope["id"],
+        "kind" => envelope["kind"],
+        "name" => envelope["name"],
+        "attempt" => envelope["attempt"] || 1,
+        "error" => error_body
+      },
+      now
+    )
+
+    max_attempts = normalize_max_attempts(Map.get(retry_options, "maxAttempts"))
+    backoff_ms = normalize_backoff_ms(Map.get(retry_options, "backoffMs"))
+    attempt = envelope["attempt"] || 1
+
+    if retryable_failure?(error_body) and attempt < max_attempts do
+      next_attempt = attempt + 1
+      wake_at = shift_milliseconds(now, backoff_ms)
+      wait_key = retry_wait_key("turn", envelope["id"])
+
+      SQL.query!(
+        Repo,
+        """
+        update service_envelopes
+        set
+          attempt = ?,
+          error_json = ?,
+          updated_at = ?
+        where id = ?
+        """,
+        [next_attempt, maybe_encode_json(error_body), now, envelope["id"]]
+      )
+
+      schedule_retry_wait!(
+        service_run,
+        wait_key,
+        %{
+          "operationKind" => "service_turn",
+          "operationKey" => envelope["id"],
+          "operationName" => envelope["name"],
+          "attempt" => attempt,
+          "nextAttempt" => next_attempt,
+          "maxAttempts" => max_attempts,
+          "backoffMs" => backoff_ms,
+          "wakeAt" => wake_at
+        },
+        now
+      )
+
+      %{
+        "status" => "retry_waiting",
+        "run" => get_run(service_run["id"]),
+        "wait" => %{
+          "runId" => service_run["id"],
+          "key" => wait_key,
+          "kind" => "retry_backoff",
+          "name" => envelope["name"],
+          "status" => "waiting",
+          "wakeAt" => wake_at
+        }
+      }
+    else
+      SQL.query!(
+        Repo,
+        """
+        update service_envelopes
+        set
+          status = 'failed',
+          error_json = ?,
+          updated_at = ?
+        where id = ?
+        """,
+        [Jason.encode!(error_body), now, envelope["id"]]
+      )
+
+      if envelope["kind"] == "ask" do
+        wake_service_ask_waiter!(envelope["correlation_id"], "failed", error_body, now)
+      end
+
+      next_status = service_next_status(service_run["id"], false)
+
+      SQL.query!(
+        Repo,
+        """
+        update runs
+        set
+          status = ?,
+          lease_id = null,
+          lease_worker_id = null,
+          lease_expires_at = null,
+          updated_at = ?
+        where id = ?
+        """,
+        [next_status, now, service_run["id"]]
+      )
+
+      get_run(service_run["id"])
+    end
+  end
+
+  defp schedule_retry_wait!(run, wait_key, body, now) do
+    SQL.query!(
+      Repo,
+      """
+      insert into run_waits (
+        run_id,
+        op_key,
+        wait_kind,
+        wait_name,
+        status,
+        wake_at,
+        output_json,
+        created_at,
+        updated_at
+      ) values (?, ?, 'retry_backoff', ?, 'waiting', ?, null, ?, ?)
+      on conflict(run_id, op_key) do update set
+        wait_kind = excluded.wait_kind,
+        wait_name = excluded.wait_name,
+        status = 'waiting',
+        wake_at = excluded.wake_at,
+        output_json = null,
+        updated_at = excluded.updated_at
+      """,
+      [run["id"], wait_key, Map.fetch!(body, "operationName"), Map.fetch!(body, "wakeAt"), now, now]
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      update runs
+      set
+        status = 'waiting',
+        lease_id = null,
+        lease_worker_id = null,
+        lease_expires_at = null,
+        updated_at = ?
+      where id = ?
+      """,
+      [now, run["id"]]
+    )
+
+    append_event!(
+      run["id"],
+      "RetryScheduled",
+      %{
+        "kind" => Map.fetch!(body, "operationKind"),
+        "operationKey" => Map.fetch!(body, "operationKey"),
+        "name" => Map.fetch!(body, "operationName"),
+        "attempt" => Map.fetch!(body, "attempt"),
+        "nextAttempt" => Map.fetch!(body, "nextAttempt"),
+        "maxAttempts" => Map.fetch!(body, "maxAttempts"),
+        "backoffMs" => Map.fetch!(body, "backoffMs"),
+        "waitKey" => wait_key,
+        "wakeAt" => Map.fetch!(body, "wakeAt")
+      },
+      now
+    )
+
+    append_event!(
+      run["id"],
+      "WaitRegistered",
+      %{
+        "kind" => "retry_backoff",
+        "key" => wait_key,
+        "name" => Map.fetch!(body, "operationName"),
+        "operationKind" => Map.fetch!(body, "operationKind"),
+        "operationKey" => Map.fetch!(body, "operationKey"),
+        "attempt" => Map.fetch!(body, "attempt"),
+        "nextAttempt" => Map.fetch!(body, "nextAttempt"),
+        "wakeAt" => Map.fetch!(body, "wakeAt")
+      },
+      now
+    )
+
+    append_event!(
+      run["id"],
+      "RunSuspended",
+      %{
+        "reason" => "retry_backoff",
+        "key" => wait_key,
+        "operationKind" => Map.fetch!(body, "operationKind"),
+        "operationKey" => Map.fetch!(body, "operationKey"),
+        "name" => Map.fetch!(body, "operationName"),
+        "wakeAt" => Map.fetch!(body, "wakeAt")
+      },
+      now
+    )
+
+    maybe_append_service_turn_waiting!(
+      run,
+      %{
+        "waitKind" => "retry_backoff",
+        "key" => wait_key,
+        "name" => Map.fetch!(body, "operationName"),
+        "operationKind" => Map.fetch!(body, "operationKind"),
+        "operationKey" => Map.fetch!(body, "operationKey"),
+        "wakeAt" => Map.fetch!(body, "wakeAt")
+      },
+      now
+    )
+  end
+
+  defp step_attempt(step), do: step["attempt"] || 1
+
+  defp retry_wait_key(kind, op_key), do: "retry:" <> kind <> ":" <> op_key
+
+  defp retryable_failure?(error_body) when is_map(error_body) do
+    Map.get(error_body, "retryable", true) != false
+  end
+
+  defp retryable_failure?(_error_body), do: true
+
+  defp normalize_max_attempts(value) when is_integer(value) and value > 0, do: value
+  defp normalize_max_attempts(_value), do: 1
+
+  defp normalize_backoff_ms(value) when is_integer(value) and value >= 0, do: value
+  defp normalize_backoff_ms(_value), do: 0
+
+
   defp cancel_waiting_waits!(run_id, error_body, now) do
     waits = list_waiting_wait_rows(run_id)
 
@@ -3805,6 +4236,7 @@ defmodule VilanoKernel.Storage do
         service_run_id,
         kind,
         name,
+        attempt,
         payload_json,
         correlation_id,
         sender_run_id,
@@ -3955,6 +4387,7 @@ defmodule VilanoKernel.Storage do
         service_run_id,
         kind,
         name,
+        attempt,
         payload_json,
         correlation_id,
         sender_run_id,
@@ -4052,6 +4485,7 @@ defmodule VilanoKernel.Storage do
         e.service_run_id,
         e.kind,
         e.name,
+        e.attempt,
         e.payload_json,
         e.correlation_id,
         e.sender_run_id,
@@ -4115,6 +4549,7 @@ defmodule VilanoKernel.Storage do
         service_run_id,
         kind,
         name,
+        attempt,
         payload_json,
         correlation_id,
         sender_run_id,
@@ -4123,7 +4558,7 @@ defmodule VilanoKernel.Storage do
         error_json,
         created_at,
         updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, 'queued', null, null, ?, ?)
+      ) values (?, ?, ?, ?, 1, ?, ?, ?, 'queued', null, null, ?, ?)
       """,
       [
         envelope_id,

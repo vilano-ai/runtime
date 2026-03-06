@@ -257,8 +257,10 @@ defmodule VilanoKernel.Router do
     name = fetch_required_string(conn.body_params, "name")
     key = fetch_required_string(conn.body_params, "key")
     timeout_ms = Map.get(conn.body_params, "timeoutMs")
+    max_attempts = Map.get(conn.body_params, "maxAttempts")
+    backoff_ms = Map.get(conn.body_params, "backoffMs")
 
-    case Storage.resolve_step(lease_id, name, key, timeout_ms) do
+    case Storage.resolve_step(lease_id, name, key, timeout_ms, max_attempts, backoff_ms) do
       nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
       step -> send_json(conn, 200, %{ok: true, step: step})
     end
@@ -280,7 +282,12 @@ defmodule VilanoKernel.Router do
 
     case Storage.fail_step(lease_id, name, key, Map.get(conn.body_params, "error", %{})) do
       nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
-      step -> send_json(conn, 200, %{ok: true, step: step})
+      %{"status" => "retry_waiting", "wait" => wait} = step ->
+        WaitManager.schedule_timed_wait(wait)
+        send_json(conn, 200, %{ok: true, step: step})
+
+      step ->
+        send_json(conn, 200, %{ok: true, step: step})
     end
   end
 
@@ -331,12 +338,19 @@ defmodule VilanoKernel.Router do
       "stdoutRef" => Map.get(conn.body_params, "stdoutRef"),
       "stderrRef" => Map.get(conn.body_params, "stderrRef"),
       "artifacts" => Map.get(conn.body_params, "artifacts", []),
-      "error" => Map.get(conn.body_params, "error", %{})
+      "error" => Map.get(conn.body_params, "error", %{}),
+      "maxAttempts" => Map.get(conn.body_params, "maxAttempts"),
+      "backoffMs" => Map.get(conn.body_params, "backoffMs")
     }
 
     case Storage.fail_exec(lease_id, name, key, body) do
       nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
-      exec -> send_json(conn, 200, %{ok: true, exec: exec})
+      %{"status" => "retry_waiting", "wait" => wait} = exec ->
+        WaitManager.schedule_timed_wait(wait)
+        send_json(conn, 200, %{ok: true, exec: exec})
+
+      exec ->
+        send_json(conn, 200, %{ok: true, exec: exec})
     end
   end
 
@@ -349,7 +363,7 @@ defmodule VilanoKernel.Router do
         send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
 
       %{"status" => "suspended", "wait" => wait} = body ->
-        WaitManager.schedule_sleep(wait)
+        WaitManager.schedule_timed_wait(wait)
         send_json(conn, 200, %{ok: true, wait: body})
 
       body ->
@@ -436,10 +450,19 @@ defmodule VilanoKernel.Router do
 
   post "/v1/leases/:lease_id/service-turns/:envelope_id/fail" do
     error_body = Map.get(conn.body_params, "error", %{})
+    retry_options = %{
+      "maxAttempts" => Map.get(conn.body_params, "maxAttempts"),
+      "backoffMs" => Map.get(conn.body_params, "backoffMs")
+    }
 
-    case Storage.fail_service_turn(lease_id, envelope_id, error_body) do
+    case Storage.fail_service_turn(lease_id, envelope_id, error_body, retry_options) do
       nil -> send_error(conn, 404, "not_found", "Unknown active service turn: #{lease_id}")
-      run -> send_json(conn, 200, %{ok: true, run: run})
+      %{"status" => "retry_waiting", "run" => run, "wait" => wait} ->
+        WaitManager.schedule_timed_wait(wait)
+        send_json(conn, 200, %{ok: true, run: run, wait: wait, status: "retry_waiting"})
+
+      run ->
+        send_json(conn, 200, %{ok: true, run: run})
     end
   end
 

@@ -5,6 +5,7 @@ defmodule VilanoKernel.StepDeadlineManager do
 
   alias VilanoKernel.ManagedWorker
   alias VilanoKernel.Storage
+  alias VilanoKernel.WaitManager
 
   def start_link(_arg) do
     GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
@@ -37,6 +38,13 @@ defmodule VilanoKernel.StepDeadlineManager do
     error_body = timeout_error(run_id, op_key, step_name, timeout_ms)
 
     case Storage.timeout_step(lease_id, op_key, error_body) do
+      %{"wait" => wait, "activeLeaseWorkerId" => worker_id} when is_binary(worker_id) ->
+        WaitManager.schedule_timed_wait(wait)
+        _ = ManagedWorker.kill_worker(worker_id, {:step_timeout, run_id, op_key})
+
+      %{"wait" => wait} ->
+        WaitManager.schedule_timed_wait(wait)
+
       %{"activeLeaseWorkerId" => worker_id} when is_binary(worker_id) ->
         _ = ManagedWorker.kill_worker(worker_id, {:step_timeout, run_id, op_key})
 
