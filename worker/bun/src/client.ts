@@ -1,11 +1,12 @@
 export interface ActivationDefinition {
-  kind: "workflow";
+  kind: "workflow" | "service";
   name: string;
   exportName: string;
   file: string;
 }
 
 export interface WorkflowActivation {
+  kind: "workflow";
   leaseId: string;
   leaseExpiresAt: string;
   run: {
@@ -19,9 +20,36 @@ export interface WorkflowActivation {
   definition: ActivationDefinition;
 }
 
+export interface ServiceTurnActivation {
+  kind: "service_turn";
+  leaseId: string;
+  leaseExpiresAt: string;
+  run: {
+    id: string;
+  };
+  project: {
+    name: string;
+    path: string;
+  };
+  definition: ActivationDefinition;
+  service: {
+    key: string;
+    keyInput: unknown;
+    state: unknown;
+  };
+  envelope: {
+    id: string;
+    kind: "send" | "ask" | "signal";
+    name: string;
+    payload: unknown;
+    correlationId: string | null;
+    senderRunId: string | null;
+  };
+}
+
 interface ActivationLeaseResponse {
   ok: true;
-  activation: WorkflowActivation | null;
+  activation: WorkflowActivation | ServiceTurnActivation | null;
 }
 
 interface StepResolveResponse {
@@ -72,13 +100,29 @@ interface RunStatusResponse {
   };
 }
 
+interface ServiceRunResponse {
+  ok: true;
+  run: {
+    id: string;
+    status: string;
+  };
+}
+
+interface ServiceCallResolveResponse {
+  ok: true;
+  result:
+    | { status: "completed"; output?: unknown }
+    | { status: "failed"; error: unknown }
+    | { status: "suspended"; wait: { key: string; kind: string; name: string } };
+}
+
 export class WorkerClient {
   constructor(
     private readonly serverUrl: string,
     private readonly workerId: string
   ) {}
 
-  async leaseActivation(): Promise<WorkflowActivation | null> {
+  async leaseActivation(): Promise<WorkflowActivation | ServiceTurnActivation | null> {
     const response = await this.request<ActivationLeaseResponse>("POST", "/v1/activations/lease", {
       workerId: this.workerId,
     });
@@ -225,6 +269,85 @@ export class WorkerClient {
       name,
       payload,
     });
+  }
+
+  async ensureService(
+    project: string,
+    service: string,
+    serviceKey: string,
+    keyInput: unknown
+  ): Promise<string> {
+    const response = await this.request<ServiceRunResponse>("POST", "/v1/services/ensure", {
+      project,
+      service,
+      serviceKey,
+      keyInput,
+    });
+
+    return response.run.id;
+  }
+
+  async resolveServiceSend(
+    leaseId: string,
+    spec: { serviceRunId: string; name: string; key: string; payload: unknown }
+  ): Promise<ServiceCallResolveResponse["result"]> {
+    const response = await this.request<ServiceCallResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/services/send`,
+      spec
+    );
+
+    return response.result;
+  }
+
+  async resolveServiceAsk(
+    leaseId: string,
+    spec: { serviceRunId: string; name: string; key: string; payload: unknown }
+  ): Promise<ServiceCallResolveResponse["result"]> {
+    const response = await this.request<ServiceCallResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/services/ask`,
+      spec
+    );
+
+    return response.result;
+  }
+
+  async resolveServiceSignal(
+    leaseId: string,
+    spec: { serviceRunId: string; name: string; key: string; payload: unknown }
+  ): Promise<ServiceCallResolveResponse["result"]> {
+    const response = await this.request<ServiceCallResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/services/signal`,
+      spec
+    );
+
+    return response.result;
+  }
+
+  async completeServiceTurn(
+    leaseId: string,
+    envelopeId: string,
+    body: { state: unknown; reply?: unknown; stop?: boolean }
+  ): Promise<void> {
+    await this.request(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/service-turns/${encodeURIComponent(envelopeId)}/complete`,
+      body
+    );
+  }
+
+  async failServiceTurn(
+    leaseId: string,
+    envelopeId: string,
+    error: { message: string; stack?: string }
+  ): Promise<void> {
+    await this.request(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/service-turns/${encodeURIComponent(envelopeId)}/fail`,
+      { error }
+    );
   }
 
   async completeRun(leaseId: string, result: unknown): Promise<void> {

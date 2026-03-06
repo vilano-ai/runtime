@@ -51,9 +51,9 @@ export interface WorkflowHandle<TOutput> {
   signal(name: string, payload?: unknown, options?: SignalOptions): Promise<void>;
 }
 
-type SendResult<TState> = void | { state?: TState; stop?: true };
-type AskResult<TState, TReply> = { reply: TReply; state?: TState; stop?: true };
-type SignalResult<TState> = void | { state?: TState; stop?: true };
+export type SendResult<TState> = void | { state?: TState; stop?: true };
+export type AskResult<TState, TReply> = { reply: TReply; state?: TState; stop?: true };
+export type SignalResult<TState> = void | { state?: TState; stop?: true };
 
 export interface ServiceTurnContext {
   readonly runId: string;

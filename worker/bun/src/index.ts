@@ -2,15 +2,23 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import process from "node:process";
 import { pathToFileURL } from "node:url";
 
-import process from "node:process";
-
 import type {
+  AskOptions,
+  AskResult,
+  ConnectOptions,
   ExecArtifact,
   ExecResult,
   ExecSpec,
+  MessageOptions,
   RunStatus,
+  ServiceDefinition,
+  ServiceRef,
+  ServiceTurnContext,
+  SignalOptions,
+  SignalResult,
   SpawnOptions,
   StepOptions,
   WorkflowHandle,
@@ -18,7 +26,14 @@ import type {
   WorkflowDefinition,
 } from "@vilano/runtime";
 
-import { WorkerClient, type WorkflowActivation } from "./client.ts";
+import {
+  WorkerClient,
+  type ServiceTurnActivation,
+  type WorkflowActivation,
+} from "./client.ts";
+
+type Activation = WorkflowActivation | ServiceTurnActivation;
+type ServiceMethodKind = "message" | "ask" | "signal";
 
 export interface WorkerOptions {
   workerId?: string;
@@ -56,7 +71,7 @@ export async function startWorker(options: WorkerOptions = {}): Promise<void> {
 
 async function executeActivation(
   client: WorkerClient,
-  activation: WorkflowActivation,
+  activation: Activation,
   heartbeatIntervalMs: number
 ): Promise<void> {
   const heartbeat = setInterval(() => {
@@ -64,19 +79,32 @@ async function executeActivation(
   }, heartbeatIntervalMs);
 
   try {
-    const definition = await loadWorkflowDefinition(activation);
-    const ctx = createWorkflowContext(client, activation);
-    const result = await definition.run(activation.run.input, ctx);
-    await client.completeRun(activation.leaseId, result);
+    if (activation.kind === "workflow") {
+      const definition = await loadWorkflowDefinition(activation);
+      const ctx = createWorkflowContext(client, activation);
+      const result = await definition.run(activation.run.input, ctx);
+      await client.completeRun(activation.leaseId, result);
+      return;
+    }
+
+    const definition = await loadServiceDefinition(activation);
+    await executeServiceTurn(client, activation, definition);
   } catch (error) {
     if (error instanceof RunSuspendedError) {
       return;
     }
 
-    await client.failRun(activation.leaseId, {
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    if (activation.kind === "workflow") {
+      await client.failRun(activation.leaseId, {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    } else {
+      await client.failServiceTurn(activation.leaseId, activation.envelope.id, {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    }
   } finally {
     clearInterval(heartbeat);
   }
@@ -85,10 +113,11 @@ async function executeActivation(
 async function loadWorkflowDefinition(
   activation: WorkflowActivation
 ): Promise<WorkflowDefinition<any, any>> {
-  const absolutePath = path.join(activation.project.path, activation.definition.file);
-  const moduleUrl = pathToFileURL(absolutePath).href;
-  const moduleExports = (await import(moduleUrl)) as Record<string, unknown>;
-  const definition = moduleExports[activation.definition.exportName];
+  const definition = await loadDefinitionModule(
+    activation.project.path,
+    activation.definition.file,
+    activation.definition.exportName
+  );
 
   if (!definition || typeof definition !== "object" || (definition as { kind?: string }).kind !== "workflow") {
     throw new Error(
@@ -99,7 +128,115 @@ async function loadWorkflowDefinition(
   return definition as WorkflowDefinition<any, any>;
 }
 
+async function loadServiceDefinition(
+  activation: ServiceTurnActivation
+): Promise<ServiceDefinition<any, any, any, any, any>> {
+  const definition = await loadDefinitionModule(
+    activation.project.path,
+    activation.definition.file,
+    activation.definition.exportName
+  );
+
+  if (!definition || typeof definition !== "object" || (definition as { kind?: string }).kind !== "service") {
+    throw new Error(
+      `Export '${activation.definition.exportName}' from ${activation.definition.file} is not a service definition`
+    );
+  }
+
+  return definition as ServiceDefinition<any, any, any, any, any>;
+}
+
+async function loadDefinitionModule(
+  projectPath: string,
+  file: string,
+  exportName: string
+): Promise<unknown> {
+  const absolutePath = path.join(projectPath, file);
+  const moduleUrl = pathToFileURL(absolutePath).href;
+  const moduleExports = (await import(moduleUrl)) as Record<string, unknown>;
+  return moduleExports[exportName];
+}
+
 function createWorkflowContext(client: WorkerClient, activation: WorkflowActivation): WorkflowContext {
+  const implicitServiceOpCounters = new Map<string, number>();
+
+  return {
+    ...createTurnContext(client, activation),
+    spawn<TInput, TOutput>(
+      definition: WorkflowDefinition<TInput, TOutput>,
+      input: TInput,
+      options: SpawnOptions = {}
+    ): WorkflowHandle<TOutput> {
+      const key = options.key ?? definition.name;
+      const childRunId = deterministicChildRunId(activation.run.id, key);
+      const spawnPromise = client.resolveSpawn(activation.leaseId, {
+        name: definition.name,
+        key,
+        childRunId,
+        input,
+      });
+
+      return {
+        id: childRunId,
+        async result() {
+          await spawnPromise;
+
+          const resolved = await client.resolveChildResult(activation.leaseId, {
+            childRunId,
+            key,
+          });
+
+          if (resolved.status === "completed") {
+            return resolved.output as TOutput;
+          }
+
+          if (resolved.status === "failed") {
+            throw toChildRunError(childRunId, resolved.error);
+          }
+
+          throw new RunSuspendedError("child_result", `child_result:${childRunId}`);
+        },
+        async status() {
+          await spawnPromise;
+          return (await client.getRunStatus(childRunId)) as RunStatus;
+        },
+        async signal(name: string, payload?: unknown) {
+          await spawnPromise;
+          await client.sendRunSignal(childRunId, name, payload ?? null);
+        },
+      };
+    },
+    async connect<
+      TKeyInput,
+      TState,
+      TSend extends Record<string, (...args: any[]) => any>,
+      TAsk extends Record<string, (...args: any[]) => any>,
+      TSignal extends Record<string, (...args: any[]) => any>
+    >(
+      definition: ServiceDefinition<TKeyInput, TState, TSend, TAsk, TSignal>,
+      input: TKeyInput,
+      _options?: ConnectOptions
+    ): Promise<ServiceRef<TSend, TAsk, TSignal>> {
+      const serviceKey = definition.key(input);
+      const serviceRunId = await client.ensureService(
+        activation.project.name,
+        definition.name,
+        serviceKey,
+        input
+      );
+
+      return createServiceRef(
+        client,
+        activation,
+        definition,
+        serviceRunId,
+        implicitServiceOpCounters
+      ) as ServiceRef<TSend, TAsk, TSignal>;
+    },
+  };
+}
+
+function createTurnContext(client: WorkerClient, activation: Activation): ServiceTurnContext {
   return {
     runId: activation.run.id,
     async step<TOutput>(
@@ -177,53 +314,6 @@ function createWorkflowContext(client: WorkerClient, activation: WorkflowActivat
     async log(message: string, fields?: Record<string, unknown>) {
       console.log("[vilano-worker]", activation.run.id, message, fields ?? {});
     },
-    spawn<TInput, TOutput>(
-      definition: WorkflowDefinition<TInput, TOutput>,
-      input: TInput,
-      options: SpawnOptions = {}
-    ): WorkflowHandle<TOutput> {
-      const key = options.key ?? definition.name;
-      const childRunId = deterministicChildRunId(activation.run.id, key);
-      const spawnPromise = client.resolveSpawn(activation.leaseId, {
-        name: definition.name,
-        key,
-        childRunId,
-        input,
-      });
-
-      return {
-        id: childRunId,
-        async result() {
-          await spawnPromise;
-
-          const resolved = await client.resolveChildResult(activation.leaseId, {
-            childRunId,
-            key,
-          });
-
-          if (resolved.status === "completed") {
-            return resolved.output as TOutput;
-          }
-
-          if (resolved.status === "failed") {
-            throw toChildRunError(childRunId, resolved.error);
-          }
-
-          throw new RunSuspendedError("child_result", `child_result:${childRunId}`);
-        },
-        async status() {
-          await spawnPromise;
-          return (await client.getRunStatus(childRunId)) as RunStatus;
-        },
-        async signal(name: string, payload?: unknown) {
-          await spawnPromise;
-          await client.sendRunSignal(childRunId, name, payload ?? null);
-        },
-      };
-    },
-    async connect() {
-      throw new Error("ctx.connect() is not implemented yet");
-    },
     async sleep(duration: string, options?: { key?: string }) {
       const durationMs = parseDurationToMs(duration);
       if (durationMs === undefined) {
@@ -248,6 +338,227 @@ function createWorkflowContext(client: WorkerClient, activation: WorkflowActivat
       throw new RunSuspendedError("signal", key);
     },
   };
+}
+
+function createServiceRef(
+  client: WorkerClient,
+  activation: WorkflowActivation,
+  definition: ServiceDefinition<any, any, any, any, any>,
+  serviceRunId: string,
+  implicitOpCounters: Map<string, number>
+): ServiceRef<any, any, any> {
+  const sendEntries = Object.keys(definition.onSend ?? {}).map((name) => [
+    name,
+    async (...args: any[]) => {
+      const { payload, options } = splitPayloadAndOptions(args, "message");
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "send",
+        name,
+        options?.key
+      );
+      const resolved = await client.resolveServiceSend(activation.leaseId, {
+        serviceRunId,
+        name,
+        key,
+        payload: payload ?? null,
+      });
+
+      if (resolved.status === "failed") {
+        throw new Error(`Service send '${name}' failed`);
+      }
+    },
+  ]);
+
+  const askEntries = Object.keys(definition.onAsk ?? {}).map((name) => [
+    name,
+    async (...args: any[]) => {
+      const { payload, options } = splitPayloadAndOptions(args, "ask");
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "ask",
+        name,
+        options?.key
+      );
+      const resolved = await client.resolveServiceAsk(activation.leaseId, {
+        serviceRunId,
+        name,
+        key,
+        payload: payload ?? null,
+      });
+
+      if (resolved.status === "completed") {
+        return resolved.output;
+      }
+
+      if (resolved.status === "failed") {
+        throw toServiceAskError(serviceRunId, name, resolved.error);
+      }
+
+      throw new RunSuspendedError("ask_reply", `ask_reply:ask:${key}`);
+    },
+  ]);
+
+  const signalEntries = Object.keys(definition.onSignal ?? {}).map((name) => [
+    name,
+    async (...args: any[]) => {
+      const { payload, options } = splitPayloadAndOptions(args, "signal");
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "signal",
+        name,
+        options?.key
+      );
+      const resolved = await client.resolveServiceSignal(activation.leaseId, {
+        serviceRunId,
+        name,
+        key,
+        payload: payload ?? null,
+      });
+
+      if (resolved.status === "failed") {
+        throw new Error(`Service signal '${name}' failed`);
+      }
+    },
+  ]);
+
+  return {
+    id: serviceRunId,
+    send: Object.fromEntries(sendEntries),
+    ask: Object.fromEntries(askEntries),
+    signal: Object.fromEntries(signalEntries),
+    async status() {
+      return (await client.getRunStatus(serviceRunId)) as RunStatus;
+    },
+  };
+}
+
+async function executeServiceTurn(
+  client: WorkerClient,
+  activation: ServiceTurnActivation,
+  definition: ServiceDefinition<any, any, any, any, any>
+): Promise<void> {
+  const ctx = createTurnContext(client, activation);
+  let state = activation.service.state;
+  let shouldCommitState = false;
+
+  if (state == null && definition.init) {
+    state = await definition.init(activation.service.keyInput, ctx);
+    shouldCommitState = true;
+  }
+
+  const envelope = activation.envelope;
+  const payload = envelope.payload === null ? undefined : envelope.payload;
+
+  if (envelope.kind === "ask") {
+    const handler = definition.onAsk?.[envelope.name];
+    if (typeof handler !== "function") {
+      throw new Error(`Unknown service ask handler '${envelope.name}' on '${definition.name}'`);
+    }
+
+    const result = (await handler(payload, state, ctx)) as AskResult<any, unknown>;
+    const nextState = hasOwnState(result) ? result.state : state;
+
+    await client.completeServiceTurn(activation.leaseId, envelope.id, {
+      state: shouldCommitState || hasOwnState(result) ? nextState : undefined,
+      reply: result.reply,
+      stop: result.stop === true,
+    });
+
+    return;
+  }
+
+  if (envelope.kind === "send") {
+    const handler = definition.onSend?.[envelope.name];
+    if (typeof handler !== "function") {
+      throw new Error(`Unknown service send handler '${envelope.name}' on '${definition.name}'`);
+    }
+
+    const result = (await handler(payload, state, ctx)) as
+      | void
+      | { state?: unknown; stop?: true };
+    const nextState = hasOwnState(result) ? result.state : state;
+
+    await client.completeServiceTurn(activation.leaseId, envelope.id, {
+      state: shouldCommitState || hasOwnState(result) ? nextState : undefined,
+      stop: result?.stop === true,
+    });
+
+    return;
+  }
+
+  const handler = definition.onSignal?.[envelope.name];
+  if (typeof handler !== "function") {
+    throw new Error(`Unknown service signal handler '${envelope.name}' on '${definition.name}'`);
+  }
+
+  const result = (await handler(payload, state, ctx)) as SignalResult<any>;
+  const nextState = hasOwnState(result) ? result.state : state;
+
+  await client.completeServiceTurn(activation.leaseId, envelope.id, {
+    state: shouldCommitState || hasOwnState(result) ? nextState : undefined,
+    stop: result?.stop === true,
+  });
+}
+
+function hasOwnState(value: unknown): value is { state?: unknown } {
+  return Boolean(value) && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, "state");
+}
+
+function splitPayloadAndOptions(
+  args: unknown[],
+  kind: ServiceMethodKind
+): {
+  payload: unknown;
+  options: AskOptions | MessageOptions | SignalOptions | undefined;
+} {
+  if (args.length === 0) {
+    return { payload: undefined, options: undefined };
+  }
+
+  if (args.length === 1 && looksLikeOptions(args[0], kind)) {
+    return {
+      payload: undefined,
+      options: args[0] as AskOptions | MessageOptions | SignalOptions,
+    };
+  }
+
+  return {
+    payload: args[0],
+    options: looksLikeOptions(args[1], kind)
+      ? (args[1] as AskOptions | MessageOptions | SignalOptions)
+      : undefined,
+  };
+}
+
+function looksLikeOptions(value: unknown, kind: ServiceMethodKind): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const allowedKeys = kind === "ask" ? new Set(["key", "timeout"]) : new Set(["key"]);
+  const keys = Object.keys(value);
+  return keys.length > 0 && keys.every((key) => allowedKeys.has(key));
+}
+
+function nextImplicitServiceOpKey(
+  counters: Map<string, number>,
+  serviceRunId: string,
+  opKind: "send" | "ask" | "signal",
+  messageName: string,
+  explicitKey?: string
+): string {
+  if (explicitKey) {
+    return explicitKey;
+  }
+
+  const counterKey = `${serviceRunId}:${opKind}:${messageName}`;
+  const nextCount = (counters.get(counterKey) ?? 0) + 1;
+  counters.set(counterKey, nextCount);
+  return `${opKind}:${serviceRunId}:${messageName}:${nextCount}`;
 }
 
 async function sleep(durationMs: number): Promise<void> {
@@ -313,7 +624,7 @@ type ExecFailure = {
 };
 
 async function executeProcess<TOutput>(
-  activation: WorkflowActivation,
+  activation: Activation,
   spec: ExecSpec<TOutput>,
   execution: {
     key: string;
@@ -480,7 +791,7 @@ async function streamToText(
 }
 
 async function persistExecCaptures<TOutput>(
-  activation: WorkflowActivation,
+  activation: Activation,
   execution: {
     key: string;
     attempt: number;
@@ -628,6 +939,14 @@ function toChildRunError(childRunId: string, error: unknown): Error {
   return new Error(`Child run '${childRunId}' failed`);
 }
 
+function toServiceAskError(serviceRunId: string, messageName: string, error: unknown): Error {
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return Object.assign(new Error(error.message), { cause: error, serviceRunId, messageName });
+  }
+
+  return new Error(`Service ask '${messageName}' failed on '${serviceRunId}'`);
+}
+
 function deterministicChildRunId(parentRunId: string, key: string): string {
   const digest = crypto.createHash("sha256").update(`${parentRunId}:${key}`).digest("hex").slice(0, 32);
   return `run_${digest}`;
@@ -635,7 +954,7 @@ function deterministicChildRunId(parentRunId: string, key: string): string {
 
 class RunSuspendedError extends Error {
   constructor(
-    readonly waitKind: "sleep" | "signal" | "child_result",
+    readonly waitKind: "sleep" | "signal" | "child_result" | "ask_reply",
     readonly key: string
   ) {
     super(`Run suspended on ${waitKind}:${key}`);
