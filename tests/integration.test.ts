@@ -50,6 +50,11 @@ class RuntimeHarness {
     }
   }
 
+  async restartDaemon(): Promise<void> {
+    await this.runCli(["daemon", "stop"], { allowFailure: true });
+    await this.runCli(["daemon", "start", "--port", String(this.port)]);
+  }
+
   async startWorkflow(reference: string, input: unknown): Promise<RunStartResponse> {
     return await this.runCliJson<RunStartResponse>([
       "run",
@@ -107,6 +112,19 @@ class RuntimeHarness {
     ]);
 
     return response.reply;
+  }
+
+  async sendService(reference: string, messageName: string, keyInput: unknown, input: unknown): Promise<void> {
+    await this.runCli([
+      "service",
+      "send",
+      reference,
+      messageName,
+      "--key-json",
+      JSON.stringify(keyInput),
+      "--input",
+      JSON.stringify(input),
+    ]);
   }
 
   async ensureService(reference: string, keyInput: unknown): Promise<void> {
@@ -961,6 +979,100 @@ test("signals sent before activation are buffered and consumed on first wait", a
     expect(completed.run.output).toEqual({ approval: { source: "buffered" } });
     expect(completed.events.map((event) => event.type)).toContain("WaitSatisfied");
     expect(completed.events.map((event) => event.type)).not.toContain("RunSuspended");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("sleep waits survive daemon restart and resume afterward", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/sleeper", { duration: "500ms" });
+
+    await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "waiting" &&
+        inspect.waits.some((wait) => wait.kind === "sleep" && wait.status === "waiting")
+    );
+
+    await harness.restartDaemon();
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed",
+      10_000
+    );
+
+    expect(completed.run.output).toEqual({ woke: true });
+    expect(completed.events.map((event) => event.type)).toContain("TimerFired");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("signal waits survive daemon restart and resume after a later signal", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/gate", {});
+
+    await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "waiting" &&
+        inspect.waits.some((wait) => wait.kind === "signal" && wait.status === "waiting")
+    );
+
+    await harness.restartDaemon();
+    await harness.sendSignal(run.run.id, "approved", { source: "after-restart" });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed",
+      10_000
+    );
+
+    expect(completed.run.output).toEqual({ approval: { source: "after-restart" } });
+    expect(completed.events.map((event) => event.type)).toContain("WaitSatisfied");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("service state survives daemon restart", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { repoId: "restart-state" };
+
+  try {
+    await harness.ensureService("demo/reviewer", keyInput);
+    await harness.sendService("demo/reviewer", "hint", keyInput, {
+      note: "persist this note",
+    });
+
+    await harness.waitForService(
+      "demo/reviewer",
+      keyInput,
+      (inspect) =>
+        inspect.run.status === "idle" &&
+        inspect.run.state !== null &&
+        typeof inspect.run.state === "object" &&
+        Array.isArray((inspect.run.state as { notes?: unknown[] }).notes) &&
+        ((inspect.run.state as { notes: unknown[] }).notes.length === 1),
+      10_000
+    );
+
+    await harness.restartDaemon();
+
+    const inspect = await harness.inspectService("demo/reviewer", keyInput);
+    expect(inspect.run.state).toEqual({
+      repoId: "restart-state",
+      notes: ["persist this note"],
+    });
+
+    const reply = await harness.askService("demo/reviewer", "status", keyInput, {});
+    expect(reply).toEqual({ ready: true, notes: 1 });
   } finally {
     await harness.dispose();
   }

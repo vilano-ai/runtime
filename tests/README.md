@@ -14,6 +14,9 @@ Current coverage:
 - durable exec retry/backoff
 - durable service-turn retry/backoff
 - durable signal delivery, including buffered signals before first activation
+- sleep wait durability across daemon restart
+- signal wait durability across daemon restart
+- service state durability across daemon restart
 - exec stdout/stderr/artifact capture on success
 - exec timeout persistence with captured failure artifacts
 - `run replay` workflow timeline rendering
@@ -33,3 +36,4 @@ Next high-value additions:
 
 - retry policy coverage for explicit non-retryable failures
 - richer replay coverage for wait/signal-heavy runs
+- longer-running soak coverage across repeated daemon restarts
