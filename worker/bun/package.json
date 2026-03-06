@@ -1,11 +1,8 @@
 {
-  "name": "vilano",
+  "name": "@vilano/worker-bun",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": {
-    "vilano": "bin/vilano.ts"
-  },
   "exports": {
     ".": "./src/index.ts"
   },

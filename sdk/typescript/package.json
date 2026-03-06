@@ -2,10 +2,12 @@
   "name": "@vilano/runtime",
   "version": "0.1.0",
   "private": true,
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "build": "bun run typecheck",
+    "typecheck": "tsc -p tsconfig.json"
   }
 }

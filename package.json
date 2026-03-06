@@ -1,16 +1,18 @@
 {
   "name": "vilano-runtime",
   "private": true,
+  "packageManager": "bun@1.3.8",
   "workspaces": [
     "sdk/typescript",
-    "worker/node",
+    "worker/bun",
     "cli"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "build": "bun run typecheck",
+    "typecheck": "tsc -p cli/tsconfig.json && tsc -p sdk/typescript/tsconfig.json && tsc -p worker/bun/tsconfig.json"
   },
   "devDependencies": {
+    "@types/bun": "^1.3.1",
     "@types/node": "^22.13.10",
     "typescript": "^5.8.2"
   }
