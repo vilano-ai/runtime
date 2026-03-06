@@ -13,6 +13,9 @@ import type {
   ExecResult,
   ExecSpec,
   MessageOptions,
+  RetryBackoff,
+  RetryFamily,
+  RetryOptions,
   RunStatus,
   ServiceDefinition,
   ServiceRef,
@@ -276,15 +279,16 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
     ) {
       const key = options.key ?? name;
       const timeoutMs = parseDurationToMs(options.timeout);
-      const maxAttempts = toMaxAttempts(options.retries);
-      const backoffMs = parseDurationToMs(options.backoff) ?? 0;
+      const retryPolicy = toRetryPolicy(options.retry, {
+        retries: options.retries,
+        backoff: options.backoff,
+      });
       const existing = await client.resolveStep(
         activation.leaseId,
         name,
         key,
         timeoutMs,
-        maxAttempts,
-        backoffMs
+        retryPolicy
       );
       if (existing.status === "completed") {
         return existing.output as TOutput;
@@ -323,6 +327,7 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
             timeoutMs,
             cause: error.cause,
             retryable: true,
+            family: "timeout",
           });
 
           const failedStep = await client.failStep(activation.leaseId, name, key, stepError);
@@ -341,6 +346,7 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
           timeoutMs,
           cause: error,
           retryable: isRetryableError(error),
+          family: "application",
         });
 
         const failedStep = await client.failStep(activation.leaseId, name, key, stepError);
@@ -357,8 +363,10 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
       const key = spec.key ?? spec.name;
       const cwd = resolveExecCwd(activation.project.path, spec.cwd);
       const timeoutMs = parseDurationToMs(spec.timeout);
-      const maxAttempts = toMaxAttempts(spec.retries);
-      const backoffMs = parseDurationToMs(spec.backoff) ?? 0;
+      const retryPolicy = toRetryPolicy(spec.retry, {
+        retries: spec.retries,
+        backoff: spec.backoff,
+      });
       const resolved = await client.resolveExec(activation.leaseId, {
         name: spec.name,
         key,
@@ -408,8 +416,7 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
         stderrRef: execution.stderrRef,
         artifacts: execution.artifacts,
         error: execution.error,
-        maxAttempts,
-        backoffMs,
+        retry: retryPolicy,
       });
 
       if (failedExec.status === "retry_waiting") {
@@ -857,6 +864,7 @@ async function executeProcess<TOutput>(
         artifacts: [],
         stderr: "",
         retryable: true,
+        family: "process_spawn",
       }),
       exitCode: null,
       signalCode: null,
@@ -943,6 +951,7 @@ async function executeProcess<TOutput>(
           artifacts: captures.artifacts,
           stderr,
           retryable: true,
+          family: "timeout",
         }),
         exitCode,
         signalCode,
@@ -966,6 +975,7 @@ async function executeProcess<TOutput>(
           artifacts: captures.artifacts,
           stderr,
           retryable: true,
+          family: "process_exit",
         }),
         exitCode,
         signalCode,
@@ -1010,6 +1020,7 @@ async function executeProcess<TOutput>(
         artifacts: captures.artifacts,
         stderr,
         retryable: isRetryableError(error),
+        family: "application",
       }),
       exitCode,
       signalCode: subprocess.signalCode,
@@ -1142,6 +1153,7 @@ function buildExecError(input: {
   artifacts: ExecArtifact[];
   stderr: string;
   retryable: boolean;
+  family: Exclude<RetryFamily, "always">;
 }): Record<string, unknown> {
   return {
     name: "ExecError",
@@ -1154,6 +1166,7 @@ function buildExecError(input: {
     stderrRef: input.stderrRef,
     artifacts: input.artifacts,
     retryable: input.retryable,
+    family: input.family,
   };
 }
 
@@ -1165,6 +1178,7 @@ function buildStepError(input: {
   timeoutMs?: number;
   cause: unknown;
   retryable: boolean;
+  family: Exclude<RetryFamily, "always">;
 }): Record<string, unknown> {
   const stack =
     input.cause instanceof Error && typeof input.cause.stack === "string" ? input.cause.stack : undefined;
@@ -1178,6 +1192,7 @@ function buildStepError(input: {
     timeoutMs: input.timeoutMs,
     stack,
     retryable: input.retryable,
+    family: input.family,
   };
 }
 
@@ -1193,6 +1208,12 @@ function toFailureBody(error: unknown): Record<string, unknown> {
       body.retryable = false;
     }
 
+    if ("family" in error && typeof error.family === "string") {
+      body.family = error.family;
+    } else {
+      body.family = "application";
+    }
+
     if ("cause" in error) {
       body.cause = (error as Error & { cause?: unknown }).cause;
     }
@@ -1202,6 +1223,7 @@ function toFailureBody(error: unknown): Record<string, unknown> {
 
   return {
     message: String(error),
+    family: "application",
   };
 }
 
@@ -1226,15 +1248,115 @@ function toMaxAttempts(retries?: number): number {
 }
 
 function toRetryPolicy(
-  retry?: { retries?: number; backoff?: string }
-): { maxAttempts?: number; backoffMs?: number } | undefined {
-  if (!retry) {
+  retry?: RetryOptions,
+  legacy?: { retries?: number; backoff?: RetryBackoff }
+):
+  | {
+      maxAttempts?: number;
+      backoffKind?: "fixed" | "linear" | "exponential";
+      backoffMs?: number;
+      backoffStepMs?: number;
+      backoffFactor?: number;
+      maxBackoffMs?: number;
+      retryOn?: string[];
+    }
+  | undefined {
+  const merged = mergeRetryOptions(retry, legacy);
+  if (!merged) {
     return undefined;
   }
 
-  const maxAttempts = toMaxAttempts(retry.retries);
-  const backoffMs = parseDurationToMs(retry.backoff) ?? 0;
-  return { maxAttempts, backoffMs };
+  const maxAttempts = toMaxAttempts(merged.retries);
+  const backoff = resolveRetryBackoff(merged.backoff);
+  const retryOn = normalizeRetryOn(merged.on);
+
+  return {
+    maxAttempts,
+    backoffKind: backoff.backoffKind,
+    backoffMs: backoff.backoffMs,
+    backoffStepMs: backoff.backoffStepMs,
+    backoffFactor: backoff.backoffFactor,
+    maxBackoffMs: backoff.maxBackoffMs,
+    retryOn,
+  };
+}
+
+function mergeRetryOptions(
+  retry?: RetryOptions,
+  legacy?: { retries?: number; backoff?: RetryBackoff }
+): RetryOptions | undefined {
+  const retries = retry?.retries ?? legacy?.retries;
+  const backoff = retry?.backoff ?? legacy?.backoff;
+  const on = retry?.on;
+
+  if (retries === undefined && backoff === undefined && on === undefined) {
+    return undefined;
+  }
+
+  return {
+    retries,
+    backoff,
+    on,
+  };
+}
+
+function resolveRetryBackoff(backoff?: RetryBackoff): {
+  backoffKind: "fixed" | "linear" | "exponential";
+  backoffMs: number;
+  backoffStepMs?: number;
+  backoffFactor?: number;
+  maxBackoffMs?: number;
+} {
+  if (!backoff) {
+    return {
+      backoffKind: "fixed",
+      backoffMs: 0,
+    };
+  }
+
+  if (typeof backoff === "string") {
+    return {
+      backoffKind: "fixed",
+      backoffMs: parseDurationToMs(backoff) ?? 0,
+    };
+  }
+
+  switch (backoff.kind) {
+    case "fixed":
+      return {
+        backoffKind: "fixed",
+        backoffMs: parseDurationToMs(backoff.delay) ?? 0,
+      };
+    case "linear":
+      return {
+        backoffKind: "linear",
+        backoffMs: parseDurationToMs(backoff.initial) ?? 0,
+        backoffStepMs: parseDurationToMs(backoff.step ?? backoff.initial) ?? 0,
+        maxBackoffMs: parseDurationToMs(backoff.max),
+      };
+    case "exponential":
+      return {
+        backoffKind: "exponential",
+        backoffMs: parseDurationToMs(backoff.initial) ?? 0,
+        backoffFactor:
+          typeof backoff.factor === "number" && Number.isFinite(backoff.factor) && backoff.factor > 0
+            ? backoff.factor
+            : 2,
+        maxBackoffMs: parseDurationToMs(backoff.max),
+      };
+  }
+}
+
+function normalizeRetryOn(on?: RetryFamily[]): string[] | undefined {
+  if (!on || on.length === 0) {
+    return undefined;
+  }
+
+  if (on.includes("always")) {
+    return ["always"];
+  }
+
+  return Array.from(new Set(on));
 }
 
 function truncate(value: string, maxLength = 240): string {

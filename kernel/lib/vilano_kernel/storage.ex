@@ -72,7 +72,12 @@ defmodule VilanoKernel.Storage do
         status text not null,
         attempt integer,
         max_attempts integer,
+        backoff_kind text,
         backoff_ms integer,
+        backoff_step_ms integer,
+        backoff_factor real,
+        max_backoff_ms integer,
+        retry_on_json text,
         timeout_ms integer,
         output_json text,
         error_json text,
@@ -86,7 +91,12 @@ defmodule VilanoKernel.Storage do
 
     ensure_column!("run_steps", "attempt", "integer")
     ensure_column!("run_steps", "max_attempts", "integer")
+    ensure_column!("run_steps", "backoff_kind", "text")
     ensure_column!("run_steps", "backoff_ms", "integer")
+    ensure_column!("run_steps", "backoff_step_ms", "integer")
+    ensure_column!("run_steps", "backoff_factor", "real")
+    ensure_column!("run_steps", "max_backoff_ms", "integer")
+    ensure_column!("run_steps", "retry_on_json", "text")
     ensure_column!("run_steps", "timeout_ms", "integer")
     ensure_column!("run_steps", "error_json", "text")
 
@@ -1467,14 +1477,14 @@ defmodule VilanoKernel.Storage do
   end
 
   def resolve_step(lease_id, name, op_key) do
-    resolve_step(lease_id, name, op_key, nil, nil, nil)
+    resolve_step(lease_id, name, op_key, nil, %{})
   end
 
   def resolve_step(lease_id, name, op_key, timeout_ms) do
-    resolve_step(lease_id, name, op_key, timeout_ms, nil, nil)
+    resolve_step(lease_id, name, op_key, timeout_ms, %{})
   end
 
-  def resolve_step(lease_id, name, op_key, timeout_ms, max_attempts, backoff_ms) do
+  def resolve_step(lease_id, name, op_key, timeout_ms, retry_policy) do
     now = now_iso8601()
 
     result =
@@ -1495,7 +1505,12 @@ defmodule VilanoKernel.Storage do
                   status,
                   attempt,
                   max_attempts,
+                  backoff_kind,
                   backoff_ms,
+                  backoff_step_ms,
+                  backoff_factor,
+                  max_backoff_ms,
+                  retry_on_json,
                   timeout_ms,
                   output_json,
                   error_json,
@@ -1531,8 +1546,9 @@ defmodule VilanoKernel.Storage do
 
                 persisted_max_attempts =
                   cond do
-                    is_integer(max_attempts) and max_attempts > 0 ->
-                      max_attempts
+                    is_integer(Map.get(retry_policy, "maxAttempts")) and
+                        Map.get(retry_policy, "maxAttempts") > 0 ->
+                      Map.get(retry_policy, "maxAttempts")
 
                     existing && is_integer(existing["max_attempts"]) && existing["max_attempts"] > 0 ->
                       existing["max_attempts"]
@@ -1541,16 +1557,77 @@ defmodule VilanoKernel.Storage do
                       1
                   end
 
+                persisted_backoff_kind =
+                  cond do
+                    is_binary(Map.get(retry_policy, "backoffKind")) ->
+                      normalize_backoff_kind(Map.get(retry_policy, "backoffKind"))
+
+                    existing && is_binary(existing["backoff_kind"]) ->
+                      normalize_backoff_kind(existing["backoff_kind"])
+
+                    true ->
+                      "fixed"
+                  end
+
                 persisted_backoff_ms =
                   cond do
-                    is_integer(backoff_ms) and backoff_ms >= 0 ->
-                      backoff_ms
+                    is_integer(Map.get(retry_policy, "backoffMs")) and Map.get(retry_policy, "backoffMs") >= 0 ->
+                      Map.get(retry_policy, "backoffMs")
 
                     existing && is_integer(existing["backoff_ms"]) && existing["backoff_ms"] >= 0 ->
                       existing["backoff_ms"]
 
                     true ->
                       0
+                  end
+
+                persisted_backoff_step_ms =
+                  cond do
+                    is_integer(Map.get(retry_policy, "backoffStepMs")) and
+                        Map.get(retry_policy, "backoffStepMs") >= 0 ->
+                      Map.get(retry_policy, "backoffStepMs")
+
+                    existing && is_integer(existing["backoff_step_ms"]) && existing["backoff_step_ms"] >= 0 ->
+                      existing["backoff_step_ms"]
+
+                    true ->
+                      nil
+                  end
+
+                persisted_backoff_factor =
+                  cond do
+                    is_number(Map.get(retry_policy, "backoffFactor")) and Map.get(retry_policy, "backoffFactor") > 0 ->
+                      Map.get(retry_policy, "backoffFactor")
+
+                    existing && is_number(existing["backoff_factor"]) && existing["backoff_factor"] > 0 ->
+                      existing["backoff_factor"]
+
+                    true ->
+                      nil
+                  end
+
+                persisted_max_backoff_ms =
+                  cond do
+                    is_integer(Map.get(retry_policy, "maxBackoffMs")) and Map.get(retry_policy, "maxBackoffMs") >= 0 ->
+                      Map.get(retry_policy, "maxBackoffMs")
+
+                    existing && is_integer(existing["max_backoff_ms"]) && existing["max_backoff_ms"] >= 0 ->
+                      existing["max_backoff_ms"]
+
+                    true ->
+                      nil
+                  end
+
+                persisted_retry_on =
+                  cond do
+                    is_list(Map.get(retry_policy, "retryOn")) ->
+                      normalize_retry_on(Map.get(retry_policy, "retryOn"))
+
+                    existing ->
+                      decode_json_list(existing["retry_on_json"])
+
+                    true ->
+                      []
                   end
 
                 SQL.query!(
@@ -1563,19 +1640,29 @@ defmodule VilanoKernel.Storage do
                     status,
                     attempt,
                     max_attempts,
+                    backoff_kind,
                     backoff_ms,
+                    backoff_step_ms,
+                    backoff_factor,
+                    max_backoff_ms,
+                    retry_on_json,
                     timeout_ms,
                     output_json,
                     error_json,
                     created_at,
                     updated_at
-                  ) values (?, ?, ?, 'running', ?, ?, ?, ?, null, null, ?, ?)
+                  ) values (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, ?, ?)
                   on conflict(run_id, op_key) do update set
                     name = excluded.name,
                     status = 'running',
                     attempt = excluded.attempt,
                     max_attempts = excluded.max_attempts,
+                    backoff_kind = excluded.backoff_kind,
                     backoff_ms = excluded.backoff_ms,
+                    backoff_step_ms = excluded.backoff_step_ms,
+                    backoff_factor = excluded.backoff_factor,
+                    max_backoff_ms = excluded.max_backoff_ms,
+                    retry_on_json = excluded.retry_on_json,
                     timeout_ms = excluded.timeout_ms,
                     error_json = null,
                     output_json = null,
@@ -1587,7 +1674,12 @@ defmodule VilanoKernel.Storage do
                     name,
                     attempt,
                     persisted_max_attempts,
+                    persisted_backoff_kind,
                     persisted_backoff_ms,
+                    persisted_backoff_step_ms,
+                    persisted_backoff_factor,
+                    persisted_max_backoff_ms,
+                    Jason.encode!(persisted_retry_on),
                     timeout_ms,
                     now,
                     now
@@ -1602,7 +1694,12 @@ defmodule VilanoKernel.Storage do
                     "key" => op_key,
                     "attempt" => attempt,
                     "maxAttempts" => persisted_max_attempts,
+                    "backoffKind" => persisted_backoff_kind,
                     "backoffMs" => persisted_backoff_ms,
+                    "backoffStepMs" => persisted_backoff_step_ms,
+                    "backoffFactor" => persisted_backoff_factor,
+                    "maxBackoffMs" => persisted_max_backoff_ms,
+                    "retryOn" => persisted_retry_on,
                     "timeoutMs" => timeout_ms
                   },
                   now
@@ -2549,7 +2646,12 @@ defmodule VilanoKernel.Storage do
         status,
         attempt,
         max_attempts,
+        backoff_kind,
         backoff_ms,
+        backoff_step_ms,
+        backoff_factor,
+        max_backoff_ms,
+        retry_on_json,
         timeout_ms,
         output_json,
         error_json,
@@ -2784,7 +2886,12 @@ defmodule VilanoKernel.Storage do
       "status" => row["status"],
       "attempt" => row["attempt"],
       "maxAttempts" => row["max_attempts"],
+      "backoffKind" => row["backoff_kind"],
       "backoffMs" => row["backoff_ms"],
+      "backoffStepMs" => row["backoff_step_ms"],
+      "backoffFactor" => row["backoff_factor"],
+      "maxBackoffMs" => row["max_backoff_ms"],
+      "retryOn" => decode_json_list(row["retry_on_json"]),
       "timeoutMs" => row["timeout_ms"],
       "output" => decode_json_value(row["output_json"], nil),
       "error" => decode_json_value(row["error_json"], nil),
@@ -2987,7 +3094,12 @@ defmodule VilanoKernel.Storage do
         status,
         attempt,
         max_attempts,
+        backoff_kind,
         backoff_ms,
+        backoff_step_ms,
+        backoff_factor,
+        max_backoff_ms,
+        retry_on_json,
         timeout_ms,
         output_json,
         error_json,
@@ -3585,8 +3697,16 @@ defmodule VilanoKernel.Storage do
     encoded_error = Jason.encode!(error_body)
     attempt = step_attempt(step)
     max_attempts = normalize_max_attempts(step["max_attempts"])
-    backoff_ms = normalize_backoff_ms(step["backoff_ms"])
-    decision = retry_decision(error_body, attempt, max_attempts)
+    retry_on = decode_json_list(step["retry_on_json"])
+    backoff_kind = normalize_backoff_kind(step["backoff_kind"])
+    backoff_ms = compute_backoff_ms(%{
+      "backoffKind" => backoff_kind,
+      "backoffMs" => step["backoff_ms"],
+      "backoffStepMs" => step["backoff_step_ms"],
+      "backoffFactor" => step["backoff_factor"],
+      "maxBackoffMs" => step["max_backoff_ms"]
+    }, attempt)
+    decision = retry_decision(error_body, attempt, max_attempts, retry_on)
     wake_at = if decision["willRetry"], do: shift_milliseconds(now, backoff_ms), else: nil
 
     append_event!(
@@ -3597,7 +3717,10 @@ defmodule VilanoKernel.Storage do
         "key" => step["op_key"],
         "attempt" => attempt,
         "maxAttempts" => max_attempts,
+        "backoffKind" => backoff_kind,
         "backoffMs" => backoff_ms,
+        "retryOn" => retry_on,
+        "retryFamily" => decision["retryFamily"],
         "retryable" => decision["retryable"],
         "willRetry" => decision["willRetry"],
         "retryDecision" => decision["retryDecision"],
@@ -3635,7 +3758,9 @@ defmodule VilanoKernel.Storage do
           "attempt" => attempt,
           "nextAttempt" => attempt + 1,
           "maxAttempts" => max_attempts,
+          "backoffKind" => backoff_kind,
           "backoffMs" => backoff_ms,
+          "retryOn" => retry_on,
           "wakeAt" => wake_at
         },
         now
@@ -3678,8 +3803,10 @@ defmodule VilanoKernel.Storage do
     encoded_error = Jason.encode!(error_body)
     attempt = exec["attempt"] || 1
     max_attempts = normalize_max_attempts(Map.get(body, "maxAttempts"))
-    backoff_ms = normalize_backoff_ms(Map.get(body, "backoffMs"))
-    decision = retry_decision(error_body, attempt, max_attempts)
+    retry_on = normalize_retry_on(Map.get(body, "retryOn"))
+    backoff_kind = normalize_backoff_kind(Map.get(body, "backoffKind"))
+    backoff_ms = compute_backoff_ms(body, attempt)
+    decision = retry_decision(error_body, attempt, max_attempts, retry_on)
     wake_at = if decision["willRetry"], do: shift_milliseconds(now, backoff_ms), else: nil
 
     append_event!(
@@ -3690,7 +3817,10 @@ defmodule VilanoKernel.Storage do
         "key" => op_key,
         "attempt" => attempt,
         "maxAttempts" => max_attempts,
+        "backoffKind" => backoff_kind,
         "backoffMs" => backoff_ms,
+        "retryOn" => retry_on,
+        "retryFamily" => decision["retryFamily"],
         "retryable" => decision["retryable"],
         "willRetry" => decision["willRetry"],
         "retryDecision" => decision["retryDecision"],
@@ -3750,7 +3880,9 @@ defmodule VilanoKernel.Storage do
           "attempt" => attempt,
           "nextAttempt" => attempt + 1,
           "maxAttempts" => max_attempts,
+          "backoffKind" => backoff_kind,
           "backoffMs" => backoff_ms,
+          "retryOn" => retry_on,
           "wakeAt" => wake_at
         },
         now
@@ -3807,9 +3939,11 @@ defmodule VilanoKernel.Storage do
 
   defp fail_service_turn_attempt!(service_run, envelope, error_body, retry_options, now) do
     max_attempts = normalize_max_attempts(Map.get(retry_options, "maxAttempts"))
-    backoff_ms = normalize_backoff_ms(Map.get(retry_options, "backoffMs"))
     attempt = envelope["attempt"] || 1
-    decision = retry_decision(error_body, attempt, max_attempts)
+    retry_on = normalize_retry_on(Map.get(retry_options, "retryOn"))
+    backoff_kind = normalize_backoff_kind(Map.get(retry_options, "backoffKind"))
+    backoff_ms = compute_backoff_ms(retry_options, attempt)
+    decision = retry_decision(error_body, attempt, max_attempts, retry_on)
     wake_at = if decision["willRetry"], do: shift_milliseconds(now, backoff_ms), else: nil
 
     append_event!(
@@ -3821,7 +3955,10 @@ defmodule VilanoKernel.Storage do
         "name" => envelope["name"],
         "attempt" => attempt,
         "maxAttempts" => max_attempts,
+        "backoffKind" => backoff_kind,
         "backoffMs" => backoff_ms,
+        "retryOn" => retry_on,
+        "retryFamily" => decision["retryFamily"],
         "retryable" => decision["retryable"],
         "willRetry" => decision["willRetry"],
         "retryDecision" => decision["retryDecision"],
@@ -3859,7 +3996,9 @@ defmodule VilanoKernel.Storage do
           "attempt" => attempt,
           "nextAttempt" => next_attempt,
           "maxAttempts" => max_attempts,
+          "backoffKind" => backoff_kind,
           "backoffMs" => backoff_ms,
+          "retryOn" => retry_on,
           "wakeAt" => wake_at
         },
         now
@@ -3967,7 +4106,9 @@ defmodule VilanoKernel.Storage do
         "attempt" => Map.fetch!(body, "attempt"),
         "nextAttempt" => Map.fetch!(body, "nextAttempt"),
         "maxAttempts" => Map.fetch!(body, "maxAttempts"),
+        "backoffKind" => Map.get(body, "backoffKind"),
         "backoffMs" => Map.fetch!(body, "backoffMs"),
+        "retryOn" => Map.get(body, "retryOn"),
         "waitKey" => wait_key,
         "wakeAt" => Map.fetch!(body, "wakeAt")
       },
@@ -3985,6 +4126,7 @@ defmodule VilanoKernel.Storage do
         "operationKey" => Map.fetch!(body, "operationKey"),
         "attempt" => Map.fetch!(body, "attempt"),
         "nextAttempt" => Map.fetch!(body, "nextAttempt"),
+        "backoffKind" => Map.get(body, "backoffKind"),
         "wakeAt" => Map.fetch!(body, "wakeAt")
       },
       now
@@ -3999,6 +4141,7 @@ defmodule VilanoKernel.Storage do
         "operationKind" => Map.fetch!(body, "operationKind"),
         "operationKey" => Map.fetch!(body, "operationKey"),
         "name" => Map.fetch!(body, "operationName"),
+        "backoffKind" => Map.get(body, "backoffKind"),
         "wakeAt" => Map.fetch!(body, "wakeAt")
       },
       now
@@ -4022,36 +4165,116 @@ defmodule VilanoKernel.Storage do
 
   defp retry_wait_key(kind, op_key), do: "retry:" <> kind <> ":" <> op_key
 
-  defp retryable_failure?(error_body) when is_map(error_body) do
-    Map.get(error_body, "retryable", true) != false
+  defp retryable_failure?(error_body, retry_on)
+
+  defp retryable_failure?(error_body, retry_on) when is_map(error_body) do
+    retryable = Map.get(error_body, "retryable", true) != false
+    family = normalize_retry_family(Map.get(error_body, "family"))
+    retryable and retry_family_allowed?(family, retry_on)
   end
 
-  defp retryable_failure?(_error_body), do: true
+  defp retryable_failure?(_error_body, retry_on) do
+    retry_family_allowed?("application", retry_on)
+  end
 
-  defp retry_decision(error_body, attempt, max_attempts) do
-    retryable = retryable_failure?(error_body)
+  defp retry_decision(error_body, attempt, max_attempts, retry_on) do
+    family = normalize_retry_family(Map.get(error_body, "family"))
+    explicit_retryable = Map.get(error_body, "retryable", true) != false
+    family_allowed = retry_family_allowed?(family, retry_on)
+    retryable = retryable_failure?(error_body, retry_on)
     will_retry = retryable and attempt < max_attempts
 
     decision =
       cond do
         will_retry -> "scheduled"
-        not retryable -> "non_retryable"
+        not explicit_retryable -> "non_retryable"
+        not family_allowed -> "family_not_selected"
         max_attempts <= 1 -> "retries_disabled"
         true -> "attempts_exhausted"
       end
 
     %{
+      "retryFamily" => family,
       "retryable" => retryable,
       "willRetry" => will_retry,
       "retryDecision" => decision
     }
   end
 
+  defp retry_family_allowed?(_family, []), do: true
+
+  defp retry_family_allowed?(family, retry_on) when is_list(retry_on) do
+    normalized = normalize_retry_on(retry_on)
+    normalized == [] or "always" in normalized or family in normalized
+  end
+
+  defp retry_family_allowed?(_family, _retry_on), do: true
+
+  defp compute_backoff_ms(policy, attempt) do
+    kind = normalize_backoff_kind(Map.get(policy, "backoffKind"))
+    base_ms = normalize_backoff_ms(Map.get(policy, "backoffMs"))
+    max_ms = normalize_optional_backoff_ms(Map.get(policy, "maxBackoffMs"))
+
+    computed =
+      case kind do
+        "linear" ->
+          step_ms = normalize_optional_backoff_ms(Map.get(policy, "backoffStepMs")) || base_ms
+          base_ms + max(attempt - 1, 0) * step_ms
+
+        "exponential" ->
+          factor = normalize_backoff_factor(Map.get(policy, "backoffFactor"))
+          round(base_ms * :math.pow(factor, max(attempt - 1, 0)))
+
+        _ ->
+          base_ms
+      end
+
+    case max_ms do
+      nil -> computed
+      value -> min(computed, value)
+    end
+  end
+
   defp normalize_max_attempts(value) when is_integer(value) and value > 0, do: value
   defp normalize_max_attempts(_value), do: 1
 
+  defp normalize_backoff_kind("linear"), do: "linear"
+  defp normalize_backoff_kind("exponential"), do: "exponential"
+  defp normalize_backoff_kind(_value), do: "fixed"
+
   defp normalize_backoff_ms(value) when is_integer(value) and value >= 0, do: value
   defp normalize_backoff_ms(_value), do: 0
+
+  defp normalize_optional_backoff_ms(value) when is_integer(value) and value >= 0, do: value
+  defp normalize_optional_backoff_ms(_value), do: nil
+
+  defp normalize_backoff_factor(value) when is_number(value) and value > 0, do: value
+  defp normalize_backoff_factor(_value), do: 2.0
+
+  defp normalize_retry_family("timeout"), do: "timeout"
+  defp normalize_retry_family("process_exit"), do: "process_exit"
+  defp normalize_retry_family("process_spawn"), do: "process_spawn"
+  defp normalize_retry_family("application"), do: "application"
+  defp normalize_retry_family(_value), do: "application"
+
+  defp normalize_retry_on(values) when is_list(values) do
+    normalized =
+      values
+      |> Enum.filter(&is_binary/1)
+      |> Enum.map(fn
+        "always" -> "always"
+        value -> normalize_retry_family(value)
+      end)
+      |> Enum.uniq()
+
+    if Enum.member?(normalized, "always") do
+      ["always"]
+    else
+      normalized
+    end
+  end
+
+  defp normalize_retry_on(_values), do: []
 
 
   defp cancel_waiting_waits!(run_id, error_body, now) do

@@ -18,16 +18,44 @@ export interface ConnectOptions {
   mustExist?: boolean;
 }
 
+export type RetryFamily =
+  | "always"
+  | "application"
+  | "timeout"
+  | "process_exit"
+  | "process_spawn";
+
+export type RetryBackoff =
+  | string
+  | {
+      kind: "fixed";
+      delay: string;
+    }
+  | {
+      kind: "linear";
+      initial: string;
+      step?: string;
+      max?: string;
+    }
+  | {
+      kind: "exponential";
+      initial: string;
+      factor?: number;
+      max?: string;
+    };
+
 export interface StepOptions {
   key?: string;
   timeout?: string;
   retries?: number;
-  backoff?: string;
+  backoff?: RetryBackoff;
+  retry?: RetryOptions;
 }
 
 export interface RetryOptions {
   retries?: number;
-  backoff?: string;
+  backoff?: RetryBackoff;
+  on?: RetryFamily[];
 }
 
 export interface StepContext {
@@ -102,7 +130,8 @@ export interface ExecSpec<TOutput = unknown> {
   name: string;
   key?: string;
   retries?: number;
-  backoff?: string;
+  backoff?: RetryBackoff;
+  retry?: RetryOptions;
   cmd: string;
   args?: string[];
   timeout?: string;

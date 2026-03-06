@@ -128,6 +128,7 @@ export interface RunStepRecord {
   lastEventType?: string | null;
   lastEventAt?: string | null;
   retryDecision?: string | null;
+  retryFamily?: string | null;
   retryable?: boolean | null;
   willRetry?: boolean | null;
   nextAttempt?: number | null;
@@ -158,6 +159,7 @@ export interface RunExecRecord {
   lastEventType?: string | null;
   lastEventAt?: string | null;
   retryDecision?: string | null;
+  retryFamily?: string | null;
   retryable?: boolean | null;
   willRetry?: boolean | null;
   nextAttempt?: number | null;
@@ -231,6 +233,7 @@ export interface RunTurnRecord {
   reply: unknown | null;
   error: unknown | null;
   retryDecision?: string | null;
+  retryFamily?: string | null;
   retryable?: boolean | null;
   willRetry?: boolean | null;
   nextAttempt?: number | null;

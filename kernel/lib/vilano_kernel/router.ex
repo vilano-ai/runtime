@@ -257,10 +257,17 @@ defmodule VilanoKernel.Router do
     name = fetch_required_string(conn.body_params, "name")
     key = fetch_required_string(conn.body_params, "key")
     timeout_ms = Map.get(conn.body_params, "timeoutMs")
-    max_attempts = Map.get(conn.body_params, "maxAttempts")
-    backoff_ms = Map.get(conn.body_params, "backoffMs")
+    retry_policy = %{
+      "maxAttempts" => Map.get(conn.body_params, "maxAttempts"),
+      "backoffKind" => Map.get(conn.body_params, "backoffKind"),
+      "backoffMs" => Map.get(conn.body_params, "backoffMs"),
+      "backoffStepMs" => Map.get(conn.body_params, "backoffStepMs"),
+      "backoffFactor" => Map.get(conn.body_params, "backoffFactor"),
+      "maxBackoffMs" => Map.get(conn.body_params, "maxBackoffMs"),
+      "retryOn" => Map.get(conn.body_params, "retryOn")
+    }
 
-    case Storage.resolve_step(lease_id, name, key, timeout_ms, max_attempts, backoff_ms) do
+    case Storage.resolve_step(lease_id, name, key, timeout_ms, retry_policy) do
       nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
       step -> send_json(conn, 200, %{ok: true, step: step})
     end
@@ -340,7 +347,12 @@ defmodule VilanoKernel.Router do
       "artifacts" => Map.get(conn.body_params, "artifacts", []),
       "error" => Map.get(conn.body_params, "error", %{}),
       "maxAttempts" => Map.get(conn.body_params, "maxAttempts"),
-      "backoffMs" => Map.get(conn.body_params, "backoffMs")
+      "backoffKind" => Map.get(conn.body_params, "backoffKind"),
+      "backoffMs" => Map.get(conn.body_params, "backoffMs"),
+      "backoffStepMs" => Map.get(conn.body_params, "backoffStepMs"),
+      "backoffFactor" => Map.get(conn.body_params, "backoffFactor"),
+      "maxBackoffMs" => Map.get(conn.body_params, "maxBackoffMs"),
+      "retryOn" => Map.get(conn.body_params, "retryOn")
     }
 
     case Storage.fail_exec(lease_id, name, key, body) do
@@ -452,7 +464,12 @@ defmodule VilanoKernel.Router do
     error_body = Map.get(conn.body_params, "error", %{})
     retry_options = %{
       "maxAttempts" => Map.get(conn.body_params, "maxAttempts"),
-      "backoffMs" => Map.get(conn.body_params, "backoffMs")
+      "backoffKind" => Map.get(conn.body_params, "backoffKind"),
+      "backoffMs" => Map.get(conn.body_params, "backoffMs"),
+      "backoffStepMs" => Map.get(conn.body_params, "backoffStepMs"),
+      "backoffFactor" => Map.get(conn.body_params, "backoffFactor"),
+      "maxBackoffMs" => Map.get(conn.body_params, "maxBackoffMs"),
+      "retryOn" => Map.get(conn.body_params, "retryOn")
     }
 
     case Storage.fail_service_turn(lease_id, envelope_id, error_body, retry_options) do
@@ -803,6 +820,7 @@ defmodule VilanoKernel.Router do
           key: Map.get(body, "key"),
           attempt: Map.get(body, "attempt"),
           timedOut: Map.get(body_record(Map.get(body, "error")), "timedOut"),
+          family: Map.get(body, "retryFamily"),
           retry: Map.get(body, "retryDecision"),
           retryable: Map.get(body, "retryable"),
           willRetry: Map.get(body, "willRetry"),
@@ -832,6 +850,7 @@ defmodule VilanoKernel.Router do
           signal: Map.get(body, "signalCode"),
           stdout: Map.get(body, "stdoutRef"),
           stderr: Map.get(body, "stderrRef"),
+          family: Map.get(body, "retryFamily"),
           retry: Map.get(body, "retryDecision"),
           retryable: Map.get(body, "retryable"),
           willRetry: Map.get(body, "willRetry"),
@@ -863,6 +882,7 @@ defmodule VilanoKernel.Router do
           name: Map.get(body, "name"),
           attempt: Map.get(body, "attempt"),
           nextAttempt: Map.get(body, "nextAttempt"),
+          backoffKind: Map.get(body, "backoffKind"),
           backoffMs: Map.get(body, "backoffMs"),
           wakeAt: Map.get(body, "wakeAt")
         })
@@ -900,6 +920,7 @@ defmodule VilanoKernel.Router do
           reason: Map.get(body, "reason"),
           wait: Map.get(body, "waitKind"),
           key: Map.get(body, "key"),
+          family: Map.get(body, "retryFamily"),
           retry: Map.get(body, "retryDecision"),
           retryable: Map.get(body, "retryable"),
           willRetry: Map.get(body, "willRetry"),

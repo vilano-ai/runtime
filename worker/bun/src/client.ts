@@ -60,6 +60,16 @@ interface StepResolveResponse {
     | { status: "failed"; error: unknown };
 }
 
+interface ResolvedRetryPolicy {
+  maxAttempts?: number;
+  backoffKind?: "fixed" | "linear" | "exponential";
+  backoffMs?: number;
+  backoffStepMs?: number;
+  backoffFactor?: number;
+  maxBackoffMs?: number;
+  retryOn?: string[];
+}
+
 interface ExecResolveResponse {
   ok: true;
   exec:
@@ -189,13 +199,23 @@ export class WorkerClient {
     name: string,
     key: string,
     timeoutMs?: number,
-    maxAttempts?: number,
-    backoffMs?: number
+    retry?: ResolvedRetryPolicy
   ): Promise<StepResolveResponse["step"]> {
     const response = await this.request<StepResolveResponse>(
       "POST",
       `/v1/leases/${encodeURIComponent(leaseId)}/steps/resolve`,
-      { name, key, timeoutMs, maxAttempts, backoffMs }
+      {
+        name,
+        key,
+        timeoutMs,
+        maxAttempts: retry?.maxAttempts,
+        backoffKind: retry?.backoffKind,
+        backoffMs: retry?.backoffMs,
+        backoffStepMs: retry?.backoffStepMs,
+        backoffFactor: retry?.backoffFactor,
+        maxBackoffMs: retry?.maxBackoffMs,
+        retryOn: retry?.retryOn,
+      }
     );
 
     return response.step;
@@ -276,14 +296,29 @@ export class WorkerClient {
       stderrRef?: string;
       artifacts: Array<{ path: string; ref: string }>;
       error: unknown;
-      maxAttempts?: number;
-      backoffMs?: number;
+      retry?: ResolvedRetryPolicy;
     }
   ): Promise<ExecFailResponse["exec"]> {
     const response = await this.request<ExecFailResponse>(
       "POST",
       `/v1/leases/${encodeURIComponent(leaseId)}/execs/fail`,
-      spec
+      {
+        name: spec.name,
+        key: spec.key,
+        exitCode: spec.exitCode,
+        signalCode: spec.signalCode,
+        stdoutRef: spec.stdoutRef,
+        stderrRef: spec.stderrRef,
+        artifacts: spec.artifacts,
+        error: spec.error,
+        maxAttempts: spec.retry?.maxAttempts,
+        backoffKind: spec.retry?.backoffKind,
+        backoffMs: spec.retry?.backoffMs,
+        backoffStepMs: spec.retry?.backoffStepMs,
+        backoffFactor: spec.retry?.backoffFactor,
+        maxBackoffMs: spec.retry?.maxBackoffMs,
+        retryOn: spec.retry?.retryOn,
+      }
     );
 
     return response.exec;
@@ -424,7 +459,7 @@ export class WorkerClient {
     leaseId: string,
     envelopeId: string,
     error: Record<string, unknown>,
-    retry?: { maxAttempts?: number; backoffMs?: number }
+    retry?: ResolvedRetryPolicy
   ): Promise<ServiceTurnFailResponse> {
     return await this.request<ServiceTurnFailResponse>(
       "POST",
@@ -432,7 +467,12 @@ export class WorkerClient {
       {
         error,
         maxAttempts: retry?.maxAttempts,
+        backoffKind: retry?.backoffKind,
         backoffMs: retry?.backoffMs,
+        backoffStepMs: retry?.backoffStepMs,
+        backoffFactor: retry?.backoffFactor,
+        maxBackoffMs: retry?.maxBackoffMs,
+        retryOn: retry?.retryOn,
       }
     );
   }

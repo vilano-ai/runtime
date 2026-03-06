@@ -1030,6 +1030,10 @@ function renderRunInspect(
               parts.push(`retry=${step.retryDecision}`);
             }
 
+            if (step.retryFamily) {
+              parts.push(`family=${step.retryFamily}`);
+            }
+
             if (step.retryable === false) {
               parts.push("retryable=false");
             }
@@ -1078,6 +1082,10 @@ function renderRunInspect(
 
             if (exec.retryDecision) {
               parts.push(`retry=${exec.retryDecision}`);
+            }
+
+            if (exec.retryFamily) {
+              parts.push(`family=${exec.retryFamily}`);
             }
 
             if (exec.retryable === false) {
@@ -1174,6 +1182,10 @@ function renderRunInspect(
 
             if (turn.retryDecision) {
               parts.push(`retry=${turn.retryDecision}`);
+            }
+
+            if (turn.retryFamily) {
+              parts.push(`family=${turn.retryFamily}`);
             }
 
             if (turn.retryable === false) {
@@ -1421,6 +1433,7 @@ function renderEventSummary(event: RunEventRecord): string {
         envelope: body.envelopeId,
         kind: body.kind,
         name: body.name,
+        family: body.retryFamily,
         retry: body.retryDecision,
         retryable: body.retryable,
         willRetry: body.willRetry,
@@ -1446,6 +1459,7 @@ function renderEventSummary(event: RunEventRecord): string {
       return formatSummary({
         key: body.key,
         name: body.name,
+        family: body.retryFamily,
         retry: body.retryDecision,
         retryable: body.retryable,
         willRetry: body.willRetry,
@@ -1475,6 +1489,7 @@ function formatSummary(fields: Record<string, unknown>): string {
 
 function retryFieldsFromEventBody(body: Record<string, unknown>): {
   retryDecision?: string | null;
+  retryFamily?: string | null;
   retryable?: boolean | null;
   willRetry?: boolean | null;
   nextAttempt?: number | null;
@@ -1482,6 +1497,7 @@ function retryFieldsFromEventBody(body: Record<string, unknown>): {
 } {
   return {
     retryDecision: typeof body.retryDecision === "string" ? body.retryDecision : null,
+    retryFamily: typeof body.retryFamily === "string" ? body.retryFamily : null,
     retryable: typeof body.retryable === "boolean" ? body.retryable : null,
     willRetry: typeof body.willRetry === "boolean" ? body.willRetry : null,
     nextAttempt: typeof body.nextAttempt === "number" ? body.nextAttempt : null,
