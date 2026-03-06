@@ -1,0 +1,17 @@
+{
+  "name": "vilano-runtime",
+  "private": true,
+  "workspaces": [
+    "sdk/typescript",
+    "worker/node",
+    "cli"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
+  }
+}

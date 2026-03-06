@@ -1,1 +1,9 @@
 /spec
+node_modules/
+dist/
+coverage/
+.DS_Store
+*.log
+_build/
+deps/
+.elixir_ls/
