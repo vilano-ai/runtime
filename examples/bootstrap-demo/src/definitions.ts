@@ -2,6 +2,26 @@ import fs from "node:fs/promises";
 
 import { nonRetryable, service, workflow } from "@vilano/runtime";
 
+type DemoRetryFamily = "always" | "application" | "timeout" | "process_exit" | "process_spawn";
+type DemoRetryBackoff =
+  | string
+  | {
+      kind: "fixed";
+      delay: string;
+    }
+  | {
+      kind: "linear";
+      initial: string;
+      step?: string;
+      max?: string;
+    }
+  | {
+      kind: "exponential";
+      initial: string;
+      factor?: number;
+      max?: string;
+    };
+
 async function bumpMarkerAttempt(markerPath: string): Promise<number> {
   await fs.mkdir("tmp", { recursive: true });
 
@@ -135,7 +155,13 @@ export const blockingStep = workflow({
 export const retryingStep = workflow({
   name: "retryingStep",
   run: async (
-    input: { token: string; retries?: number; backoff?: string },
+    input: {
+      token: string;
+      retries?: number;
+      backoff?: DemoRetryBackoff;
+      retryOn?: DemoRetryFamily[];
+      failuresBeforeSuccess?: number;
+    },
     ctx
   ) => {
     const markerPath = `tmp/retrying-step-${input.token}.txt`;
@@ -144,7 +170,7 @@ export const retryingStep = workflow({
       "retrying-step",
       async () => {
         const attempt = await bumpMarkerAttempt(markerPath);
-        if (attempt === 1) {
+        if (attempt <= (input.failuresBeforeSuccess ?? 1)) {
           throw new Error("transient step failure");
         }
 
@@ -155,8 +181,55 @@ export const retryingStep = workflow({
       },
       {
         key: `retrying-step:${input.token}`,
-        retries: input.retries ?? 1,
-        backoff: input.backoff ?? "50ms",
+        retry: {
+          retries: input.retries ?? 1,
+          backoff: input.backoff ?? "50ms",
+          on: input.retryOn,
+        },
+      }
+    );
+  },
+});
+
+export const timeoutRetryingStep = workflow({
+  name: "timeoutRetryingStep",
+  run: async (
+    input: {
+      token: string;
+      retries?: number;
+      backoff?: DemoRetryBackoff;
+      retryOn?: DemoRetryFamily[];
+      timeout?: string;
+    },
+    ctx
+  ) => {
+    const markerPath = `tmp/timeout-retrying-step-${input.token}.txt`;
+
+    return await ctx.step(
+      "timeout-retrying-step",
+      async (step) => {
+        const attempt = await bumpMarkerAttempt(markerPath);
+
+        if (attempt === 1) {
+          const deadline = Date.now() + 5_000;
+          while (Date.now() < deadline) {
+            await step.yield();
+          }
+        }
+
+        return {
+          attempt,
+          token: input.token,
+        };
+      },
+      {
+        key: `timeout-retrying-step:${input.token}`,
+        timeout: input.timeout ?? "200ms",
+        retry: {
+          retries: input.retries ?? 1,
+          backoff: input.backoff ?? "50ms",
+          on: input.retryOn ?? ["timeout"],
+        },
       }
     );
   },
@@ -410,6 +483,23 @@ export const retryingResponder = service({
   },
 });
 
+export const timeoutOnlyResponder = service({
+  name: "timeoutOnlyResponder",
+  retry: {
+    retries: 2,
+    backoff: "50ms",
+    on: ["timeout"],
+  },
+  key: (input: { sessionId: string }) => input.sessionId,
+  onAsk: {
+    unstable: async (payload: { token: string }) => {
+      const markerPath = `tmp/timeout-only-service-${payload.token}.txt`;
+      const attempt = await bumpMarkerAttempt(markerPath);
+      throw new Error(`application failure on attempt ${attempt}`);
+    },
+  },
+});
+
 export const nonRetryingResponder = service({
   name: "nonRetryingResponder",
   retry: {
@@ -521,7 +611,13 @@ export const timedExec = workflow({
 export const retryingExec = workflow({
   name: "retryingExec",
   run: async (
-    input: { token: string; retries?: number; backoff?: string },
+    input: {
+      token: string;
+      retries?: number;
+      backoff?: DemoRetryBackoff;
+      retryOn?: DemoRetryFamily[];
+      failuresBeforeSuccess?: number;
+    },
     ctx
   ) => {
     const markerPath = `tmp/retrying-exec-${input.token}.txt`;
@@ -529,8 +625,11 @@ export const retryingExec = workflow({
     return await ctx.exec({
       name: "retrying-exec",
       key: `retrying-exec:${input.token}`,
-      retries: input.retries ?? 1,
-      backoff: input.backoff ?? "50ms",
+      retry: {
+        retries: input.retries ?? 1,
+        backoff: input.backoff ?? "50ms",
+        on: input.retryOn,
+      },
       cmd: "bun",
       args: [
         "-e",
@@ -543,7 +642,7 @@ export const retryingExec = workflow({
           "  attempt = Number(fs.readFileSync(markerPath, 'utf8').trim() || '0') + 1;",
           "}",
           "fs.writeFileSync(markerPath, String(attempt));",
-          "if (attempt === 1) {",
+          `if (attempt <= ${input.failuresBeforeSuccess ?? 1}) {`,
           "  console.error('transient exec failure');",
           "  process.exit(1);",
           "}",

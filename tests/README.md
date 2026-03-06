@@ -14,6 +14,8 @@ Current coverage:
 - durable exec retry/backoff
 - durable service-turn retry/backoff
 - explicit non-retryable failures bypassing retries
+- retry-family filtering for steps, execs, and service turns
+- exponential retry backoff scheduling
 - durable signal delivery, including buffered signals before first activation
 - sleep wait durability across daemon restart
 - signal wait durability across daemon restart
@@ -37,6 +39,6 @@ Run it from the dev shell:
 
 Next high-value additions:
 
-- retry policy coverage for explicit non-retryable failures
-- richer replay coverage for wait/signal-heavy runs
 - longer-running soak coverage across repeated daemon restarts
+- restart coverage for richer retry-policy combinations
+- higher-volume service mailbox / turn sequencing coverage

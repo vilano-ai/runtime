@@ -86,7 +86,11 @@ import { service } from "@vilano/runtime";
 export const reviewer = service({
   name: "reviewer",
   key: (input: { repoId: string }) => input.repoId,
-  retry: { retries: 1, backoff: "50ms" },
+  retry: {
+    retries: 1,
+    backoff: { kind: "exponential", initial: "50ms", factor: 2, max: "1s" },
+    on: ["application", "timeout"],
+  },
 
   init: async (input) => ({
     repoId: input.repoId,
@@ -168,11 +172,14 @@ import { nonRetryable } from "@vilano/runtime";
 throw nonRetryable(new Error("invalid user input"));
 ```
 
-Current retry behavior is fixed-count plus fixed-backoff:
+Current retry behavior is durable, kernel-scheduled, and configurable:
 
-- `retries: 1` means at most 2 attempts total
-- `backoff: "50ms"` schedules a durable timed retry wait in the kernel
-- `run inspect` and `run replay` surface the retry decision directly as `scheduled`, `non_retryable`, `retries_disabled`, or `attempts_exhausted`
+- `retries: 1` still means at most 2 attempts total
+- `retry: { retries, backoff, on }` is the preferred shape for new code
+- `backoff` can now be:
+  `"50ms"`, `{ kind: "fixed", delay: "50ms" }`, `{ kind: "linear", initial: "50ms", step: "50ms", max: "1s" }`, or `{ kind: "exponential", initial: "50ms", factor: 2, max: "1s" }`
+- `on` can target retry families like `application`, `timeout`, `process_exit`, or `process_spawn`
+- `run inspect` and `run replay` surface the retry decision directly as `scheduled`, `non_retryable`, `family_not_selected`, `retries_disabled`, or `attempts_exhausted`
 
 ## Operator Surface
 

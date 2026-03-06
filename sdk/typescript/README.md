@@ -34,7 +34,11 @@ import { service } from "@vilano/runtime";
 export const reviewer = service({
   name: "reviewer",
   key: (input: { repoId: string }) => input.repoId,
-  retry: { retries: 1, backoff: "50ms" },
+  retry: {
+    retries: 1,
+    backoff: { kind: "exponential", initial: "50ms", factor: 2, max: "1s" },
+    on: ["application", "timeout"],
+  },
 
   init: async (input) => ({
     repoId: input.repoId,
@@ -106,7 +110,7 @@ It supports:
 
 - command, args, cwd, env
 - timeout
-- fixed retry/backoff
+- durable retry policies with retry families and fixed/linear/exponential backoff
 - stdout/stderr capture
 - artifact capture
 - parse callback for typed output
@@ -139,9 +143,16 @@ That works for:
 
 `vilano run inspect` and `vilano run replay` now surface the retry decision directly so operators can see whether a failure was `scheduled`, `non_retryable`, `retries_disabled`, or `attempts_exhausted`.
 
+Current retry policy shape:
+
+- `retry: { retries, backoff, on }`
+- `backoff` may be `"50ms"`, `{ kind: "fixed", delay: "50ms" }`, `{ kind: "linear", initial: "50ms", step: "50ms", max: "1s" }`, or `{ kind: "exponential", initial: "50ms", factor: 2, max: "1s" }`
+- `on` may target `application`, `timeout`, `process_exit`, or `process_spawn`
+- legacy top-level `retries` and `backoff` fields still work for `step()` and `exec()`
+
 ## Current Limits
 
 - no arbitrary JS continuation capture
 - no exact-once guarantee for side effects
 - hard-stop fallback only for managed workers the kernel supervises
-- fixed-count / fixed-backoff retry policy only
+- retry families are intentionally small and fixed in v1

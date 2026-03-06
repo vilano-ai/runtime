@@ -564,6 +564,91 @@ test("step retries back off durably and eventually complete", async () => {
   }
 });
 
+test("step retry families can exclude application failures", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/retryingStep", {
+      token: "step-timeout-only",
+      retries: 2,
+      retryOn: ["timeout"],
+    });
+
+    const failed = await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "failed" &&
+        inspect.steps.some((step) => step.name === "retrying-step" && step.status === "failed"),
+      10_000
+    );
+
+    const step = failed.steps.find((entry) => entry.name === "retrying-step");
+    expect(step?.attempts).toBe(1);
+    expect(step?.retryDecision).toBe("family_not_selected");
+    expect(step?.retryFamily).toBe("application");
+    expect(step?.retryable).toBe(false);
+    expect(failed.events.map((event) => event.type)).not.toContain("RetryScheduled");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("timeout retry families can retry timed out steps", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/timeoutRetryingStep", {
+      token: "timeout-family-step",
+      retries: 1,
+      retryOn: ["timeout"],
+      timeout: "200ms",
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "completed" &&
+        inspect.steps.some((step) => step.name === "timeout-retrying-step" && step.status === "completed"),
+      10_000
+    );
+
+    const step = completed.steps.find((entry) => entry.name === "timeout-retrying-step");
+    expect(step?.attempts).toBe(2);
+    expect(step?.retryDecision).toBe("scheduled");
+    expect(step?.retryFamily).toBe("timeout");
+    expect(completed.events.map((event) => event.type)).toContain("RetryScheduled");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("exponential step backoff increases across retries", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/retryingStep", {
+      token: "step-exponential",
+      retries: 2,
+      failuresBeforeSuccess: 2,
+      backoff: {
+        kind: "exponential",
+        initial: "50ms",
+        factor: 2,
+      },
+    });
+
+    const completed = await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed", 10_000);
+    const retryEvents = completed.events.filter((event) => event.type === "RetryScheduled");
+
+    expect(retryEvents).toHaveLength(2);
+    expect((retryEvents[0]?.body as Record<string, unknown>).backoffKind).toBe("exponential");
+    expect((retryEvents[0]?.body as Record<string, unknown>).backoffMs).toBe(50);
+    expect((retryEvents[1]?.body as Record<string, unknown>).backoffMs).toBe(100);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("non-retryable step failures bypass configured retries", async () => {
   const harness = await RuntimeHarness.create();
 
@@ -993,6 +1078,48 @@ test("non-retryable service turn failures bypass configured retries", async () =
   }
 });
 
+test("service retry families can exclude application failures", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { sessionId: "service-timeout-only" };
+
+  try {
+    const askCommand = harness.spawnCliCommand([
+      "service",
+      "ask",
+      "demo/timeoutOnlyResponder",
+      "unstable",
+      "--key-json",
+      JSON.stringify(keyInput),
+      "--input",
+      JSON.stringify({ token: "service-timeout-only" }),
+      "--timeout",
+      "20s",
+      "--json",
+    ]);
+
+    const askResult = await askCommand.wait();
+    expect(askResult.exitCode).not.toBe(0);
+
+    const inspect = await harness.waitForService(
+      "demo/timeoutOnlyResponder",
+      keyInput,
+      (body) =>
+        body.run.status === "idle" &&
+        (body.turns ?? []).some((turn) => turn.phase === "failed"),
+      10_000
+    );
+
+    const failedTurn = (inspect.turns ?? []).find((turn) => turn.phase === "failed");
+    expect(failedTurn?.attempts).toBe(1);
+    expect(failedTurn?.retryDecision).toBe("family_not_selected");
+    expect(failedTurn?.retryFamily).toBe("application");
+    expect(failedTurn?.retryable).toBe(false);
+    expect(inspect.events.map((event) => event.type)).not.toContain("RetryScheduled");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("signals wake waiting workflows durably after downtime", async () => {
   const harness = await RuntimeHarness.create({
     env: {
@@ -1411,6 +1538,35 @@ test("exec retries back off durably and eventually complete", async () => {
     expect(
       completed.waits.some((wait) => wait.kind === "retry_backoff" && wait.status === "completed")
     ).toBe(true);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("exec retry families can exclude process exit failures", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/retryingExec", {
+      token: "exec-timeout-only",
+      retries: 2,
+      retryOn: ["timeout"],
+    });
+
+    const failed = await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "failed" &&
+        inspect.execs.some((entry) => entry.name === "retrying-exec" && entry.status === "failed"),
+      10_000
+    );
+
+    const exec = failed.execs.find((entry) => entry.name === "retrying-exec");
+    expect(exec?.attempts).toBe(1);
+    expect(exec?.retryDecision).toBe("family_not_selected");
+    expect(exec?.retryFamily).toBe("process_exit");
+    expect(exec?.retryable).toBe(false);
+    expect(failed.events.map((event) => event.type)).not.toContain("RetryScheduled");
   } finally {
     await harness.dispose();
   }

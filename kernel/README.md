@@ -79,6 +79,8 @@ That API currently supports:
 - The kernel never resumes arbitrary JavaScript stack frames.
 - Replay happens by rerunning orchestration from the top against durable state.
 - Retries are kernel-scheduled, not worker-local loops.
+- Retry policies can match retry families like `application`, `timeout`, `process_exit`, and `process_spawn`.
+- Backoff can be fixed, linear, or exponential, with the kernel computing each scheduled retry wake time durably.
 - Failure events carry an explicit retry decision so inspect/replay can show why work retried or stopped.
 - Waits and signals are durable state, not in-memory promises.
 - Service turns are processed one at a time per service instance in v1.
