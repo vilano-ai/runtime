@@ -17,6 +17,7 @@ import type {
   RunInspectResponse,
   RunListResponse,
   RunStartResponse,
+  SignalSendResponse,
 } from "./types.ts";
 
 interface RequestOptions {
@@ -251,6 +252,22 @@ export async function inspectRun(runId: string): Promise<RunInspectResponse> {
   return requestJson<RunInspectResponse>({
     method: "GET",
     pathname: `/v1/runs/${encodeURIComponent(runId)}`,
+    autoStart: true,
+  });
+}
+
+export async function sendRunSignal(
+  runId: string,
+  name: string,
+  payload: unknown
+): Promise<SignalSendResponse> {
+  return requestJson<SignalSendResponse>({
+    method: "POST",
+    pathname: `/v1/runs/${encodeURIComponent(runId)}/signals`,
+    body: {
+      name,
+      payload,
+    },
     autoStart: true,
   });
 }

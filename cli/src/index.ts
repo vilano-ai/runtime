@@ -12,6 +12,7 @@ import {
   listProjects,
   listRuns,
   removeProject,
+  sendRunSignal,
   startWorkflowRun,
   stopDaemon,
   syncProject,
@@ -23,7 +24,9 @@ import type {
   RunExecRecord,
   RunEventRecord,
   RunRecord,
+  RunSignalRecord,
   RunStepRecord,
+  RunWaitRecord,
 } from "./types.ts";
 
 class CliError extends Error {
@@ -49,6 +52,7 @@ function renderHelp(): string {
     "  vilano run start|list|inspect",
     "  vilano worker start",
     "  vilano service list",
+    "  vilano signal send",
     "",
     "Everything important should eventually remain scriptable with --json.",
   ].join("\n");
@@ -77,6 +81,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         return handleWorker(rest, parsed.flags);
       case "service":
         return handleService(rest, parsed.flags);
+      case "signal":
+        return handleSignal(rest, parsed.flags);
       default:
         throw new CliError(`Unknown command group: ${group}`);
     }
@@ -261,7 +267,9 @@ async function handleRun(args: string[], flags: Record<string, string | boolean>
       }
 
       const response = await inspectRun(runId);
-      writeOutput(flags, response, (body) => renderRunInspect(body.run, body.events, body.steps, body.execs));
+      writeOutput(flags, response, (body) =>
+        renderRunInspect(body.run, body.events, body.steps, body.execs, body.waits, body.signals)
+      );
       return 0;
     }
     default:
@@ -327,6 +335,27 @@ async function handleWorker(args: string[], flags: Record<string, string | boole
     }
     default:
       throw new CliError("Usage: vilano worker start [--once] [--worker-id <id>] [--server <url>]");
+  }
+}
+
+async function handleSignal(args: string[], flags: Record<string, string | boolean>): Promise<number> {
+  const command = args[0];
+
+  switch (command) {
+    case "send": {
+      const runId = args[1];
+      const signalName = args[2];
+      if (!runId || !signalName) {
+        throw new CliError("Usage: vilano signal send <run-id> <signal-name> [--input '{...}']");
+      }
+
+      const payload = parseJsonFlag(flags.input, "input", null);
+      const response = await sendRunSignal(runId, signalName, payload);
+      writeOutput(flags, response, (body) => `Sent signal ${body.signal.name} to ${body.signal.runId}`);
+      return 0;
+    }
+    default:
+      throw new CliError("Usage: vilano signal send <run-id> <signal-name> [--input '{...}']");
   }
 }
 
@@ -548,7 +577,9 @@ function renderRunInspect(
   run: RunRecord,
   events: RunEventRecord[],
   steps: RunStepRecord[],
-  execs: RunExecRecord[]
+  execs: RunExecRecord[],
+  waits: RunWaitRecord[],
+  signals: RunSignalRecord[]
 ): string {
   const eventLines =
     events.length === 0
@@ -568,12 +599,32 @@ function renderRunInspect(
             return `  ${exec.name}\tkey=${exec.key}\tstatus=${exec.status}\tattempt=${exec.attempt}\tcmd=${[exec.cmd, ...exec.args].join(" ")}${refs ? `\trefs=${refs}` : ""}`;
           }),
         ];
+  const waitLines =
+    waits.length === 0
+      ? ["waits: none"]
+      : [
+          "waits:",
+          ...waits.map((wait) =>
+            `  ${wait.kind}\tkey=${wait.key}\tstatus=${wait.status}${wait.wakeAt ? `\twake_at=${wait.wakeAt}` : ""}${wait.name !== wait.kind ? `\tname=${wait.name}` : ""}`
+          ),
+        ];
+  const signalLines =
+    signals.length === 0
+      ? ["signals: none"]
+      : [
+          "signals:",
+          ...signals.map((signal) =>
+            `  ${signal.name}\tcreated_at=${signal.createdAt}${signal.consumedAt ? `\tconsumed_at=${signal.consumedAt}` : ""}`
+          ),
+        ];
 
   return [
     renderRun(run),
     ...eventLines,
     ...stepLines,
     ...execLines,
+    ...waitLines,
+    ...signalLines,
   ].join("\n");
 }
 

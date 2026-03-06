@@ -131,6 +131,27 @@ export interface RunExecRecord {
   updatedAt: string;
 }
 
+export interface RunWaitRecord {
+  runId: string;
+  key: string;
+  kind: string;
+  name: string;
+  status: string;
+  wakeAt: string | null;
+  output: unknown | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RunSignalRecord {
+  id: string;
+  runId: string;
+  name: string;
+  payload: unknown | null;
+  consumedAt: string | null;
+  createdAt: string;
+}
+
 export interface RunListResponse {
   ok: true;
   project: string | null;
@@ -143,6 +164,13 @@ export interface RunInspectResponse {
   events: RunEventRecord[];
   steps: RunStepRecord[];
   execs: RunExecRecord[];
+  waits: RunWaitRecord[];
+  signals: RunSignalRecord[];
+}
+
+export interface SignalSendResponse {
+  ok: true;
+  signal: RunSignalRecord;
 }
 
 export interface ErrorResponse {

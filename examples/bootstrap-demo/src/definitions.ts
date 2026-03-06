@@ -27,6 +27,28 @@ export const planner = workflow({
   },
 });
 
+export const sleeper = workflow({
+  name: "sleeper",
+  run: async (input: { duration?: string }, ctx) => {
+    await ctx.sleep(input.duration ?? "100ms", { key: "nap" });
+
+    return {
+      woke: true,
+    };
+  },
+});
+
+export const gate = workflow({
+  name: "gate",
+  run: async (_input: Record<string, never>, ctx) => {
+    const approval = await ctx.waitForSignal("approved", { key: "approval" });
+
+    return {
+      approval,
+    };
+  },
+});
+
 export const reviewer = service({
   name: "reviewer",
   key: (input: { repoId: string }) => input.repoId,
