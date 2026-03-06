@@ -233,6 +233,10 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  get "/v1/leases/:lease_id/status" do
+    send_json(conn, 200, %{ok: true, lease: Storage.lease_status(lease_id)})
+  end
+
   post "/v1/leases/:lease_id/complete" do
     case Storage.complete_run_lease(lease_id, Map.get(conn.body_params, "result", %{})) do
       nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
@@ -538,6 +542,8 @@ defmodule VilanoKernel.Router do
         run: result["run"],
         stoppedEnvelopeCount: result["stoppedEnvelopeCount"],
         cancelledWaitCount: result["cancelledWaitCount"],
+        cancelledChildRunCount: result["cancelledChildRunCount"],
+        cancelledServiceAskCount: result["cancelledServiceAskCount"],
         hadInFlightTurn: result["hadInFlightTurn"]
       })
     else
@@ -581,6 +587,25 @@ defmodule VilanoKernel.Router do
 
   get "/v1/runs/:id" do
     send_run_inspect(conn, id)
+  end
+
+  post "/v1/runs/:id/cancel" do
+    case Storage.cancel_run(id) do
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown run: #{id}")
+
+      result ->
+        send_json(conn, 200, %{
+          ok: true,
+          run: result["run"],
+          cancelledWaitCount: result["cancelledWaitCount"],
+          cancelledChildRunCount: result["cancelledChildRunCount"],
+          cancelledServiceAskCount: result["cancelledServiceAskCount"],
+          hadActiveLease: result["hadActiveLease"],
+          stoppedEnvelopeCount: Map.get(result, "stoppedEnvelopeCount", 0),
+          hadInFlightTurn: Map.get(result, "hadInFlightTurn", false)
+        })
+    end
   end
 
   post "/v1/runs/:id/signals" do
