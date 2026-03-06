@@ -4,8 +4,6 @@ defmodule VilanoKernel.Storage do
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
 
-  @lease_duration_seconds 30
-
   def init! do
     SQL.query!(Repo, "pragma journal_mode = wal", [])
     SQL.query!(Repo, "pragma foreign_keys = on", [])
@@ -766,6 +764,17 @@ defmodule VilanoKernel.Storage do
                             now
                           )
 
+                          maybe_append_service_turn_waiting!(
+                            parent_run,
+                            %{
+                              "waitKind" => "child_result",
+                              "key" => wait_key,
+                              "name" => child_run_id,
+                              "childRunId" => child_run_id
+                            },
+                            now
+                          )
+
                           %{
                             "status" => "suspended",
                             "wait" => %{
@@ -1071,6 +1080,17 @@ defmodule VilanoKernel.Storage do
                     now
                   )
 
+                  maybe_append_service_turn_waiting!(
+                    caller_run,
+                    %{
+                      "waitKind" => "ask_reply",
+                      "key" => "ask_reply:" <> correlation_id,
+                      "name" => correlation_id,
+                      "correlationId" => correlation_id
+                    },
+                    now
+                  )
+
                   %{
                     "status" => "suspended",
                     "wait" => %{
@@ -1260,7 +1280,7 @@ defmodule VilanoKernel.Storage do
 
   def lease_next_run(worker_id) do
     now = now_iso8601()
-    expires_at = shift_seconds(now, @lease_duration_seconds)
+    expires_at = shift_seconds(now, lease_duration_seconds())
 
     Repo.transaction(fn ->
       case next_activation_candidate(now) do
@@ -1319,29 +1339,54 @@ defmodule VilanoKernel.Storage do
             [lease_id, worker_id, expires_at, now, run_id]
           )
 
-          SQL.query!(
-            Repo,
-            """
-            update service_envelopes
-            set
-              status = 'processing',
-              updated_at = ?
-            where id = ?
-            """,
-            [now, envelope_id]
-          )
+          if candidate["envelope_status"] == "queued" do
+            SQL.query!(
+              Repo,
+              """
+              update service_envelopes
+              set
+                status = 'processing',
+                updated_at = ?
+              where id = ?
+              """,
+              [now, envelope_id]
+            )
 
-          append_event!(
-            run_id,
-            "TurnStarted",
-            %{
-              "envelopeId" => envelope_id,
-              "kind" => candidate["kind"],
-              "name" => candidate["name"],
-              "correlationId" => candidate["correlation_id"]
-            },
-            now
-          )
+            append_event!(
+              run_id,
+              "TurnStarted",
+              %{
+                "envelopeId" => envelope_id,
+                "kind" => candidate["kind"],
+                "name" => candidate["name"],
+                "correlationId" => candidate["correlation_id"]
+              },
+              now
+            )
+          else
+            SQL.query!(
+              Repo,
+              """
+              update service_envelopes
+              set updated_at = ?
+              where id = ?
+              """,
+              [now, envelope_id]
+            )
+
+            append_event!(
+              run_id,
+              "TurnResumed",
+              %{
+                "envelopeId" => envelope_id,
+                "kind" => candidate["kind"],
+                "name" => candidate["name"],
+                "correlationId" => candidate["correlation_id"],
+                "reason" => service_turn_resume_reason(candidate)
+              },
+              now
+            )
+          end
 
           %{
             lease_id: lease_id,
@@ -1358,7 +1403,7 @@ defmodule VilanoKernel.Storage do
 
   def heartbeat_lease(lease_id, worker_id) do
     now = now_iso8601()
-    expires_at = shift_seconds(now, @lease_duration_seconds)
+    expires_at = shift_seconds(now, lease_duration_seconds())
 
     updated_rows =
       SQL.query!(
@@ -1859,6 +1904,17 @@ defmodule VilanoKernel.Storage do
                 now
               )
 
+              maybe_append_service_turn_waiting!(
+                run,
+                %{
+                  "waitKind" => "sleep",
+                  "key" => op_key,
+                  "name" => "sleep",
+                  "wakeAt" => wake_at
+                },
+                now
+              )
+
               %{
                 "status" => "suspended",
                 "wait" => %{
@@ -2026,6 +2082,17 @@ defmodule VilanoKernel.Storage do
                     run["id"],
                     "RunSuspended",
                     %{"reason" => "signal", "key" => op_key, "signal" => name},
+                    now
+                  )
+
+                  maybe_append_service_turn_waiting!(
+                    run,
+                    %{
+                      "waitKind" => "signal",
+                      "key" => op_key,
+                      "name" => name,
+                      "signal" => name
+                    },
                     now
                   )
 
@@ -2682,6 +2749,10 @@ defmodule VilanoKernel.Storage do
     )
     |> rows_to_maps()
     |> List.first()
+    |> case do
+      nil -> nil
+      row -> run_from_row(row)
+    end
   end
 
   defp get_run_exec(run_id, op_key) do
@@ -2905,6 +2976,34 @@ defmodule VilanoKernel.Storage do
     |> List.first()
   end
 
+  defp get_processing_service_envelope_for_run(run_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        id,
+        service_run_id,
+        kind,
+        name,
+        payload_json,
+        correlation_id,
+        sender_run_id,
+        status,
+        reply_json,
+        error_json,
+        created_at,
+        updated_at
+      from service_envelopes
+      where service_run_id = ? and status = 'processing'
+      order by updated_at desc, created_at desc
+      limit 1
+      """,
+      [run_id]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
   defp get_run_service_op(caller_run_id, op_key) do
     Repo
     |> SQL.query!(
@@ -3088,11 +3187,13 @@ defmodule VilanoKernel.Storage do
         e.payload_json,
         e.correlation_id,
         e.sender_run_id,
-        e.status,
+        e.status as envelope_status,
         e.reply_json,
         e.error_json,
         e.created_at,
-        e.updated_at
+        e.updated_at,
+        r.status as run_status,
+        r.lease_expires_at as run_lease_expires_at
       from service_envelopes e
       join runs r on r.id = e.service_run_id
       where
@@ -3218,6 +3319,30 @@ defmodule VilanoKernel.Storage do
     )
 
     if initial?, do: :initialized, else: :updated
+  end
+
+  defp maybe_append_service_turn_waiting!(run, wait_body, now) do
+    if run["definitionKind"] == "service" do
+      case get_processing_service_envelope_for_run(run["id"]) do
+        nil ->
+          :ok
+
+        envelope ->
+          append_event!(
+            run["id"],
+            "TurnWaiting",
+            Map.merge(wait_body, %{
+              "envelopeId" => envelope["id"],
+              "kind" => envelope["kind"],
+              "turnName" => envelope["name"],
+              "correlationId" => envelope["correlation_id"]
+            }),
+            now
+          )
+      end
+    else
+      :ok
+    end
   end
 
   defp wake_service_ask_waiter!(correlation_id, status, payload, now) do
@@ -3346,6 +3471,19 @@ defmodule VilanoKernel.Storage do
     |> Kernel.>(0)
   end
 
+  defp service_turn_resume_reason(candidate) do
+    cond do
+      candidate["run_status"] == "pending" ->
+        "wait_satisfied"
+
+      candidate["run_status"] == "active" and not is_nil(candidate["run_lease_expires_at"]) ->
+        "lease_expired"
+
+      true ->
+        "retry"
+    end
+  end
+
   defp wake_waiting_parents_for_child!(child_run_id, child_status, payload, now) do
     SQL.query!(
       Repo,
@@ -3428,5 +3566,9 @@ defmodule VilanoKernel.Storage do
 
   defp now_iso8601 do
     DateTime.utc_now() |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()
+  end
+
+  defp lease_duration_seconds do
+    Application.fetch_env!(:vilano_kernel, :runtime).lease_duration_seconds
   end
 end

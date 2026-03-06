@@ -1,7 +1,15 @@
 defmodule VilanoKernel.Runtime do
   @moduledoc false
 
-  defstruct [:home_dir, :runtime_db_path, :port, :started_at, :project_root, :managed_worker_count]
+  defstruct [
+    :home_dir,
+    :runtime_db_path,
+    :port,
+    :started_at,
+    :project_root,
+    :managed_worker_count,
+    :lease_duration_seconds
+  ]
 
   def load! do
     home_dir =
@@ -26,13 +34,20 @@ defmodule VilanoKernel.Runtime do
           String.to_integer(value)
       end
 
+    lease_duration_seconds =
+      case System.get_env("VILANO_LEASE_DURATION_SECONDS", "30") do
+        value when is_binary(value) ->
+          String.to_integer(value)
+      end
+
     %__MODULE__{
       home_dir: home_dir,
       runtime_db_path: Path.join(home_dir, "runtime.sqlite"),
       port: port,
       started_at: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
       project_root: project_root,
-      managed_worker_count: managed_worker_count
+      managed_worker_count: managed_worker_count,
+      lease_duration_seconds: lease_duration_seconds
     }
   end
 end

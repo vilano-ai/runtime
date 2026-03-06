@@ -153,6 +153,25 @@ export const operator = service({
         },
       };
     },
+    slowStep: async (payload: { durationMs?: number }, _state, ctx) => {
+      const result = await ctx.step(
+        "slow-step",
+        async () => {
+          await new Promise((resolve) => {
+            setTimeout(resolve, payload.durationMs ?? 1500);
+          });
+
+          return {
+            waitedMs: payload.durationMs ?? 1500,
+          };
+        },
+        { key: `slow-step:${payload.durationMs ?? 1500}` }
+      );
+
+      return {
+        reply: result,
+      };
+    },
     awaitApproval: async (_payload: void, state, ctx) => {
       const approval = await ctx.waitForSignal("approved", { key: "approved" });
 
