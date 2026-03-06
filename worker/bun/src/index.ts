@@ -66,6 +66,10 @@ async function executeActivation(
     const result = await definition.run(activation.run.input, ctx);
     await client.completeRun(activation.leaseId, result);
   } catch (error) {
+    if (error instanceof RunSuspendedError) {
+      return;
+    }
+
     await client.failRun(activation.leaseId, {
       message: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
@@ -167,12 +171,6 @@ function createWorkflowContext(client: WorkerClient, activation: WorkflowActivat
 
       throw toExecError(spec.name, execution.error);
     },
-    async sleep() {
-      throw new Error("ctx.sleep() is not implemented yet");
-    },
-    async waitForSignal() {
-      throw new Error("ctx.waitForSignal() is not implemented yet");
-    },
     async log(message: string, fields?: Record<string, unknown>) {
       console.log("[vilano-worker]", activation.run.id, message, fields ?? {});
     },
@@ -181,6 +179,29 @@ function createWorkflowContext(client: WorkerClient, activation: WorkflowActivat
     },
     async connect() {
       throw new Error("ctx.connect() is not implemented yet");
+    },
+    async sleep(duration: string, options?: { key?: string }) {
+      const durationMs = parseDurationToMs(duration);
+      if (durationMs === undefined) {
+        throw new Error("ctx.sleep() requires a duration");
+      }
+
+      const key = options?.key ?? `sleep:${duration}`;
+      const resolved = await client.resolveSleepWait(activation.leaseId, { key, durationMs });
+      if (resolved.status === "completed") {
+        return;
+      }
+
+      throw new RunSuspendedError("sleep", key);
+    },
+    async waitForSignal(name: string, options?: { key?: string }) {
+      const key = options?.key ?? name;
+      const resolved = await client.resolveSignalWait(activation.leaseId, { name, key });
+      if (resolved.status === "completed") {
+        return resolved.output;
+      }
+
+      throw new RunSuspendedError("signal", key);
     },
   };
 }
@@ -553,4 +574,14 @@ function toExecError(name: string, error: unknown): Error {
   }
 
   return new Error(`Exec '${name}' failed`);
+}
+
+class RunSuspendedError extends Error {
+  constructor(
+    readonly waitKind: "sleep" | "signal",
+    readonly key: string
+  ) {
+    super(`Run suspended on ${waitKind}:${key}`);
+    this.name = "RunSuspendedError";
+  }
 }

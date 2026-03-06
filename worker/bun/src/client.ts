@@ -37,6 +37,13 @@ interface ExecResolveResponse {
     | { status: "failed"; error: unknown };
 }
 
+interface WaitResolveResponse {
+  ok: true;
+  wait:
+    | { status: "completed"; output?: unknown }
+    | { status: "suspended"; wait: { key: string; kind: string; name: string } };
+}
+
 export class WorkerClient {
   constructor(
     private readonly serverUrl: string,
@@ -126,6 +133,32 @@ export class WorkerClient {
     }
   ): Promise<void> {
     await this.request("POST", `/v1/leases/${encodeURIComponent(leaseId)}/execs/fail`, spec);
+  }
+
+  async resolveSleepWait(
+    leaseId: string,
+    spec: { key: string; durationMs: number }
+  ): Promise<WaitResolveResponse["wait"]> {
+    const response = await this.request<WaitResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/waits/sleep`,
+      spec
+    );
+
+    return response.wait;
+  }
+
+  async resolveSignalWait(
+    leaseId: string,
+    spec: { name: string; key: string }
+  ): Promise<WaitResolveResponse["wait"]> {
+    const response = await this.request<WaitResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/waits/signal`,
+      spec
+    );
+
+    return response.wait;
   }
 
   async completeRun(leaseId: string, result: unknown): Promise<void> {
