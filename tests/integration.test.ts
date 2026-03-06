@@ -675,6 +675,164 @@ test("service turns resume after worker loss and lease expiry", async () => {
   }
 });
 
+test("service turn blocking step timeout is enforced by the kernel and restarts the managed worker", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { sessionId: "service-blocking-timeout" };
+
+  try {
+    await harness.ensureService("demo/operator", keyInput);
+
+    const askCommand = harness.spawnCliCommand([
+      "service",
+      "ask",
+      "demo/operator",
+      "blockingStep",
+      "--key-json",
+      JSON.stringify(keyInput),
+      "--input",
+      JSON.stringify({ durationMs: 5_000, timeout: "200ms" }),
+      "--timeout",
+      "20s",
+      "--json",
+    ]);
+
+    await harness.waitForService(
+      "demo/operator",
+      keyInput,
+      (inspect) =>
+        inspect.run.status === "active" &&
+        inspect.steps.some((step) => step.name === "blocking-service-step" && step.status === "running"),
+      10_000
+    );
+
+    const askResult = await askCommand.wait();
+    expect(askResult.exitCode).not.toBe(0);
+
+    const failed = await harness.waitForService(
+      "demo/operator",
+      keyInput,
+      (inspect) =>
+        inspect.run.status === "idle" &&
+        inspect.steps.some((step) => step.name === "blocking-service-step" && step.status === "failed"),
+      10_000
+    );
+
+    const step = failed.steps.find((entry) => entry.name === "blocking-service-step");
+    expect(step).toBeTruthy();
+    expect(
+      step?.error && typeof step.error === "object"
+        ? (step.error as Record<string, unknown>).forcedTermination
+        : null
+    ).toBe(true);
+    expect(failed.events.map((event) => event.type)).toContain("TurnFailed");
+
+    const planner = await harness.startWorkflow("demo/planner", {
+      topic: "after-service-blocking-timeout",
+    });
+    const plannerInspect = await harness.waitForRun(
+      planner.run.id,
+      (inspect) => inspect.run.status === "completed",
+      10_000
+    );
+
+    expect(plannerInspect.run.output).toEqual({ summary: "planned: after-service-blocking-timeout" });
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("unmanaged workers fall back to durable failure when a service turn blocks past its timeout", async () => {
+  const harness = await RuntimeHarness.create({
+    env: {
+      VILANO_MANAGED_WORKERS: "0",
+      VILANO_LEASE_DURATION_SECONDS: "2",
+    },
+  });
+  const keyInput = { sessionId: "service-blocking-unmanaged" };
+
+  try {
+    await harness.ensureService("demo/operator", keyInput);
+
+    const askCommand = harness.spawnCliCommand([
+      "service",
+      "ask",
+      "demo/operator",
+      "blockingStep",
+      "--key-json",
+      JSON.stringify(keyInput),
+      "--input",
+      JSON.stringify({ durationMs: 5_000, timeout: "200ms" }),
+      "--timeout",
+      "20s",
+      "--json",
+    ]);
+
+    await harness.waitForService(
+      "demo/operator",
+      keyInput,
+      (inspect) =>
+        inspect.run.status === "pending" &&
+        inspect.envelopes.some((envelope) => envelope.status === "queued"),
+      5_000
+    );
+
+    const firstWorker = await harness.spawnWorker({
+      workerId: "service-blocking-unmanaged-worker",
+      once: true,
+    });
+
+    await harness.waitForService(
+      "demo/operator",
+      keyInput,
+      (inspect) =>
+        inspect.run.status === "active" &&
+        inspect.steps.some((step) => step.name === "blocking-service-step" && step.status === "running"),
+      10_000
+    );
+
+    const askResult = await askCommand.wait();
+    expect(askResult.exitCode).not.toBe(0);
+
+    const failed = await harness.waitForService(
+      "demo/operator",
+      keyInput,
+      (inspect) =>
+        inspect.run.status === "idle" &&
+        inspect.steps.some((step) => step.name === "blocking-service-step" && step.status === "failed"),
+      10_000
+    );
+
+    const step = failed.steps.find((entry) => entry.name === "blocking-service-step");
+    expect(step).toBeTruthy();
+    expect(
+      step?.error && typeof step.error === "object"
+        ? (step.error as Record<string, unknown>).forcedTermination
+        : null
+    ).toBe(true);
+    expect(failed.events.map((event) => event.type)).toContain("TurnFailed");
+
+    const planner = await harness.startWorkflow("demo/planner", {
+      topic: "after-unmanaged-service-timeout",
+    });
+    const secondWorker = await harness.spawnWorker({
+      workerId: "post-unmanaged-timeout-worker",
+      once: true,
+    });
+
+    const [plannerWorkerResult, plannerInspect, stuckWorkerResult] = await Promise.all([
+      secondWorker.wait(),
+      harness.waitForRun(planner.run.id, (inspect) => inspect.run.status === "completed", 10_000),
+      firstWorker.wait(),
+    ]);
+
+    expect(plannerWorkerResult.exitCode).toBe(0);
+    expect(stuckWorkerResult.exitCode).toBe(0);
+    expect(plannerInspect.run.output).toEqual({ summary: "planned: after-unmanaged-service-timeout" });
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("service turns retry durably after handler failures", async () => {
   const harness = await RuntimeHarness.create();
   const keyInput = { sessionId: "service-retry" };

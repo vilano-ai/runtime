@@ -326,6 +326,31 @@ export const operator = service({
         reply: result,
       };
     },
+    blockingStep: async (payload: { durationMs?: number; timeout?: string }, _state, ctx) => {
+      const result = await ctx.step(
+        "blocking-service-step",
+        async () => {
+          const durationMs = payload.durationMs ?? 5_000;
+          const deadline = Date.now() + durationMs;
+
+          while (Date.now() < deadline) {
+            // Intentionally blocks the event loop to exercise kernel-enforced service turn termination.
+          }
+
+          return {
+            waitedMs: durationMs,
+          };
+        },
+        {
+          key: `blocking-service-step:${payload.durationMs ?? 5_000}`,
+          timeout: payload.timeout,
+        }
+      );
+
+      return {
+        reply: result,
+      };
+    },
     awaitApproval: async (_payload: void, state, ctx) => {
       const approval = await ctx.waitForSignal("approved", { key: "approved" });
 

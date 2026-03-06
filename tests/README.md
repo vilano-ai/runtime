@@ -19,7 +19,9 @@ Current coverage:
 - cooperative step cancellation that releases the worker
 - cooperative step timeout persistence for run and step failure state
 - kernel-enforced timeout for non-cooperative blocking steps
+- kernel-enforced timeout for non-cooperative blocking service turns
 - managed-worker kill/restart on cancellation of non-cooperative blocking steps
+- unmanaged-worker fallback for non-cooperative blocking service turns
 
 Run it from the dev shell:
 
@@ -27,6 +29,5 @@ Run it from the dev shell:
 
 Next high-value additions:
 
-- service-turn coverage for kernel-enforced hard-stop on non-cooperative blocking steps
-- hard-stop semantics for externally managed workers
 - operator-facing replay output assertions once `vilano run replay` lands
+- retry policy coverage for explicit non-retryable failures
