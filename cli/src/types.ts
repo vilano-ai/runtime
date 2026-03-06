@@ -220,6 +220,13 @@ export interface ServiceStopResponse {
   stoppedEnvelopeCount: number;
 }
 
+export interface ServiceRunListResponse {
+  ok: true;
+  project: string | null;
+  activeOnly: boolean;
+  runs: RunRecord[];
+}
+
 export interface SignalSendResponse {
   ok: true;
   signal: RunSignalRecord;

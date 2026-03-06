@@ -17,6 +17,7 @@ import type {
   ServiceEnsureResponse,
   ServiceEnvelopeResponse,
   ServiceMutationResponse,
+  ServiceRunListResponse,
   ServiceStopResponse,
   RunInspectResponse,
   RunListResponse,
@@ -291,6 +292,27 @@ export async function inspectServiceRun(
   });
 }
 
+export async function listServiceRuns(
+  project?: string,
+  activeOnly = false
+): Promise<ServiceRunListResponse> {
+  const params = new URLSearchParams();
+  if (project) {
+    params.set("project", project);
+  }
+
+  if (activeOnly) {
+    params.set("active", "true");
+  }
+
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return requestJson<ServiceRunListResponse>({
+    method: "GET",
+    pathname: `/v1/service-runs${query}`,
+    autoStart: true,
+  });
+}
+
 export async function inspectServiceEnvelope(
   envelopeId: string
 ): Promise<ServiceEnvelopeResponse> {
@@ -315,6 +337,26 @@ export async function sendServiceMessage(
     body: {
       keyInput,
       message,
+      payload,
+    },
+    autoStart: true,
+  });
+}
+
+export async function sendServiceSignal(
+  project: string,
+  service: string,
+  serviceKey: string,
+  keyInput: unknown,
+  signal: string,
+  payload: unknown
+): Promise<ServiceMutationResponse> {
+  return requestJson<ServiceMutationResponse>({
+    method: "POST",
+    pathname: `/v1/services/${encodeURIComponent(project)}/${encodeURIComponent(service)}/runs/${encodeURIComponent(serviceKey)}/signal`,
+    body: {
+      keyInput,
+      signal,
       payload,
     },
     autoStart: true,

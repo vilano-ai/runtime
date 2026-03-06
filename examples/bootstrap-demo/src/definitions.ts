@@ -103,6 +103,16 @@ export const reviewer = service({
       };
     },
   },
+  onSignal: {
+    reset: async (_payload: void, state) => {
+      return {
+        state: {
+          ...state,
+          notes: [],
+        },
+      };
+    },
+  },
 });
 
 export const reviewCoordinator = workflow({

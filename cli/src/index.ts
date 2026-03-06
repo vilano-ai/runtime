@@ -17,9 +17,11 @@ import {
   listDefinitions,
   listProjects,
   listRuns,
+  listServiceRuns,
   removeProject,
   sendRunSignal,
   sendServiceMessage,
+  sendServiceSignal,
   startWorkflowRun,
   stopServiceRun,
   stopDaemon,
@@ -61,7 +63,7 @@ function renderHelp(): string {
     "  vilano workflow list|inspect",
     "  vilano run start|list|inspect",
     "  vilano worker start",
-    "  vilano service list|ensure|inspect|send|ask|stop",
+    "  vilano service list|ensure|inspect|send|ask|signal|stop",
     "  vilano signal send",
     "",
     "Everything important should eventually remain scriptable with --json.",
@@ -304,6 +306,13 @@ async function handleService(
 
   switch (command) {
     case "list": {
+      if (flags.instances) {
+        const project = await resolveProjectScope(flags);
+        const response = await listServiceRuns(project, Boolean(flags.active));
+        writeOutput(flags, response, (body) => renderServiceRunList(body.project, body.activeOnly, body.runs));
+        return 0;
+      }
+
       const project = await resolveProjectScope(flags);
       if (project) {
         const existing = await inspectProject(project);
@@ -458,8 +467,36 @@ async function handleService(
       );
       return 0;
     }
+    case "signal": {
+      const reference = args[1];
+      const signalName = args[2];
+      if (!reference || !signalName) {
+        throw new CliError("Usage: vilano service signal <service-ref> <signal-name> --key-json '{...}' [--input '{...}']");
+      }
+
+      const target = await resolveServiceTarget(reference, flags, { syncDefinition: true });
+      const payload = parseJsonFlag(flags.input, "input", null);
+      const response = await sendServiceSignal(
+        target.project.name,
+        target.definition.name,
+        target.serviceKey,
+        target.keyInput,
+        signalName,
+        payload
+      );
+      writeOutput(flags, response, (body) =>
+        [
+          `service: ${target.project.name}/${target.definition.name}`,
+          `service_key: ${target.serviceKey}`,
+          `run: ${body.run.id}`,
+          `envelope: ${body.envelope.id}`,
+          `queued: signal ${signalName}`,
+        ].join("\n")
+      );
+      return 0;
+    }
     default:
-      throw new CliError("Usage: vilano service list|ensure|inspect|send|ask|stop");
+      throw new CliError("Usage: vilano service list|ensure|inspect|send|ask|signal|stop");
   }
 }
 
@@ -868,6 +905,38 @@ function renderRunList(project: string | null, runs: RunRecord[]): string {
     ...runs.map(
       (run) =>
         `${run.id}\t${run.project}/${run.definitionName}\tstatus=${run.status}\tcreated_at=${run.createdAt}`
+    ),
+  ].join("\n");
+}
+
+function renderServiceRunList(
+  project: string | null,
+  activeOnly: boolean,
+  runs: RunRecord[]
+): string {
+  if (runs.length === 0) {
+    if (project) {
+      return activeOnly
+        ? `No active service instances found in project ${project}.`
+        : `No service instances found in project ${project}.`;
+    }
+
+    return activeOnly ? "No active service instances found." : "No service instances found.";
+  }
+
+  const header = project
+    ? activeOnly
+      ? `active service instances in ${project}`
+      : `service instances in ${project}`
+    : activeOnly
+      ? "active service instances"
+      : "service instances";
+
+  return [
+    header,
+    ...runs.map(
+      (run) =>
+        `${run.id}\t${run.project}/${run.definitionName}\tservice_key=${run.serviceKey ?? "unknown"}\tstatus=${run.status}\tupdated_at=${run.updatedAt}`
     ),
   ].join("\n");
 }
