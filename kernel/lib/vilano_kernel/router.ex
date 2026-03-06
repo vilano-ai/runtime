@@ -5,6 +5,7 @@ defmodule VilanoKernel.Router do
 
   alias Plug.Conn
   alias VilanoKernel.Storage
+  alias VilanoKernel.WaitManager
 
   plug :match
 
@@ -231,6 +232,33 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  post "/v1/leases/:lease_id/waits/sleep" do
+    key = fetch_required_string(conn.body_params, "key")
+    duration_ms = fetch_required_integer(conn.body_params, "durationMs")
+
+    case Storage.resolve_sleep_wait(lease_id, key, duration_ms) do
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+
+      %{"status" => "suspended", "wait" => wait} = body ->
+        WaitManager.schedule_sleep(wait)
+        send_json(conn, 200, %{ok: true, wait: body})
+
+      body ->
+        send_json(conn, 200, %{ok: true, wait: body})
+    end
+  end
+
+  post "/v1/leases/:lease_id/waits/signal" do
+    name = fetch_required_string(conn.body_params, "name")
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.resolve_signal_wait(lease_id, name, key) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+      wait -> send_json(conn, 200, %{ok: true, wait: wait})
+    end
+  end
+
   post "/v1/runs" do
     project = fetch_required_string(conn.body_params, "project")
     workflow = fetch_required_string(conn.body_params, "workflow")
@@ -275,8 +303,20 @@ defmodule VilanoKernel.Router do
           run: run,
           events: Storage.list_run_events(id),
           steps: Storage.list_run_steps(id),
-          execs: Storage.list_run_execs(id)
+          execs: Storage.list_run_execs(id),
+          waits: Storage.list_run_waits(id),
+          signals: Storage.list_run_signals(id)
         })
+    end
+  end
+
+  post "/v1/runs/:id/signals" do
+    name = fetch_required_string(conn.body_params, "name")
+    payload = Map.get(conn.body_params, "payload")
+
+    case Storage.send_run_signal(id, name, payload) do
+      nil -> send_error(conn, 404, "not_found", "Unknown run: #{id}")
+      signal -> send_json(conn, 200, %{ok: true, signal: signal})
     end
   end
 
@@ -301,6 +341,13 @@ defmodule VilanoKernel.Router do
     case Map.get(body_params, key) do
       value when is_binary(value) and value != "" -> value
       _ -> raise ArgumentError, "expected '#{key}' to be a non-empty string"
+    end
+  end
+
+  defp fetch_required_integer(body_params, key) do
+    case Map.get(body_params, key) do
+      value when is_integer(value) -> value
+      _ -> raise ArgumentError, "expected '#{key}' to be an integer"
     end
   end
 

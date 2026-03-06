@@ -113,6 +113,40 @@ defmodule VilanoKernel.Storage do
     SQL.query!(
       Repo,
       """
+      create table if not exists run_waits (
+        run_id text not null,
+        op_key text not null,
+        wait_kind text not null,
+        wait_name text not null,
+        status text not null,
+        wake_at text,
+        output_json text,
+        created_at text not null,
+        updated_at text not null,
+        primary key (run_id, op_key)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists run_signals (
+        id text primary key,
+        run_id text not null,
+        signal_name text not null,
+        payload_json text,
+        consumed_at text,
+        created_at text not null
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
       create index if not exists runs_project_created_at_idx
       on runs(project_name, created_at desc)
       """,
@@ -808,6 +842,446 @@ defmodule VilanoKernel.Storage do
     |> unwrap_transaction_result()
   end
 
+  def resolve_sleep_wait(lease_id, op_key, duration_ms) do
+    now = now_iso8601()
+    wake_at = shift_milliseconds(now, duration_ms)
+
+    Repo.transaction(fn ->
+      case get_run_by_lease(lease_id) do
+        nil ->
+          nil
+
+        run ->
+          existing = get_run_wait(run["id"], op_key)
+
+          cond do
+            existing && existing["status"] == "completed" ->
+              %{"status" => "completed", "wait" => wait_from_row(existing), "output" => nil}
+
+            true ->
+              SQL.query!(
+                Repo,
+                """
+                insert into run_waits (
+                  run_id,
+                  op_key,
+                  wait_kind,
+                  wait_name,
+                  status,
+                  wake_at,
+                  output_json,
+                  created_at,
+                  updated_at
+                ) values (?, ?, 'sleep', 'sleep', 'waiting', ?, null, ?, ?)
+                on conflict(run_id, op_key) do update set
+                  wait_kind = excluded.wait_kind,
+                  wait_name = excluded.wait_name,
+                  status = 'waiting',
+                  wake_at = excluded.wake_at,
+                  output_json = null,
+                  updated_at = excluded.updated_at
+                """,
+                [run["id"], op_key, wake_at, now, now]
+              )
+
+              SQL.query!(
+                Repo,
+                """
+                update runs
+                set
+                  status = 'waiting',
+                  lease_id = null,
+                  lease_worker_id = null,
+                  lease_expires_at = null,
+                  updated_at = ?
+                where id = ?
+                """,
+                [now, run["id"]]
+              )
+
+              append_event!(
+                run["id"],
+                "WaitRegistered",
+                %{"kind" => "sleep", "key" => op_key, "wakeAt" => wake_at},
+                now
+              )
+
+              append_event!(
+                run["id"],
+                "RunSuspended",
+                %{"reason" => "sleep", "key" => op_key, "wakeAt" => wake_at},
+                now
+              )
+
+              %{
+                "status" => "suspended",
+                "wait" => %{
+                  "runId" => run["id"],
+                  "key" => op_key,
+                  "kind" => "sleep",
+                  "name" => "sleep",
+                  "status" => "waiting",
+                  "wakeAt" => wake_at,
+                  "output" => nil
+                }
+              }
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def satisfy_sleep_wait(run_id, op_key) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case get_run_wait(run_id, op_key) do
+        nil ->
+          nil
+
+        wait ->
+          if wait["status"] != "waiting" do
+            nil
+          else
+            SQL.query!(
+              Repo,
+              """
+              update run_waits
+              set
+                status = 'completed',
+                updated_at = ?
+              where run_id = ? and op_key = ?
+              """,
+              [now, run_id, op_key]
+            )
+
+            SQL.query!(
+              Repo,
+              """
+              update runs
+              set
+                status = 'pending',
+                updated_at = ?
+              where id = ? and status = 'waiting'
+              """,
+              [now, run_id]
+            )
+
+            append_event!(run_id, "TimerFired", %{"key" => op_key, "wakeAt" => wait["wake_at"]}, now)
+
+            append_event!(
+              run_id,
+              "WaitSatisfied",
+              %{"kind" => "sleep", "key" => op_key, "wakeAt" => wait["wake_at"]},
+              now
+            )
+
+            wait_from_row(get_run_wait(run_id, op_key))
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def list_waiting_sleep_waits do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        run_id,
+        op_key,
+        wait_kind,
+        wait_name,
+        status,
+        wake_at,
+        output_json,
+        created_at,
+        updated_at
+      from run_waits
+      where wait_kind = 'sleep' and status = 'waiting'
+      order by wake_at asc
+      """,
+      []
+    )
+    |> rows_to_maps()
+    |> Enum.map(&wait_from_row/1)
+  end
+
+  def resolve_signal_wait(lease_id, name, op_key) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case get_run_by_lease(lease_id) do
+        nil ->
+          nil
+
+        run ->
+          existing = get_run_wait(run["id"], op_key)
+
+          cond do
+            existing && existing["status"] == "completed" ->
+              %{
+                "status" => "completed",
+                "wait" => wait_from_row(existing),
+                "output" => decode_json_value(existing["output_json"], nil)
+              }
+
+            true ->
+              case get_pending_signal(run["id"], name) do
+                nil ->
+                  SQL.query!(
+                    Repo,
+                    """
+                    insert into run_waits (
+                      run_id,
+                      op_key,
+                      wait_kind,
+                      wait_name,
+                      status,
+                      wake_at,
+                      output_json,
+                      created_at,
+                      updated_at
+                    ) values (?, ?, 'signal', ?, 'waiting', null, null, ?, ?)
+                    on conflict(run_id, op_key) do update set
+                      wait_kind = excluded.wait_kind,
+                      wait_name = excluded.wait_name,
+                      status = 'waiting',
+                      wake_at = null,
+                      output_json = null,
+                      updated_at = excluded.updated_at
+                    """,
+                    [run["id"], op_key, name, now, now]
+                  )
+
+                  SQL.query!(
+                    Repo,
+                    """
+                    update runs
+                    set
+                      status = 'waiting',
+                      lease_id = null,
+                      lease_worker_id = null,
+                      lease_expires_at = null,
+                      updated_at = ?
+                    where id = ?
+                    """,
+                    [now, run["id"]]
+                  )
+
+                  append_event!(
+                    run["id"],
+                    "WaitRegistered",
+                    %{"kind" => "signal", "key" => op_key, "signal" => name},
+                    now
+                  )
+
+                  append_event!(
+                    run["id"],
+                    "RunSuspended",
+                    %{"reason" => "signal", "key" => op_key, "signal" => name},
+                    now
+                  )
+
+                  %{
+                    "status" => "suspended",
+                    "wait" => %{
+                      "runId" => run["id"],
+                      "key" => op_key,
+                      "kind" => "signal",
+                      "name" => name,
+                      "status" => "waiting",
+                      "wakeAt" => nil,
+                      "output" => nil
+                    }
+                  }
+
+                signal ->
+                  SQL.query!(
+                    Repo,
+                    """
+                    update run_signals
+                    set consumed_at = ?
+                    where id = ?
+                    """,
+                    [now, signal["id"]]
+                  )
+
+                  SQL.query!(
+                    Repo,
+                    """
+                    insert into run_waits (
+                      run_id,
+                      op_key,
+                      wait_kind,
+                      wait_name,
+                      status,
+                      wake_at,
+                      output_json,
+                      created_at,
+                      updated_at
+                    ) values (?, ?, 'signal', ?, 'completed', null, ?, ?, ?)
+                    on conflict(run_id, op_key) do update set
+                      wait_kind = excluded.wait_kind,
+                      wait_name = excluded.wait_name,
+                      status = 'completed',
+                      wake_at = null,
+                      output_json = excluded.output_json,
+                      updated_at = excluded.updated_at
+                    """,
+                    [run["id"], op_key, name, signal["payload_json"], now, now]
+                  )
+
+                  append_event!(
+                    run["id"],
+                    "WaitRegistered",
+                    %{"kind" => "signal", "key" => op_key, "signal" => name},
+                    now
+                  )
+
+                  append_event!(
+                    run["id"],
+                    "WaitSatisfied",
+                    %{
+                      "kind" => "signal",
+                      "key" => op_key,
+                      "signal" => name,
+                      "payload" => decode_json_value(signal["payload_json"], nil)
+                    },
+                    now
+                  )
+
+                  %{
+                    "status" => "completed",
+                    "wait" => wait_from_row(get_run_wait(run["id"], op_key)),
+                    "output" => decode_json_value(signal["payload_json"], nil)
+                  }
+              end
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def send_run_signal(run_id, signal_name, payload) do
+    now = now_iso8601()
+    signal_id = "sig_" <> Ecto.UUID.generate()
+    payload_json = Jason.encode!(payload)
+
+    Repo.transaction(fn ->
+      case get_run(run_id) do
+        nil ->
+          nil
+
+        _run ->
+          SQL.query!(
+            Repo,
+            """
+            insert into run_signals (
+              id,
+              run_id,
+              signal_name,
+              payload_json,
+              consumed_at,
+              created_at
+            ) values (?, ?, ?, ?, null, ?)
+            """,
+            [signal_id, run_id, signal_name, payload_json, now]
+          )
+
+          append_event!(
+            run_id,
+            "SignalReceived",
+            %{"signal" => signal_name, "payload" => payload},
+            now
+          )
+
+          wait =
+            Repo
+            |> SQL.query!(
+              """
+              select
+                run_id,
+                op_key,
+                wait_kind,
+                wait_name,
+                status,
+                wake_at,
+                output_json,
+                created_at,
+                updated_at
+              from run_waits
+              where run_id = ? and wait_kind = 'signal' and wait_name = ? and status = 'waiting'
+              order by created_at asc
+              limit 1
+              """,
+              [run_id, signal_name]
+            )
+            |> rows_to_maps()
+            |> List.first()
+
+          if wait do
+            SQL.query!(
+              Repo,
+              """
+              update run_signals
+              set consumed_at = ?
+              where id = ?
+              """,
+              [now, signal_id]
+            )
+
+            SQL.query!(
+              Repo,
+              """
+              update run_waits
+              set
+                status = 'completed',
+                output_json = ?,
+                updated_at = ?
+              where run_id = ? and op_key = ?
+              """,
+              [payload_json, now, run_id, wait["op_key"]]
+            )
+
+            SQL.query!(
+              Repo,
+              """
+              update runs
+              set
+                status = 'pending',
+                updated_at = ?
+              where id = ? and status = 'waiting'
+              """,
+              [now, run_id]
+            )
+
+            append_event!(
+              run_id,
+              "WaitSatisfied",
+              %{
+                "kind" => "signal",
+                "key" => wait["op_key"],
+                "signal" => signal_name,
+                "payload" => payload
+              },
+              now
+            )
+          end
+
+          %{
+            "id" => signal_id,
+            "runId" => run_id,
+            "name" => signal_name,
+            "payload" => payload,
+            "consumedAt" => if(wait, do: now, else: nil),
+            "createdAt" => now
+          }
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
   def list_runs(project_name \\ nil) do
     query =
       if is_nil(project_name) do
@@ -967,6 +1441,51 @@ defmodule VilanoKernel.Storage do
     |> Enum.map(&exec_from_row/1)
   end
 
+  def list_run_waits(run_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        run_id,
+        op_key,
+        wait_kind,
+        wait_name,
+        status,
+        wake_at,
+        output_json,
+        created_at,
+        updated_at
+      from run_waits
+      where run_id = ?
+      order by created_at asc
+      """,
+      [run_id]
+    )
+    |> rows_to_maps()
+    |> Enum.map(&wait_from_row/1)
+  end
+
+  def list_run_signals(run_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        id,
+        run_id,
+        signal_name,
+        payload_json,
+        consumed_at,
+        created_at
+      from run_signals
+      where run_id = ?
+      order by created_at asc
+      """,
+      [run_id]
+    )
+    |> rows_to_maps()
+    |> Enum.map(&signal_from_row/1)
+  end
+
   defp definitions_for_kind(project, "workflow"), do: project["definitions"]["workflows"]
   defp definitions_for_kind(project, "service"), do: project["definitions"]["services"]
 
@@ -1048,6 +1567,31 @@ defmodule VilanoKernel.Storage do
     }
   end
 
+  defp wait_from_row(row) do
+    %{
+      "runId" => row["run_id"],
+      "key" => row["op_key"],
+      "kind" => row["wait_kind"],
+      "name" => row["wait_name"],
+      "status" => row["status"],
+      "wakeAt" => row["wake_at"],
+      "output" => decode_json_value(row["output_json"], nil),
+      "createdAt" => row["created_at"],
+      "updatedAt" => row["updated_at"]
+    }
+  end
+
+  defp signal_from_row(row) do
+    %{
+      "id" => row["id"],
+      "runId" => row["run_id"],
+      "name" => row["signal_name"],
+      "payload" => decode_json_value(row["payload_json"], nil),
+      "consumedAt" => row["consumed_at"],
+      "createdAt" => row["created_at"]
+    }
+  end
+
   defp rows_to_maps(%{columns: columns, rows: rows}) do
     Enum.map(rows, fn row ->
       Enum.zip(columns, row) |> Map.new()
@@ -1123,6 +1667,51 @@ defmodule VilanoKernel.Storage do
     |> List.first()
   end
 
+  defp get_run_wait(run_id, op_key) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        run_id,
+        op_key,
+        wait_kind,
+        wait_name,
+        status,
+        wake_at,
+        output_json,
+        created_at,
+        updated_at
+      from run_waits
+      where run_id = ? and op_key = ?
+      """,
+      [run_id, op_key]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
+  defp get_pending_signal(run_id, signal_name) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        id,
+        run_id,
+        signal_name,
+        payload_json,
+        consumed_at,
+        created_at
+      from run_signals
+      where run_id = ? and signal_name = ? and consumed_at is null
+      order by created_at asc
+      limit 1
+      """,
+      [run_id, signal_name]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
   defp append_event!(run_id, event_type, body, created_at) do
     next_seq =
       Repo
@@ -1155,6 +1744,11 @@ defmodule VilanoKernel.Storage do
   defp shift_seconds(iso8601, seconds) do
     {:ok, datetime, _offset} = DateTime.from_iso8601(iso8601)
     datetime |> DateTime.add(seconds, :second) |> DateTime.to_iso8601()
+  end
+
+  defp shift_milliseconds(iso8601, milliseconds) do
+    {:ok, datetime, _offset} = DateTime.from_iso8601(iso8601)
+    datetime |> DateTime.add(milliseconds, :millisecond) |> DateTime.to_iso8601()
   end
 
   defp unwrap_transaction_result({:ok, value}), do: value
