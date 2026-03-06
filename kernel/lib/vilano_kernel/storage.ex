@@ -4,6 +4,8 @@ defmodule VilanoKernel.Storage do
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
 
+  @lease_duration_seconds 30
+
   def init! do
     SQL.query!(Repo, "pragma journal_mode = wal", [])
     SQL.query!(Repo, "pragma foreign_keys = on", [])
@@ -33,6 +35,9 @@ defmodule VilanoKernel.Storage do
         definition_kind text not null,
         definition_name text not null,
         status text not null,
+        lease_id text,
+        lease_worker_id text,
+        lease_expires_at text,
         input_json text not null,
         output_json text,
         error_json text,
@@ -54,6 +59,23 @@ defmodule VilanoKernel.Storage do
         body_json text not null,
         created_at text not null,
         unique (run_id, seq)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists run_steps (
+        run_id text not null,
+        op_key text not null,
+        name text not null,
+        status text not null,
+        output_json text,
+        created_at text not null,
+        updated_at text not null,
+        primary key (run_id, op_key)
       )
       """,
       []
@@ -199,7 +221,6 @@ defmodule VilanoKernel.Storage do
   def create_workflow_run!(project_name, definition_name, input) do
     now = now_iso8601()
     run_id = "run_" <> Ecto.UUID.generate()
-    event_id = "evt_" <> Ecto.UUID.generate()
     input_json = Jason.encode!(input || %{})
 
     Repo.transaction(fn ->
@@ -212,45 +233,302 @@ defmodule VilanoKernel.Storage do
           definition_kind,
           definition_name,
           status,
+          lease_id,
+          lease_worker_id,
+          lease_expires_at,
           input_json,
           output_json,
           error_json,
           created_at,
           updated_at
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [run_id, project_name, "workflow", definition_name, "pending", input_json, nil, nil, now, now]
-      )
-
-      SQL.query!(
-        Repo,
-        """
-        insert into run_events (
-          id,
-          run_id,
-          seq,
-          event_type,
-          body_json,
-          created_at
-        ) values (?, ?, ?, ?, ?, ?)
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
-          event_id,
           run_id,
-          1,
-          "RunStarted",
-          Jason.encode!(%{
-            project: project_name,
-            definitionKind: "workflow",
-            definitionName: definition_name,
-            input: input || %{}
-          }),
+          project_name,
+          "workflow",
+          definition_name,
+          "pending",
+          nil,
+          nil,
+          nil,
+          input_json,
+          nil,
+          nil,
+          now,
           now
         ]
+      )
+
+      append_event!(
+        run_id,
+        "RunStarted",
+        %{
+          project: project_name,
+          definitionKind: "workflow",
+          definitionName: definition_name,
+          input: input || %{}
+        },
+        now
       )
     end)
 
     get_run(run_id)
+  end
+
+  def lease_next_run(worker_id) do
+    now = now_iso8601()
+    expires_at = shift_seconds(now, @lease_duration_seconds)
+
+    Repo.transaction(fn ->
+      candidate =
+        Repo
+        |> SQL.query!(
+          """
+          select
+            id,
+            project_name,
+            definition_kind,
+            definition_name,
+            status,
+            lease_id,
+            lease_worker_id,
+            lease_expires_at,
+            input_json,
+            output_json,
+            error_json,
+            created_at,
+            updated_at
+          from runs
+          where
+            status in ('pending', 'running')
+            and (lease_expires_at is null or lease_expires_at < ?)
+          order by created_at asc
+          limit 1
+          """,
+          [now]
+        )
+        |> rows_to_maps()
+        |> List.first()
+
+      if candidate do
+        lease_id = "lease_" <> Ecto.UUID.generate()
+        run_id = candidate["id"]
+
+        SQL.query!(
+          Repo,
+          """
+          update runs
+          set
+            status = 'running',
+            lease_id = ?,
+            lease_worker_id = ?,
+            lease_expires_at = ?,
+            updated_at = ?
+          where id = ?
+          """,
+          [lease_id, worker_id, expires_at, now, run_id]
+        )
+
+        append_event!(
+          run_id,
+          "RunLeaseGranted",
+          %{
+            leaseId: lease_id,
+            workerId: worker_id,
+            leaseExpiresAt: expires_at
+          },
+          now
+        )
+
+        %{lease_id: lease_id, lease_expires_at: expires_at, run: get_run(run_id)}
+      else
+        nil
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def heartbeat_lease(lease_id, worker_id) do
+    now = now_iso8601()
+    expires_at = shift_seconds(now, @lease_duration_seconds)
+
+    updated_rows =
+      SQL.query!(
+        Repo,
+        """
+        update runs
+        set lease_expires_at = ?, updated_at = ?
+        where lease_id = ? and lease_worker_id = ? and status = 'running'
+        """,
+        [expires_at, now, lease_id, worker_id]
+      ).num_rows
+
+    if updated_rows > 0, do: %{"leaseExpiresAt" => expires_at}, else: nil
+  end
+
+  def complete_run_lease(lease_id, result) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case get_run_by_lease(lease_id) do
+        nil ->
+          nil
+
+        run ->
+          SQL.query!(
+            Repo,
+            """
+            update runs
+            set
+              status = 'completed',
+              lease_id = null,
+              lease_worker_id = null,
+              lease_expires_at = null,
+              output_json = ?,
+              error_json = null,
+              updated_at = ?
+            where id = ?
+            """,
+            [Jason.encode!(result), now, run["id"]]
+          )
+
+          append_event!(run["id"], "RunCompleted", %{"result" => result}, now)
+          get_run(run["id"])
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def fail_run_lease(lease_id, error_body) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case get_run_by_lease(lease_id) do
+        nil ->
+          nil
+
+        run ->
+          SQL.query!(
+            Repo,
+            """
+            update runs
+            set
+              status = 'failed',
+              lease_id = null,
+              lease_worker_id = null,
+              lease_expires_at = null,
+              error_json = ?,
+              updated_at = ?
+            where id = ?
+            """,
+            [Jason.encode!(error_body), now, run["id"]]
+          )
+
+          append_event!(run["id"], "RunFailed", %{"error" => error_body}, now)
+          get_run(run["id"])
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def resolve_step(lease_id, name, op_key) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case get_run_by_lease(lease_id) do
+        nil ->
+          nil
+
+        run ->
+          existing =
+            Repo
+            |> SQL.query!(
+              """
+              select run_id, op_key, name, status, output_json, created_at, updated_at
+              from run_steps
+              where run_id = ? and op_key = ?
+              """,
+              [run["id"], op_key]
+            )
+            |> rows_to_maps()
+            |> List.first()
+
+          if existing && existing["status"] == "completed" do
+            %{
+              "status" => "completed",
+              "output" => decode_json_value(existing["output_json"], nil)
+            }
+          else
+            SQL.query!(
+              Repo,
+              """
+              insert into run_steps (
+                run_id,
+                op_key,
+                name,
+                status,
+                output_json,
+                created_at,
+                updated_at
+              ) values (?, ?, ?, 'running', null, ?, ?)
+              on conflict(run_id, op_key) do update set
+                name = excluded.name,
+                status = 'running',
+                updated_at = excluded.updated_at
+              """,
+              [run["id"], op_key, name, now, now]
+            )
+
+            append_event!(run["id"], "StepStarted", %{"name" => name, "key" => op_key}, now)
+            %{"status" => "pending"}
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def complete_step(lease_id, name, op_key, output) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case get_run_by_lease(lease_id) do
+        nil ->
+          nil
+
+        run ->
+          SQL.query!(
+            Repo,
+            """
+            insert into run_steps (
+              run_id,
+              op_key,
+              name,
+              status,
+              output_json,
+              created_at,
+              updated_at
+            ) values (?, ?, ?, 'completed', ?, ?, ?)
+            on conflict(run_id, op_key) do update set
+              name = excluded.name,
+              status = 'completed',
+              output_json = excluded.output_json,
+              updated_at = excluded.updated_at
+            """,
+            [run["id"], op_key, name, Jason.encode!(output), now, now]
+          )
+
+          append_event!(
+            run["id"],
+            "StepCompleted",
+            %{"name" => name, "key" => op_key, "output" => output},
+            now
+          )
+
+          %{"status" => "completed", "output" => output}
+      end
+    end)
+    |> unwrap_transaction_result()
   end
 
   def list_runs(project_name \\ nil) do
@@ -263,6 +541,9 @@ defmodule VilanoKernel.Storage do
           definition_kind,
           definition_name,
           status,
+          lease_id,
+          lease_worker_id,
+          lease_expires_at,
           input_json,
           output_json,
           error_json,
@@ -279,6 +560,9 @@ defmodule VilanoKernel.Storage do
           definition_kind,
           definition_name,
           status,
+          lease_id,
+          lease_worker_id,
+          lease_expires_at,
           input_json,
           output_json,
           error_json,
@@ -308,6 +592,9 @@ defmodule VilanoKernel.Storage do
         definition_kind,
         definition_name,
         status,
+        lease_id,
+        lease_worker_id,
+        lease_expires_at,
         input_json,
         output_json,
         error_json,
@@ -370,6 +657,9 @@ defmodule VilanoKernel.Storage do
       "definitionKind" => row["definition_kind"],
       "definitionName" => row["definition_name"],
       "status" => row["status"],
+      "leaseId" => row["lease_id"],
+      "leaseWorkerId" => row["lease_worker_id"],
+      "leaseExpiresAt" => row["lease_expires_at"],
       "input" => decode_json_value(row["input_json"], %{}),
       "output" => decode_json_value(row["output_json"], nil),
       "error" => decode_json_value(row["error_json"], nil),
@@ -403,6 +693,70 @@ defmodule VilanoKernel.Storage do
 
   defp decode_json_value(nil, fallback), do: fallback
   defp decode_json_value(value, _fallback) when is_binary(value), do: Jason.decode!(value)
+
+  defp get_run_by_lease(lease_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        id,
+        project_name,
+        definition_kind,
+        definition_name,
+        status,
+        lease_id,
+        lease_worker_id,
+        lease_expires_at,
+        input_json,
+        output_json,
+        error_json,
+        created_at,
+        updated_at
+      from runs
+      where lease_id = ?
+      """,
+      [lease_id]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
+  defp append_event!(run_id, event_type, body, created_at) do
+    next_seq =
+      Repo
+      |> SQL.query!("select coalesce(max(seq), 0) + 1 from run_events where run_id = ?", [run_id])
+      |> first_integer()
+
+    SQL.query!(
+      Repo,
+      """
+      insert into run_events (
+        id,
+        run_id,
+        seq,
+        event_type,
+        body_json,
+        created_at
+      ) values (?, ?, ?, ?, ?, ?)
+      """,
+      [
+        "evt_" <> Ecto.UUID.generate(),
+        run_id,
+        next_seq,
+        event_type,
+        Jason.encode!(body),
+        created_at
+      ]
+    )
+  end
+
+  defp shift_seconds(iso8601, seconds) do
+    {:ok, datetime, _offset} = DateTime.from_iso8601(iso8601)
+    datetime |> DateTime.add(seconds, :second) |> DateTime.to_iso8601()
+  end
+
+  defp unwrap_transaction_result({:ok, value}), do: value
+  defp unwrap_transaction_result({:error, reason}), do: raise(reason)
 
   defp now_iso8601 do
     DateTime.utc_now() |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()

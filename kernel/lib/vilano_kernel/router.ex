@@ -100,6 +100,81 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  post "/v1/activations/lease" do
+    worker_id = fetch_required_string(conn.body_params, "workerId")
+
+    case Storage.lease_next_run(worker_id) do
+      nil ->
+        send_json(conn, 200, %{ok: true, activation: nil})
+
+      %{lease_id: lease_id, lease_expires_at: lease_expires_at, run: run} ->
+        project = Storage.get_project(run["project"])
+        definition = Storage.get_definition(run["project"], "workflow", run["definitionName"])
+
+        send_json(conn, 200, %{
+          ok: true,
+          activation: %{
+            leaseId: lease_id,
+            leaseExpiresAt: lease_expires_at,
+            run: %{
+              id: run["id"],
+              input: run["input"]
+            },
+            project: %{
+              name: project["name"],
+              path: project["path"]
+            },
+            definition: definition
+          }
+        })
+    end
+  end
+
+  post "/v1/leases/:lease_id/heartbeat" do
+    worker_id = fetch_required_string(conn.body_params, "workerId")
+
+    case Storage.heartbeat_lease(lease_id, worker_id) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+      lease -> send_json(conn, 200, %{ok: true, lease: lease})
+    end
+  end
+
+  post "/v1/leases/:lease_id/complete" do
+    case Storage.complete_run_lease(lease_id, Map.get(conn.body_params, "result", %{})) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+      run -> send_json(conn, 200, %{ok: true, run: run})
+    end
+  end
+
+  post "/v1/leases/:lease_id/fail" do
+    error_body = Map.get(conn.body_params, "error", %{})
+
+    case Storage.fail_run_lease(lease_id, error_body) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+      run -> send_json(conn, 200, %{ok: true, run: run})
+    end
+  end
+
+  post "/v1/leases/:lease_id/steps/resolve" do
+    name = fetch_required_string(conn.body_params, "name")
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.resolve_step(lease_id, name, key) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+      step -> send_json(conn, 200, %{ok: true, step: step})
+    end
+  end
+
+  post "/v1/leases/:lease_id/steps/complete" do
+    name = fetch_required_string(conn.body_params, "name")
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.complete_step(lease_id, name, key, Map.get(conn.body_params, "output")) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+      step -> send_json(conn, 200, %{ok: true, step: step})
+    end
+  end
+
   post "/v1/runs" do
     project = fetch_required_string(conn.body_params, "project")
     workflow = fetch_required_string(conn.body_params, "workflow")
