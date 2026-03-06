@@ -36,9 +36,12 @@ defmodule VilanoKernel.ManagedWorker do
         :ignore
 
       {bun_path, true} ->
+        port = start_port(bun_path, worker_entry, runtime, index)
+
         state = %{
           index: index,
-          port: start_port(bun_path, worker_entry, runtime, index)
+          port: port,
+          os_pid: port_os_pid(port)
         }
 
         {:ok, state}
@@ -65,6 +68,8 @@ defmodule VilanoKernel.ManagedWorker do
       Port.close(state.port)
     end
 
+     maybe_kill_os_process(state[:os_pid])
+
     :ok
   end
 
@@ -90,5 +95,21 @@ defmodule VilanoKernel.ManagedWorker do
          )}
       ]
     )
+  end
+
+  defp port_os_pid(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, os_pid} when is_integer(os_pid) -> os_pid
+      _ -> nil
+    end
+  end
+
+  defp maybe_kill_os_process(nil), do: :ok
+
+  defp maybe_kill_os_process(os_pid) when is_integer(os_pid) do
+    System.cmd("kill", ["-TERM", Integer.to_string(os_pid)], stderr_to_stdout: true)
+    :ok
+  rescue
+    _ -> :ok
   end
 end
