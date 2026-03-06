@@ -16,6 +16,8 @@ Current coverage:
 - durable signal delivery, including buffered signals before first activation
 - exec stdout/stderr/artifact capture on success
 - exec timeout persistence with captured failure artifacts
+- `run replay` workflow timeline rendering
+- `run replay --json` service turn timeline projection
 - cooperative step cancellation that releases the worker
 - cooperative step timeout persistence for run and step failure state
 - kernel-enforced timeout for non-cooperative blocking steps
@@ -29,5 +31,5 @@ Run it from the dev shell:
 
 Next high-value additions:
 
-- operator-facing replay output assertions once `vilano run replay` lands
 - retry policy coverage for explicit non-retryable failures
+- richer replay coverage for wait/signal-heavy runs

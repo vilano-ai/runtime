@@ -243,6 +243,14 @@ export interface RunInspectResponse {
   turns?: RunTurnRecord[];
 }
 
+export interface RunReplayEntry {
+  seq: number;
+  createdAt: string;
+  type: string;
+  summary: string;
+  body: unknown;
+}
+
 export interface ServiceEnsureResponse {
   ok: true;
   run: RunRecord;

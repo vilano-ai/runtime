@@ -8,6 +8,7 @@ import process from "node:process";
 import type {
   RunCancelResponse,
   RunInspectResponse,
+  RunReplayEntry,
   RunStartResponse,
 } from "../cli/src/types.ts";
 
@@ -65,6 +66,20 @@ class RuntimeHarness {
 
   async inspectRun(runId: string): Promise<RunInspectResponse> {
     return await this.runCliJson<RunInspectResponse>(["run", "inspect", runId]);
+  }
+
+  async replayRun(runId: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    return await this.runCli(["run", "replay", runId]);
+  }
+
+  async replayRunJson(
+    runId: string
+  ): Promise<RunInspectResponse & { timeline: RunReplayEntry[] }> {
+    return await this.runCliJson<RunInspectResponse & { timeline: RunReplayEntry[] }>([
+      "run",
+      "replay",
+      runId,
+    ]);
   }
 
   async inspectService(reference: string, keyInput: unknown): Promise<RunInspectResponse> {
@@ -979,6 +994,62 @@ test("exec success captures stdout stderr and artifacts", async () => {
   }
 });
 
+test("run replay renders a chronological workflow timeline", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/planner", { topic: "replay-workflow" });
+    await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed");
+
+    const replay = await harness.replayRun(run.run.id);
+    expect(replay.exitCode).toBe(0);
+    expect(replay.stdout).toContain("timeline:");
+    expectInOrder(replay.stdout, [
+      "RunStarted",
+      "RunLeaseGranted",
+      "ProcessStarted",
+      "ProcessCompleted",
+      "RunCompleted",
+    ]);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("run replay json includes service turn timelines", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/reviewCoordinator", {
+      repoId: "replay-service",
+      note: "Focus on timeline output",
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+    const serviceRunId =
+      completed.run.output && typeof completed.run.output === "object"
+        ? (completed.run.output as Record<string, unknown>).reviewerRunId
+        : null;
+
+    expect(typeof serviceRunId).toBe("string");
+
+    const replay = await harness.replayRunJson(serviceRunId as string);
+    const replayTypes = replay.timeline.map((entry) => entry.type);
+
+    expect(replay.run.definitionKind).toBe("service");
+    expect(replay.timeline.length).toBeGreaterThan(0);
+    expect(replayTypes).toContain("InboundEnqueued");
+    expect(replayTypes).toContain("TurnStarted");
+    expect(replayTypes).toContain("TurnCompleted");
+    expect(replay.turns?.some((turn) => turn.phase === "completed")).toBe(true);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("exec retries back off durably and eventually complete", async () => {
   const harness = await RuntimeHarness.create();
 
@@ -1111,4 +1182,14 @@ async function sleep(durationMs: number): Promise<void> {
   await new Promise((resolve) => {
     setTimeout(resolve, durationMs);
   });
+}
+
+function expectInOrder(text: string, fragments: string[]): void {
+  let lastIndex = -1;
+
+  for (const fragment of fragments) {
+    const nextIndex = text.indexOf(fragment, lastIndex + 1);
+    expect(nextIndex).toBeGreaterThan(lastIndex);
+    lastIndex = nextIndex;
+  }
 }
