@@ -111,10 +111,22 @@ async function executeActivation(
         stack: error instanceof Error ? error.stack : undefined,
       });
     } else {
-      await client.failServiceTurn(activation.leaseId, activation.envelope.id, {
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      if (isInactiveServiceTurnError(error)) {
+        return;
+      }
+
+      try {
+        await client.failServiceTurn(activation.leaseId, activation.envelope.id, {
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      } catch (reportError) {
+        if (isInactiveServiceTurnError(reportError)) {
+          return;
+        }
+
+        throw reportError;
+      }
     }
   } finally {
     clearInterval(heartbeat);
@@ -963,6 +975,17 @@ function toServiceCallError(
   }
 
   return new Error(`Service ${kind} '${messageName}' failed on '${serviceRunId}'`);
+}
+
+function isInactiveServiceTurnError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return (
+    error.message.startsWith("Unknown active lease:") ||
+    error.message.startsWith("Unknown active service turn:")
+  );
 }
 
 function deterministicChildRunId(parentRunId: string, key: string): string {

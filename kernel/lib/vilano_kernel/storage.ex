@@ -475,10 +475,12 @@ defmodule VilanoKernel.Storage do
           if service_run["status"] == "stopped" do
             %{
               "run" => service_run,
-              "stoppedEnvelopeCount" => 0
+              "stoppedEnvelopeCount" => 0,
+              "cancelledWaitCount" => 0,
+              "hadInFlightTurn" => false
             }
           else
-            queued_envelopes =
+            open_envelopes =
               Repo
               |> SQL.query!(
                 """
@@ -496,7 +498,74 @@ defmodule VilanoKernel.Storage do
                   created_at,
                   updated_at
                 from service_envelopes
-                where service_run_id = ? and status = 'queued'
+                where service_run_id = ? and status in ('queued', 'processing')
+                order by created_at asc
+                """,
+                [service_run["id"]]
+              )
+              |> rows_to_maps()
+
+            waiting_waits =
+              Repo
+              |> SQL.query!(
+                """
+                select
+                  run_id,
+                  op_key,
+                  wait_kind,
+                  wait_name,
+                  status,
+                  wake_at,
+                  output_json,
+                  created_at,
+                  updated_at
+                from run_waits
+                where run_id = ? and status = 'waiting'
+                order by created_at asc
+                """,
+                [service_run["id"]]
+              )
+              |> rows_to_maps()
+
+            running_steps =
+              Repo
+              |> SQL.query!(
+                """
+                select run_id, op_key, name, status, output_json, created_at, updated_at
+                from run_steps
+                where run_id = ? and status = 'running'
+                order by created_at asc
+                """,
+                [service_run["id"]]
+              )
+              |> rows_to_maps()
+
+            running_execs =
+              Repo
+              |> SQL.query!(
+                """
+                select
+                  run_id,
+                  op_key,
+                  name,
+                  status,
+                  cmd,
+                  args_json,
+                  cwd,
+                  env_json,
+                  timeout_ms,
+                  attempt,
+                  exit_code,
+                  signal_code,
+                  stdout_ref,
+                  stderr_ref,
+                  artifacts_json,
+                  output_json,
+                  error_json,
+                  created_at,
+                  updated_at
+                from run_execs
+                where run_id = ? and status = 'running'
                 order by created_at asc
                 """,
                 [service_run["id"]]
@@ -504,8 +573,9 @@ defmodule VilanoKernel.Storage do
               |> rows_to_maps()
 
             stop_error = %{"message" => "Service stopped"}
+            had_in_flight_turn = Enum.any?(open_envelopes, &(&1["status"] == "processing"))
 
-            Enum.each(queued_envelopes, fn envelope ->
+            Enum.each(open_envelopes, fn envelope ->
               SQL.query!(
                 Repo,
                 """
@@ -522,6 +592,87 @@ defmodule VilanoKernel.Storage do
               if envelope["kind"] == "ask" and envelope["correlation_id"] do
                 wake_service_ask_waiter!(envelope["correlation_id"], "failed", stop_error, now)
               end
+
+              if envelope["status"] == "processing" do
+                append_event!(
+                  service_run["id"],
+                  "TurnFailed",
+                  %{
+                    "envelopeId" => envelope["id"],
+                    "kind" => envelope["kind"],
+                    "name" => envelope["name"],
+                    "error" => stop_error
+                  },
+                  now
+                )
+              end
+            end)
+
+            Enum.each(waiting_waits, fn wait ->
+              SQL.query!(
+                Repo,
+                """
+                update run_waits
+                set
+                  status = 'failed',
+                  output_json = ?,
+                  updated_at = ?
+                where run_id = ? and op_key = ?
+                """,
+                [maybe_encode_json(stop_error), now, wait["run_id"], wait["op_key"]]
+              )
+            end)
+
+            Enum.each(running_steps, fn step ->
+              SQL.query!(
+                Repo,
+                """
+                update run_steps
+                set
+                  status = 'cancelled',
+                  updated_at = ?
+                where run_id = ? and op_key = ?
+                """,
+                [now, step["run_id"], step["op_key"]]
+              )
+
+              append_event!(
+                service_run["id"],
+                "StepCancelled",
+                %{
+                  "name" => step["name"],
+                  "key" => step["op_key"],
+                  "error" => stop_error
+                },
+                now
+              )
+            end)
+
+            Enum.each(running_execs, fn exec ->
+              SQL.query!(
+                Repo,
+                """
+                update run_execs
+                set
+                  status = 'cancelled',
+                  error_json = ?,
+                  updated_at = ?
+                where run_id = ? and op_key = ?
+                """,
+                [maybe_encode_json(stop_error), now, exec["run_id"], exec["op_key"]]
+              )
+
+              append_event!(
+                service_run["id"],
+                "ProcessCancelled",
+                %{
+                  "name" => exec["name"],
+                  "key" => exec["op_key"],
+                  "attempt" => exec["attempt"],
+                  "error" => stop_error
+                },
+                now
+              )
             end)
 
             SQL.query!(
@@ -530,6 +681,9 @@ defmodule VilanoKernel.Storage do
               update runs
               set
                 status = 'stopped',
+                lease_id = null,
+                lease_worker_id = null,
+                lease_expires_at = null,
                 updated_at = ?
               where id = ?
               """,
@@ -542,14 +696,18 @@ defmodule VilanoKernel.Storage do
               %{
                 "reason" => "cli_stop",
                 "hadActiveLease" => not is_nil(service_run["leaseId"]),
-                "stoppedEnvelopeCount" => length(queued_envelopes)
+                "hadInFlightTurn" => had_in_flight_turn,
+                "stoppedEnvelopeCount" => length(open_envelopes),
+                "cancelledWaitCount" => length(waiting_waits)
               },
               now
             )
 
             %{
               "run" => get_service_run_by_id(service_run["id"]),
-              "stoppedEnvelopeCount" => length(queued_envelopes)
+              "stoppedEnvelopeCount" => length(open_envelopes),
+              "cancelledWaitCount" => length(waiting_waits),
+              "hadInFlightTurn" => had_in_flight_turn
             }
           end
       end

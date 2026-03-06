@@ -533,7 +533,13 @@ defmodule VilanoKernel.Router do
          definition when not is_nil(definition) <- Storage.get_definition(project, "service", name),
          result when not is_nil(result) <- Storage.stop_service_run(project, definition["name"], service_key) do
       _ = project_record
-      send_json(conn, 200, %{ok: true, run: result["run"], stoppedEnvelopeCount: result["stoppedEnvelopeCount"]})
+      send_json(conn, 200, %{
+        ok: true,
+        run: result["run"],
+        stoppedEnvelopeCount: result["stoppedEnvelopeCount"],
+        cancelledWaitCount: result["cancelledWaitCount"],
+        hadInFlightTurn: result["hadInFlightTurn"]
+      })
     else
       nil ->
         send_error(conn, 404, "not_found", "Unknown service instance '#{name}/#{service_key}' in project '#{project}'")
