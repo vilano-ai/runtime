@@ -76,6 +76,36 @@ export const delegator = workflow({
   },
 });
 
+export const slowChildTask = workflow({
+  name: "slowChildTask",
+  run: async (input: { topic: string; duration?: string }, ctx) => {
+    await ctx.sleep(input.duration ?? "5s", { key: "slow-child-wait" });
+
+    return {
+      summary: `slow child planned: ${input.topic}`,
+    };
+  },
+});
+
+export const slowDelegator = workflow({
+  name: "slowDelegator",
+  run: async (input: { topic: string; duration?: string }, ctx) => {
+    const child = ctx.spawn(
+      slowChildTask,
+      { topic: input.topic, duration: input.duration },
+      { key: "slow-child" }
+    );
+
+    const result = await child.result();
+
+    return {
+      delegated: true,
+      childRunId: child.id,
+      child: result,
+    };
+  },
+});
+
 export const reviewer = service({
   name: "reviewer",
   key: (input: { repoId: string }) => input.repoId,
@@ -199,6 +229,19 @@ export const reviewCoordinator = workflow({
   },
 });
 
+export const approvalCoordinator = workflow({
+  name: "approvalCoordinator",
+  run: async (input: { sessionId: string }, ctx) => {
+    const operatorRef = await ctx.connect(operator, { sessionId: input.sessionId });
+    const approval = await operatorRef.ask.awaitApproval();
+
+    return {
+      operatorRunId: operatorRef.id,
+      approval,
+    };
+  },
+});
+
 export const serviceTurnCoordinator = workflow({
   name: "serviceTurnCoordinator",
   run: async (input: { sessionId: string; topic: string }, ctx) => {
@@ -209,5 +252,28 @@ export const serviceTurnCoordinator = workflow({
       operatorRunId: operatorRef.id,
       pipeline,
     };
+  },
+});
+
+export const longExec = workflow({
+  name: "longExec",
+  run: async (input: { durationMs?: number }, ctx) => {
+    return await ctx.exec({
+      name: "long-exec",
+      key: "long-exec",
+      cmd: "bun",
+      args: [
+        "-e",
+        [
+          `await new Promise((resolve) => setTimeout(resolve, ${input.durationMs ?? 5_000}));`,
+          "console.log(JSON.stringify({ ok: true }));",
+        ].join(" "),
+      ],
+      capture: {
+        stdout: true,
+        stderr: true,
+      },
+      parse: (stdout) => JSON.parse(stdout.trim()) as { ok: true },
+    });
   },
 });

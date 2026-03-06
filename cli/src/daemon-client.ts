@@ -20,6 +20,7 @@ import type {
   ServiceRunListResponse,
   ServiceStopResponse,
   RunInspectResponse,
+  RunCancelResponse,
   RunListResponse,
   RunStartResponse,
   SignalSendResponse,
@@ -294,6 +295,14 @@ export async function inspectRun(runId: string): Promise<RunInspectResponse> {
   return requestJson<RunInspectResponse>({
     method: "GET",
     pathname: `/v1/runs/${encodeURIComponent(runId)}`,
+    autoStart: true,
+  });
+}
+
+export async function cancelRun(runId: string): Promise<RunCancelResponse> {
+  return requestJson<RunCancelResponse>({
+    method: "POST",
+    pathname: `/v1/runs/${encodeURIComponent(runId)}/cancel`,
     autoStart: true,
   });
 }

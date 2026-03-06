@@ -6,6 +6,7 @@ import type { ServiceDefinition } from "@vilano/runtime";
 import {
   addProject,
   askService,
+  cancelRun,
   ensureDaemonStarted,
   ensureServiceRun,
   getRunningDaemonStatus,
@@ -62,7 +63,7 @@ function renderHelp(): string {
     "  vilano daemon start|status|stop",
     "  vilano project add|list|inspect|sync|remove",
     "  vilano workflow list|inspect",
-    "  vilano run start|list|inspect",
+    "  vilano run start|list|inspect|cancel",
     "  vilano worker start",
     "  vilano service list|ensure|inspect|send|ask|signal|stop",
     "  vilano signal send",
@@ -295,8 +296,28 @@ async function handleRun(args: string[], flags: Record<string, string | boolean>
       );
       return 0;
     }
+    case "cancel": {
+      const runId = args[1];
+      if (!runId) {
+        throw new CliError("Usage: vilano run cancel <run-id>");
+      }
+
+      const response = await cancelRun(runId);
+      writeOutput(flags, response, (body) =>
+        [
+          renderRun(body.run),
+          `had_active_lease: ${body.hadActiveLease}`,
+          `cancelled_waits: ${body.cancelledWaitCount}`,
+          `cancelled_child_runs: ${body.cancelledChildRunCount}`,
+          `cancelled_service_asks: ${body.cancelledServiceAskCount}`,
+          `stopped_envelopes: ${body.stoppedEnvelopeCount}`,
+          `had_in_flight_turn: ${body.hadInFlightTurn}`,
+        ].join("\n")
+      );
+      return 0;
+    }
     default:
-      throw new CliError("Usage: vilano run start|list|inspect");
+      throw new CliError("Usage: vilano run start|list|inspect|cancel");
   }
 }
 
@@ -469,6 +490,8 @@ async function handleService(
           `status: ${body.run.status}`,
           `stopped_envelopes: ${body.stoppedEnvelopeCount}`,
           `cancelled_waits: ${body.cancelledWaitCount}`,
+          `cancelled_child_runs: ${body.cancelledChildRunCount ?? 0}`,
+          `cancelled_service_asks: ${body.cancelledServiceAskCount ?? 0}`,
           `had_in_flight_turn: ${body.hadInFlightTurn}`,
         ].join("\n")
       );
@@ -1294,6 +1317,20 @@ function renderEventSummary(event: RunEventRecord): string {
         envelope: body.envelopeId,
         kind: body.kind,
         name: body.name,
+      });
+    case "RunCancelled":
+      return formatSummary({
+        reason: body.reason,
+        waits: body.cancelledWaitCount,
+        children: body.cancelledChildRunCount,
+        asks: body.cancelledServiceAskCount,
+      });
+    case "ServiceStopped":
+      return formatSummary({
+        reason: body.reason,
+        waits: body.cancelledWaitCount,
+        children: body.cancelledChildRunCount,
+        asks: body.cancelledServiceAskCount,
       });
     case "StepCancelled":
     case "ProcessCancelled":

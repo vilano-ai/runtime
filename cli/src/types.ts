@@ -102,6 +102,17 @@ export interface RunStartResponse {
   run: RunRecord;
 }
 
+export interface RunCancelResponse {
+  ok: true;
+  run: RunRecord;
+  cancelledWaitCount: number;
+  cancelledChildRunCount: number;
+  cancelledServiceAskCount: number;
+  hadActiveLease: boolean;
+  stoppedEnvelopeCount: number;
+  hadInFlightTurn: boolean;
+}
+
 export interface RunStepRecord {
   runId: string;
   key: string;
@@ -247,6 +258,8 @@ export interface ServiceStopResponse {
   run: RunRecord;
   stoppedEnvelopeCount: number;
   cancelledWaitCount: number;
+  cancelledChildRunCount?: number;
+  cancelledServiceAskCount?: number;
   hadInFlightTurn: boolean;
 }
 
