@@ -162,6 +162,21 @@ export interface RunChildRecord {
   updatedAt: string;
 }
 
+export interface RunEnvelopeRecord {
+  id: string;
+  serviceRunId: string;
+  kind: "send" | "ask" | "signal";
+  name: string;
+  payload: unknown | null;
+  correlationId: string | null;
+  senderRunId: string | null;
+  status: string;
+  reply: unknown | null;
+  error: unknown | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RunListResponse {
   ok: true;
   project: string | null;
@@ -177,6 +192,7 @@ export interface RunInspectResponse {
   waits: RunWaitRecord[];
   signals: RunSignalRecord[];
   children: RunChildRecord[];
+  envelopes: RunEnvelopeRecord[];
 }
 
 export interface SignalSendResponse {

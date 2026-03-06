@@ -23,6 +23,7 @@ import type {
   ProjectRecord,
   RunExecRecord,
   RunChildRecord,
+  RunEnvelopeRecord,
   RunEventRecord,
   RunRecord,
   RunSignalRecord,
@@ -269,7 +270,16 @@ async function handleRun(args: string[], flags: Record<string, string | boolean>
 
       const response = await inspectRun(runId);
       writeOutput(flags, response, (body) =>
-        renderRunInspect(body.run, body.events, body.steps, body.execs, body.waits, body.signals, body.children)
+        renderRunInspect(
+          body.run,
+          body.events,
+          body.steps,
+          body.execs,
+          body.waits,
+          body.signals,
+          body.children,
+          body.envelopes
+        )
       );
       return 0;
     }
@@ -581,7 +591,8 @@ function renderRunInspect(
   execs: RunExecRecord[],
   waits: RunWaitRecord[],
   signals: RunSignalRecord[],
-  children: RunChildRecord[]
+  children: RunChildRecord[],
+  envelopes: RunEnvelopeRecord[]
 ): string {
   const eventLines =
     events.length === 0
@@ -628,6 +639,29 @@ function renderRunInspect(
             `  ${child.definitionName}\tkey=${child.key}\tchild_run=${child.childRunId}\tstatus=${child.status}`
           ),
         ];
+  const envelopeLines =
+    envelopes.length === 0
+      ? ["envelopes: none"]
+      : [
+          "envelopes:",
+          ...envelopes.map((envelope) => {
+            const parts = [
+              `  ${envelope.kind}`,
+              `name=${envelope.name}`,
+              `status=${envelope.status}`,
+            ];
+
+            if (envelope.correlationId) {
+              parts.push(`correlation=${envelope.correlationId}`);
+            }
+
+            if (envelope.senderRunId) {
+              parts.push(`sender=${envelope.senderRunId}`);
+            }
+
+            return parts.join("\t");
+          }),
+        ];
 
   return [
     renderRun(run),
@@ -637,6 +671,7 @@ function renderRunInspect(
     ...waitLines,
     ...signalLines,
     ...childLines,
+    ...envelopeLines,
   ].join("\n");
 }
 

@@ -104,3 +104,17 @@ export const reviewer = service({
     },
   },
 });
+
+export const reviewCoordinator = workflow({
+  name: "reviewCoordinator",
+  run: async (input: { repoId: string; note: string }, ctx) => {
+    const reviewerRef = await ctx.connect(reviewer, { repoId: input.repoId });
+    await reviewerRef.send.hint({ note: input.note });
+    const status = await reviewerRef.ask.status();
+
+    return {
+      reviewerRunId: reviewerRef.id,
+      status,
+    };
+  },
+});
