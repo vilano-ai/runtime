@@ -22,6 +22,7 @@ Current coverage:
 - exec timeout persistence with captured failure artifacts
 - `run replay` workflow timeline rendering
 - `run replay --json` service turn timeline projection
+- replay coverage for wait/signal and retry-backoff timelines
 - cooperative step cancellation that releases the worker
 - cooperative step timeout persistence for run and step failure state
 - kernel-enforced timeout for non-cooperative blocking steps

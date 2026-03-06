@@ -1199,6 +1199,80 @@ test("run replay renders a chronological workflow timeline", async () => {
   }
 });
 
+test("run replay renders wait and signal lifecycle for workflows", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/gate", {});
+
+    await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "waiting" &&
+        inspect.waits.some((wait) => wait.kind === "signal" && wait.status === "waiting")
+    );
+
+    await harness.sendSignal(run.run.id, "approved", { source: "replay-signal" });
+    await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed", 10_000);
+
+    const replay = await harness.replayRun(run.run.id);
+    expect(replay.exitCode).toBe(0);
+    expect(replay.stdout).toContain("WaitRegistered");
+    expect(replay.stdout).toContain("RunSuspended");
+    expect(replay.stdout).toContain("reason=signal");
+    expect(replay.stdout).toContain("SignalReceived");
+    expect(replay.stdout).toContain("signal=approved");
+    expect(replay.stdout).toContain("WaitSatisfied");
+    expect(replay.stdout).toContain("kind=signal");
+    expectInOrder(replay.stdout, [
+      "WaitRegistered",
+      "RunSuspended",
+      "SignalReceived",
+      "WaitSatisfied",
+      "RunCompleted",
+    ]);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("run replay renders retry backoff lifecycle for workflows", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/retryingStep", {
+      token: "replay-retry",
+      retries: 1,
+      backoff: "50ms",
+    });
+
+    await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed", 10_000);
+
+    const replay = await harness.replayRun(run.run.id);
+    expect(replay.exitCode).toBe(0);
+    expect(replay.stdout).toContain("RetryScheduled");
+    expect(replay.stdout).toContain("kind=step");
+    expect(replay.stdout).toContain("WaitRegistered");
+    expect(replay.stdout).toContain("kind=retry_backoff");
+    expect(replay.stdout).toContain("RunSuspended");
+    expect(replay.stdout).toContain("reason=retry_backoff");
+    expect(replay.stdout).toContain("TimerFired");
+    expect(replay.stdout).toContain("WaitSatisfied");
+    expectInOrder(replay.stdout, [
+      "StepFailed",
+      "RetryScheduled",
+      "WaitRegistered",
+      "RunSuspended",
+      "TimerFired",
+      "WaitSatisfied",
+      "StepCompleted",
+      "RunCompleted",
+    ]);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("run replay json includes service turn timelines", async () => {
   const harness = await RuntimeHarness.create();
 
@@ -1228,6 +1302,59 @@ test("run replay json includes service turn timelines", async () => {
     expect(replayTypes).toContain("TurnStarted");
     expect(replayTypes).toContain("TurnCompleted");
     expect(replay.turns?.some((turn) => turn.phase === "completed")).toBe(true);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("run replay json captures waiting and resumed service turns", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { sessionId: "replay-await-approval" };
+
+  try {
+    await harness.ensureService("demo/operator", keyInput);
+
+    const askCommand = harness.spawnCliCommand([
+      "service",
+      "ask",
+      "demo/operator",
+      "awaitApproval",
+      "--key-json",
+      JSON.stringify(keyInput),
+      "--timeout",
+      "20s",
+      "--json",
+    ]);
+
+    const waiting = await harness.waitForService(
+      "demo/operator",
+      keyInput,
+      (inspect) =>
+        inspect.run.status === "waiting" &&
+        inspect.waits.some((wait) => wait.kind === "signal" && wait.status === "waiting") &&
+        (inspect.turns ?? []).some((turn) => turn.phase === "waiting"),
+      10_000
+    );
+
+    await harness.sendSignal(waiting.run.id, "approved", { source: "service-replay" });
+
+    const askResult = await askCommand.wait();
+    expect(askResult.exitCode).toBe(0);
+
+    const replay = await harness.replayRunJson(waiting.run.id);
+    const replayTypes = replay.timeline.map((entry) => entry.type);
+
+    expect(replayTypes).toContain("TurnWaiting");
+    expect(replayTypes).toContain("SignalReceived");
+    expect(replayTypes).toContain("WaitSatisfied");
+    expect(replayTypes).toContain("TurnResumed");
+    expect(
+      replay.timeline.some(
+        (entry) =>
+          entry.type === "TurnResumed" &&
+          entry.summary.includes("reason=wait_satisfied")
+      )
+    ).toBe(true);
   } finally {
     await harness.dispose();
   }
