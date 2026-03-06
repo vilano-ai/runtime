@@ -118,7 +118,9 @@ export interface RunStepRecord {
   key: string;
   name: string;
   status: string;
+  timeoutMs: number | null;
   output: unknown | null;
+  error: unknown | null;
   attempts?: number;
   lastEventType?: string | null;
   lastEventAt?: string | null;

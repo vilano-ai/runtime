@@ -70,7 +70,9 @@ defmodule VilanoKernel.Storage do
         op_key text not null,
         name text not null,
         status text not null,
+        timeout_ms integer,
         output_json text,
+        error_json text,
         created_at text not null,
         updated_at text not null,
         primary key (run_id, op_key)
@@ -78,6 +80,9 @@ defmodule VilanoKernel.Storage do
       """,
       []
     )
+
+    ensure_column!("run_steps", "timeout_ms", "integer")
+    ensure_column!("run_steps", "error_json", "text")
 
     SQL.query!(
       Repo,
@@ -1483,6 +1488,10 @@ defmodule VilanoKernel.Storage do
   end
 
   def resolve_step(lease_id, name, op_key) do
+    resolve_step(lease_id, name, op_key, nil)
+  end
+
+  def resolve_step(lease_id, name, op_key, timeout_ms) do
     now = now_iso8601()
 
     Repo.transaction(fn ->
@@ -1495,7 +1504,7 @@ defmodule VilanoKernel.Storage do
             Repo
             |> SQL.query!(
               """
-              select run_id, op_key, name, status, output_json, created_at, updated_at
+              select run_id, op_key, name, status, timeout_ms, output_json, error_json, created_at, updated_at
               from run_steps
               where run_id = ? and op_key = ?
               """,
@@ -1504,34 +1513,52 @@ defmodule VilanoKernel.Storage do
             |> rows_to_maps()
             |> List.first()
 
-          if existing && existing["status"] == "completed" do
-            %{
-              "status" => "completed",
-              "output" => decode_json_value(existing["output_json"], nil)
-            }
-          else
-            SQL.query!(
-              Repo,
-              """
-              insert into run_steps (
-                run_id,
-                op_key,
-                name,
-                status,
-                output_json,
-                created_at,
-                updated_at
-              ) values (?, ?, ?, 'running', null, ?, ?)
-              on conflict(run_id, op_key) do update set
-                name = excluded.name,
-                status = 'running',
-                updated_at = excluded.updated_at
-              """,
-              [run["id"], op_key, name, now, now]
-            )
+          cond do
+            existing && existing["status"] == "completed" ->
+              %{
+                "status" => "completed",
+                "output" => decode_json_value(existing["output_json"], nil)
+              }
 
-            append_event!(run["id"], "StepStarted", %{"name" => name, "key" => op_key}, now)
-            %{"status" => "pending"}
+            existing && existing["status"] == "failed" ->
+              %{
+                "status" => "failed",
+                "error" => decode_json_value(existing["error_json"], nil)
+              }
+
+            true ->
+              SQL.query!(
+                Repo,
+                """
+                insert into run_steps (
+                  run_id,
+                  op_key,
+                  name,
+                  status,
+                  timeout_ms,
+                  output_json,
+                  error_json,
+                  created_at,
+                  updated_at
+                ) values (?, ?, ?, 'running', ?, null, null, ?, ?)
+                on conflict(run_id, op_key) do update set
+                  name = excluded.name,
+                  status = 'running',
+                  timeout_ms = excluded.timeout_ms,
+                  error_json = null,
+                  updated_at = excluded.updated_at
+                """,
+                [run["id"], op_key, name, timeout_ms, now, now]
+              )
+
+              append_event!(
+                run["id"],
+                "StepStarted",
+                %{"name" => name, "key" => op_key, "timeoutMs" => timeout_ms},
+                now
+              )
+
+              %{"status" => "pending"}
           end
       end
     end)
@@ -1555,14 +1582,17 @@ defmodule VilanoKernel.Storage do
               op_key,
               name,
               status,
+              timeout_ms,
               output_json,
+              error_json,
               created_at,
               updated_at
-            ) values (?, ?, ?, 'completed', ?, ?, ?)
+            ) values (?, ?, ?, 'completed', null, ?, null, ?, ?)
             on conflict(run_id, op_key) do update set
               name = excluded.name,
               status = 'completed',
               output_json = excluded.output_json,
+              error_json = excluded.error_json,
               updated_at = excluded.updated_at
             """,
             [run["id"], op_key, name, Jason.encode!(output), now, now]
@@ -1576,6 +1606,42 @@ defmodule VilanoKernel.Storage do
           )
 
           %{"status" => "completed", "output" => output}
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def fail_step(lease_id, name, op_key, error_body) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case get_run_by_lease(lease_id) do
+        nil ->
+          nil
+
+        run ->
+          SQL.query!(
+            Repo,
+            """
+            update run_steps
+            set
+              name = ?,
+              status = 'failed',
+              error_json = ?,
+              updated_at = ?
+            where run_id = ? and op_key = ?
+            """,
+            [name, Jason.encode!(error_body), now, run["id"], op_key]
+          )
+
+          append_event!(
+            run["id"],
+            "StepFailed",
+            %{"name" => name, "key" => op_key, "error" => error_body},
+            now
+          )
+
+          %{"status" => "failed", "error" => error_body}
       end
     end)
     |> unwrap_transaction_result()
@@ -2416,7 +2482,9 @@ defmodule VilanoKernel.Storage do
         op_key,
         name,
         status,
+        timeout_ms,
         output_json,
+        error_json,
         created_at,
         updated_at
       from run_steps
@@ -2608,7 +2676,9 @@ defmodule VilanoKernel.Storage do
       "key" => row["op_key"],
       "name" => row["name"],
       "status" => row["status"],
+      "timeoutMs" => row["timeout_ms"],
       "output" => decode_json_value(row["output_json"], nil),
+      "error" => decode_json_value(row["error_json"], nil),
       "createdAt" => row["created_at"],
       "updatedAt" => row["updated_at"]
     }
@@ -2719,6 +2789,18 @@ defmodule VilanoKernel.Storage do
 
   defp maybe_encode_json(nil), do: nil
   defp maybe_encode_json(value), do: Jason.encode!(value)
+
+  defp ensure_column!(table_name, column_name, definition) do
+    existing_columns =
+      Repo
+      |> SQL.query!("pragma table_info(#{table_name})", [])
+      |> rows_to_maps()
+      |> Enum.map(& &1["name"])
+
+    unless column_name in existing_columns do
+      SQL.query!(Repo, "alter table #{table_name} add column #{column_name} #{definition}", [])
+    end
+  end
 
   defp get_run_by_lease(lease_id) do
     Repo
@@ -3281,10 +3363,11 @@ defmodule VilanoKernel.Storage do
         update run_steps
         set
           status = 'cancelled',
+          error_json = ?,
           updated_at = ?
         where run_id = ? and op_key = ?
         """,
-        [now, step["run_id"], step["op_key"]]
+        [maybe_encode_json(error_body), now, step["run_id"], step["op_key"]]
       )
 
       append_event!(

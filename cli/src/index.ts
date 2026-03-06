@@ -1003,6 +1003,17 @@ function renderRunInspect(
               parts.push(`last_event=${step.lastEventType}`);
             }
 
+            if (step.timeoutMs !== null) {
+              parts.push(`timeout_ms=${step.timeoutMs}`);
+            }
+
+            if (step.status === "failed") {
+              const error = asRecord(step.error);
+              if (error.timedOut === true) {
+                parts.push("timed_out=true");
+              }
+            }
+
             return parts.join("\t");
           }),
         ];
@@ -1164,7 +1175,11 @@ function deriveStepViews(steps: RunStepRecord[], events: RunEventRecord[]): RunS
       lastEvent.set(key, { type: event.type, at: event.createdAt });
     }
 
-    if (event.type === "StepCompleted" || event.type === "StepCancelled") {
+    if (
+      event.type === "StepCompleted" ||
+      event.type === "StepCancelled" ||
+      event.type === "StepFailed"
+    ) {
       lastEvent.set(key, { type: event.type, at: event.createdAt });
     }
   }
@@ -1333,6 +1348,7 @@ function renderEventSummary(event: RunEventRecord): string {
         asks: body.cancelledServiceAskCount,
       });
     case "StepCancelled":
+    case "StepFailed":
     case "ProcessCancelled":
       return formatSummary({
         key: body.key,

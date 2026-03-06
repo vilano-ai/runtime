@@ -256,8 +256,9 @@ defmodule VilanoKernel.Router do
   post "/v1/leases/:lease_id/steps/resolve" do
     name = fetch_required_string(conn.body_params, "name")
     key = fetch_required_string(conn.body_params, "key")
+    timeout_ms = Map.get(conn.body_params, "timeoutMs")
 
-    case Storage.resolve_step(lease_id, name, key) do
+    case Storage.resolve_step(lease_id, name, key, timeout_ms) do
       nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
       step -> send_json(conn, 200, %{ok: true, step: step})
     end
@@ -268,6 +269,16 @@ defmodule VilanoKernel.Router do
     key = fetch_required_string(conn.body_params, "key")
 
     case Storage.complete_step(lease_id, name, key, Map.get(conn.body_params, "output")) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+      step -> send_json(conn, 200, %{ok: true, step: step})
+    end
+  end
+
+  post "/v1/leases/:lease_id/steps/fail" do
+    name = fetch_required_string(conn.body_params, "name")
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.fail_step(lease_id, name, key, Map.get(conn.body_params, "error", %{})) do
       nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
       step -> send_json(conn, 200, %{ok: true, step: step})
     end

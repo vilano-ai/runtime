@@ -54,7 +54,10 @@ interface ActivationLeaseResponse {
 
 interface StepResolveResponse {
   ok: true;
-  step: { status: "pending" } | { status: "completed"; output: unknown };
+  step:
+    | { status: "pending" }
+    | { status: "completed"; output: unknown }
+    | { status: "failed"; error: unknown };
 }
 
 interface ExecResolveResponse {
@@ -160,11 +163,16 @@ export class WorkerClient {
     return response.lease;
   }
 
-  async resolveStep(leaseId: string, name: string, key: string): Promise<StepResolveResponse["step"]> {
+  async resolveStep(
+    leaseId: string,
+    name: string,
+    key: string,
+    timeoutMs?: number
+  ): Promise<StepResolveResponse["step"]> {
     const response = await this.request<StepResolveResponse>(
       "POST",
       `/v1/leases/${encodeURIComponent(leaseId)}/steps/resolve`,
-      { name, key }
+      { name, key, timeoutMs }
     );
 
     return response.step;
@@ -175,6 +183,14 @@ export class WorkerClient {
       name,
       key,
       output,
+    });
+  }
+
+  async failStep(leaseId: string, name: string, key: string, error: unknown): Promise<void> {
+    await this.request("POST", `/v1/leases/${encodeURIComponent(leaseId)}/steps/fail`, {
+      name,
+      key,
+      error,
     });
   }
 
