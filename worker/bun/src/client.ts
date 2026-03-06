@@ -68,6 +68,20 @@ interface ExecResolveResponse {
     | { status: "failed"; error: unknown };
 }
 
+interface StepFailResponse {
+  ok: true;
+  step:
+    | { status: "failed"; error: unknown }
+    | { status: "retry_waiting"; wait: { key: string; kind: string; name: string } };
+}
+
+interface ExecFailResponse {
+  ok: true;
+  exec:
+    | { status: "failed"; error: unknown }
+    | { status: "retry_waiting"; wait: { key: string; kind: string; name: string } };
+}
+
 interface WaitResolveResponse {
   ok: true;
   wait:
@@ -132,6 +146,13 @@ interface ServiceCallResolveResponse {
     | { status: "suspended"; wait: { key: string; kind: string; name: string } };
 }
 
+interface ServiceTurnFailResponse {
+  ok: true;
+  run: unknown;
+  status?: "retry_waiting";
+  wait?: { key: string; kind: string; name: string };
+}
+
 export class WorkerClient {
   constructor(
     private readonly serverUrl: string,
@@ -167,12 +188,14 @@ export class WorkerClient {
     leaseId: string,
     name: string,
     key: string,
-    timeoutMs?: number
+    timeoutMs?: number,
+    maxAttempts?: number,
+    backoffMs?: number
   ): Promise<StepResolveResponse["step"]> {
     const response = await this.request<StepResolveResponse>(
       "POST",
       `/v1/leases/${encodeURIComponent(leaseId)}/steps/resolve`,
-      { name, key, timeoutMs }
+      { name, key, timeoutMs, maxAttempts, backoffMs }
     );
 
     return response.step;
@@ -186,12 +209,23 @@ export class WorkerClient {
     });
   }
 
-  async failStep(leaseId: string, name: string, key: string, error: unknown): Promise<void> {
-    await this.request("POST", `/v1/leases/${encodeURIComponent(leaseId)}/steps/fail`, {
-      name,
-      key,
-      error,
-    });
+  async failStep(
+    leaseId: string,
+    name: string,
+    key: string,
+    error: unknown
+  ): Promise<StepFailResponse["step"]> {
+    const response = await this.request<StepFailResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/steps/fail`,
+      {
+        name,
+        key,
+        error,
+      }
+    );
+
+    return response.step;
   }
 
   async resolveExec(
@@ -242,9 +276,17 @@ export class WorkerClient {
       stderrRef?: string;
       artifacts: Array<{ path: string; ref: string }>;
       error: unknown;
+      maxAttempts?: number;
+      backoffMs?: number;
     }
-  ): Promise<void> {
-    await this.request("POST", `/v1/leases/${encodeURIComponent(leaseId)}/execs/fail`, spec);
+  ): Promise<ExecFailResponse["exec"]> {
+    const response = await this.request<ExecFailResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/execs/fail`,
+      spec
+    );
+
+    return response.exec;
   }
 
   async resolveSleepWait(
@@ -381,12 +423,17 @@ export class WorkerClient {
   async failServiceTurn(
     leaseId: string,
     envelopeId: string,
-    error: { message: string; stack?: string }
-  ): Promise<void> {
-    await this.request(
+    error: { message: string; stack?: string },
+    retry?: { maxAttempts?: number; backoffMs?: number }
+  ): Promise<ServiceTurnFailResponse> {
+    return await this.request<ServiceTurnFailResponse>(
       "POST",
       `/v1/leases/${encodeURIComponent(leaseId)}/service-turns/${encodeURIComponent(envelopeId)}/fail`,
-      { error }
+      {
+        error,
+        maxAttempts: retry?.maxAttempts,
+        backoffMs: retry?.backoffMs,
+      }
     );
   }
 

@@ -22,6 +22,12 @@ export interface StepOptions {
   key?: string;
   timeout?: string;
   retries?: number;
+  backoff?: string;
+}
+
+export interface RetryOptions {
+  retries?: number;
+  backoff?: string;
 }
 
 export interface StepContext {
@@ -95,6 +101,8 @@ export interface WorkflowContext extends ServiceTurnContext {}
 export interface ExecSpec<TOutput = unknown> {
   name: string;
   key?: string;
+  retries?: number;
+  backoff?: string;
   cmd: string;
   args?: string[];
   timeout?: string;
@@ -160,6 +168,7 @@ export interface ServiceDefinition<
 > {
   readonly kind: "service";
   readonly name: string;
+  readonly retry?: RetryOptions;
   readonly key: (input: TKeyInput) => string;
   readonly init?: (input: TKeyInput, ctx: ServiceTurnContext) => Promise<TState> | TState;
   readonly onSend?: TSend;

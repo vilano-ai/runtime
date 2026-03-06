@@ -89,6 +89,7 @@ async function executeActivation(
   const heartbeat = setInterval(() => {
     void client.heartbeat(activation.leaseId).catch(() => undefined);
   }, heartbeatIntervalMs);
+  let serviceDefinition: ServiceDefinition<any, any, any, any, any> | null = null;
 
   try {
     if (activation.kind === "workflow") {
@@ -99,8 +100,8 @@ async function executeActivation(
       return;
     }
 
-    const definition = await loadServiceDefinition(activation);
-    await executeServiceTurn(client, activation, definition);
+    serviceDefinition = await loadServiceDefinition(activation);
+    await executeServiceTurn(client, activation, serviceDefinition);
   } catch (error) {
     if (error instanceof RunSuspendedError) {
       return;
@@ -125,10 +126,19 @@ async function executeActivation(
       }
     } else {
       try {
-        await client.failServiceTurn(activation.leaseId, activation.envelope.id, {
-          message: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
+        const failedTurn = await client.failServiceTurn(
+          activation.leaseId,
+          activation.envelope.id,
+          {
+            message: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          },
+          toRetryPolicy(serviceDefinition?.retry)
+        );
+
+        if (failedTurn.status === "retry_waiting") {
+          return;
+        }
       } catch (reportError) {
         if (reportError instanceof ActivationCancelledError || isInactiveActivationError(reportError)) {
           return;
@@ -272,7 +282,16 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
     ) {
       const key = options.key ?? name;
       const timeoutMs = parseDurationToMs(options.timeout);
-      const existing = await client.resolveStep(activation.leaseId, name, key, timeoutMs);
+      const maxAttempts = toMaxAttempts(options.retries);
+      const backoffMs = parseDurationToMs(options.backoff) ?? 0;
+      const existing = await client.resolveStep(
+        activation.leaseId,
+        name,
+        key,
+        timeoutMs,
+        maxAttempts,
+        backoffMs
+      );
       if (existing.status === "completed") {
         return existing.output as TOutput;
       }
@@ -309,9 +328,14 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
             timedOut: error.reason === "timeout",
             timeoutMs,
             cause: error.cause,
+            retryable: true,
           });
 
-          await client.failStep(activation.leaseId, name, key, stepError);
+          const failedStep = await client.failStep(activation.leaseId, name, key, stepError);
+          if (failedStep.status === "retry_waiting") {
+            throw new RunSuspendedError("retry_backoff", failedStep.wait.key);
+          }
+
           throw toStepError(name, stepError);
         }
 
@@ -322,9 +346,14 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
           timedOut: false,
           timeoutMs,
           cause: error,
+          retryable: isRetryableError(error),
         });
 
-        await client.failStep(activation.leaseId, name, key, stepError);
+        const failedStep = await client.failStep(activation.leaseId, name, key, stepError);
+        if (failedStep.status === "retry_waiting") {
+          throw new RunSuspendedError("retry_backoff", failedStep.wait.key);
+        }
+
         throw toStepError(name, stepError);
       } finally {
         controller.dispose();
@@ -334,6 +363,8 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
       const key = spec.key ?? spec.name;
       const cwd = resolveExecCwd(activation.project.path, spec.cwd);
       const timeoutMs = parseDurationToMs(spec.timeout);
+      const maxAttempts = toMaxAttempts(spec.retries);
+      const backoffMs = parseDurationToMs(spec.backoff) ?? 0;
       const resolved = await client.resolveExec(activation.leaseId, {
         name: spec.name,
         key,
@@ -374,7 +405,7 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
         return execution.output;
       }
 
-      await client.failExec(activation.leaseId, {
+      const failedExec = await client.failExec(activation.leaseId, {
         name: spec.name,
         key,
         exitCode: execution.exitCode,
@@ -383,7 +414,13 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
         stderrRef: execution.stderrRef,
         artifacts: execution.artifacts,
         error: execution.error,
+        maxAttempts,
+        backoffMs,
       });
+
+      if (failedExec.status === "retry_waiting") {
+        throw new RunSuspendedError("retry_backoff", failedExec.wait.key);
+      }
 
       throw toExecError(spec.name, execution.error);
     },
@@ -1127,6 +1164,7 @@ function buildStepError(input: {
   timedOut: boolean;
   timeoutMs?: number;
   cause: unknown;
+  retryable: boolean;
 }): Record<string, unknown> {
   const stack =
     input.cause instanceof Error && typeof input.cause.stack === "string" ? input.cause.stack : undefined;
@@ -1139,7 +1177,40 @@ function buildStepError(input: {
     timedOut: input.timedOut,
     timeoutMs: input.timeoutMs,
     stack,
+    retryable: input.retryable,
   };
+}
+
+function isRetryableError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return true;
+  }
+
+  if ("retryable" in error && error.retryable === false) {
+    return false;
+  }
+
+  return true;
+}
+
+function toMaxAttempts(retries?: number): number {
+  if (!Number.isInteger(retries) || retries === undefined || retries < 0) {
+    return 1;
+  }
+
+  return retries + 1;
+}
+
+function toRetryPolicy(
+  retry?: { retries?: number; backoff?: string }
+): { maxAttempts?: number; backoffMs?: number } | undefined {
+  if (!retry) {
+    return undefined;
+  }
+
+  const maxAttempts = toMaxAttempts(retry.retries);
+  const backoffMs = parseDurationToMs(retry.backoff) ?? 0;
+  return { maxAttempts, backoffMs };
 }
 
 function truncate(value: string, maxLength = 240): string {
@@ -1249,7 +1320,7 @@ function deterministicChildRunId(parentRunId: string, key: string): string {
 
 class RunSuspendedError extends Error {
   constructor(
-    readonly waitKind: "sleep" | "signal" | "child_result" | "ask_reply",
+    readonly waitKind: "sleep" | "signal" | "child_result" | "ask_reply" | "retry_backoff",
     readonly key: string
   ) {
     super(`Run suspended on ${waitKind}:${key}`);
