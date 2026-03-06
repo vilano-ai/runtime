@@ -175,6 +175,62 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  post "/v1/leases/:lease_id/execs/resolve" do
+    name = fetch_required_string(conn.body_params, "name")
+    key = fetch_required_string(conn.body_params, "key")
+
+    exec_spec = %{
+      "cmd" => fetch_required_string(conn.body_params, "cmd"),
+      "args" => Map.get(conn.body_params, "args", []),
+      "cwd" => Map.get(conn.body_params, "cwd"),
+      "env" => Map.get(conn.body_params, "env"),
+      "timeoutMs" => Map.get(conn.body_params, "timeoutMs")
+    }
+
+    case Storage.resolve_exec(lease_id, name, key, exec_spec) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+      exec -> send_json(conn, 200, %{ok: true, exec: exec})
+    end
+  end
+
+  post "/v1/leases/:lease_id/execs/complete" do
+    name = fetch_required_string(conn.body_params, "name")
+    key = fetch_required_string(conn.body_params, "key")
+
+    body = %{
+      "exitCode" => Map.get(conn.body_params, "exitCode"),
+      "signalCode" => Map.get(conn.body_params, "signalCode"),
+      "stdoutRef" => Map.get(conn.body_params, "stdoutRef"),
+      "stderrRef" => Map.get(conn.body_params, "stderrRef"),
+      "artifacts" => Map.get(conn.body_params, "artifacts", []),
+      "output" => Map.get(conn.body_params, "output")
+    }
+
+    case Storage.complete_exec(lease_id, name, key, body) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+      exec -> send_json(conn, 200, %{ok: true, exec: exec})
+    end
+  end
+
+  post "/v1/leases/:lease_id/execs/fail" do
+    name = fetch_required_string(conn.body_params, "name")
+    key = fetch_required_string(conn.body_params, "key")
+
+    body = %{
+      "exitCode" => Map.get(conn.body_params, "exitCode"),
+      "signalCode" => Map.get(conn.body_params, "signalCode"),
+      "stdoutRef" => Map.get(conn.body_params, "stdoutRef"),
+      "stderrRef" => Map.get(conn.body_params, "stderrRef"),
+      "artifacts" => Map.get(conn.body_params, "artifacts", []),
+      "error" => Map.get(conn.body_params, "error", %{})
+    }
+
+    case Storage.fail_exec(lease_id, name, key, body) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+      exec -> send_json(conn, 200, %{ok: true, exec: exec})
+    end
+  end
+
   post "/v1/runs" do
     project = fetch_required_string(conn.body_params, "project")
     workflow = fetch_required_string(conn.body_params, "workflow")
@@ -214,7 +270,13 @@ defmodule VilanoKernel.Router do
         send_error(conn, 404, "not_found", "Unknown run: #{id}")
 
       run ->
-        send_json(conn, 200, %{ok: true, run: run, events: Storage.list_run_events(id)})
+        send_json(conn, 200, %{
+          ok: true,
+          run: run,
+          events: Storage.list_run_events(id),
+          steps: Storage.list_run_steps(id),
+          execs: Storage.list_run_execs(id)
+        })
     end
   end
 

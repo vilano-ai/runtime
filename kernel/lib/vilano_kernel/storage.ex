@@ -84,6 +84,35 @@ defmodule VilanoKernel.Storage do
     SQL.query!(
       Repo,
       """
+      create table if not exists run_execs (
+        run_id text not null,
+        op_key text not null,
+        name text not null,
+        status text not null,
+        cmd text not null,
+        args_json text not null,
+        cwd text,
+        env_json text,
+        timeout_ms integer,
+        attempt integer not null,
+        exit_code integer,
+        signal_code text,
+        stdout_ref text,
+        stderr_ref text,
+        artifacts_json text,
+        output_json text,
+        error_json text,
+        created_at text not null,
+        updated_at text not null,
+        primary key (run_id, op_key)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
       create index if not exists runs_project_created_at_idx
       on runs(project_name, created_at desc)
       """,
@@ -531,6 +560,254 @@ defmodule VilanoKernel.Storage do
     |> unwrap_transaction_result()
   end
 
+  def resolve_exec(lease_id, name, op_key, exec_spec) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case get_run_by_lease(lease_id) do
+        nil ->
+          nil
+
+        run ->
+          existing = get_run_exec(run["id"], op_key)
+
+          cond do
+            existing && existing["status"] == "completed" ->
+              exec = exec_from_row(existing)
+              %{"status" => "completed", "output" => exec["output"], "exec" => exec}
+
+            existing && existing["status"] == "failed" ->
+              exec = exec_from_row(existing)
+              %{"status" => "failed", "error" => exec["error"], "exec" => exec}
+
+            true ->
+              attempt =
+                case existing do
+                  nil -> 1
+                  row -> row["attempt"] + 1
+                end
+
+              args = Map.get(exec_spec, "args", [])
+              env_map = Map.get(exec_spec, "env")
+
+              SQL.query!(
+                Repo,
+                """
+                insert into run_execs (
+                  run_id,
+                  op_key,
+                  name,
+                  status,
+                  cmd,
+                  args_json,
+                  cwd,
+                  env_json,
+                  timeout_ms,
+                  attempt,
+                  exit_code,
+                  signal_code,
+                  stdout_ref,
+                  stderr_ref,
+                  artifacts_json,
+                  output_json,
+                  error_json,
+                  created_at,
+                  updated_at
+                ) values (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, null, null, null, null, null, null, null, ?, ?)
+                on conflict(run_id, op_key) do update set
+                  name = excluded.name,
+                  status = 'running',
+                  cmd = excluded.cmd,
+                  args_json = excluded.args_json,
+                  cwd = excluded.cwd,
+                  env_json = excluded.env_json,
+                  timeout_ms = excluded.timeout_ms,
+                  attempt = excluded.attempt,
+                  exit_code = null,
+                  signal_code = null,
+                  stdout_ref = null,
+                  stderr_ref = null,
+                  artifacts_json = null,
+                  output_json = null,
+                  error_json = null,
+                  updated_at = excluded.updated_at
+                """,
+                [
+                  run["id"],
+                  op_key,
+                  name,
+                  Map.fetch!(exec_spec, "cmd"),
+                  Jason.encode!(args),
+                  Map.get(exec_spec, "cwd"),
+                  if(is_map(env_map), do: Jason.encode!(env_map), else: nil),
+                  Map.get(exec_spec, "timeoutMs"),
+                  attempt,
+                  now,
+                  now
+                ]
+              )
+
+              append_event!(
+                run["id"],
+                "ProcessStarted",
+                %{
+                  "name" => name,
+                  "key" => op_key,
+                  "attempt" => attempt,
+                  "cmd" => Map.fetch!(exec_spec, "cmd"),
+                  "args" => args,
+                  "cwd" => Map.get(exec_spec, "cwd"),
+                  "timeoutMs" => Map.get(exec_spec, "timeoutMs")
+                },
+                now
+              )
+
+              %{"status" => "execute", "attempt" => attempt}
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def complete_exec(lease_id, name, op_key, body) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case get_run_by_lease(lease_id) do
+        nil ->
+          nil
+
+        run ->
+          case get_run_exec(run["id"], op_key) do
+            nil ->
+              nil
+
+            existing ->
+              SQL.query!(
+                Repo,
+                """
+                update run_execs
+                set
+                  name = ?,
+                  status = 'completed',
+                  exit_code = ?,
+                  signal_code = ?,
+                  stdout_ref = ?,
+                  stderr_ref = ?,
+                  artifacts_json = ?,
+                  output_json = ?,
+                  error_json = null,
+                  updated_at = ?
+                where run_id = ? and op_key = ?
+                """,
+                [
+                  name,
+                  Map.get(body, "exitCode"),
+                  Map.get(body, "signalCode"),
+                  Map.get(body, "stdoutRef"),
+                  Map.get(body, "stderrRef"),
+                  Jason.encode!(Map.get(body, "artifacts", [])),
+                  Jason.encode!(Map.get(body, "output")),
+                  now,
+                  run["id"],
+                  op_key
+                ]
+              )
+
+              append_event!(
+                run["id"],
+                "ProcessCompleted",
+                %{
+                  "name" => name,
+                  "key" => op_key,
+                  "attempt" => existing["attempt"],
+                  "exitCode" => Map.get(body, "exitCode"),
+                  "signalCode" => Map.get(body, "signalCode"),
+                  "stdoutRef" => Map.get(body, "stdoutRef"),
+                  "stderrRef" => Map.get(body, "stderrRef"),
+                  "artifacts" => Map.get(body, "artifacts", [])
+                },
+                now
+              )
+
+              exec = get_run_exec(run["id"], op_key)
+              %{"status" => "completed", "output" => decode_json_value(exec["output_json"], nil)}
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def fail_exec(lease_id, name, op_key, body) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case get_run_by_lease(lease_id) do
+        nil ->
+          nil
+
+        run ->
+          case get_run_exec(run["id"], op_key) do
+            nil ->
+              nil
+
+            existing ->
+              SQL.query!(
+                Repo,
+                """
+                update run_execs
+                set
+                  name = ?,
+                  status = 'failed',
+                  exit_code = ?,
+                  signal_code = ?,
+                  stdout_ref = ?,
+                  stderr_ref = ?,
+                  artifacts_json = ?,
+                  output_json = null,
+                  error_json = ?,
+                  updated_at = ?
+                where run_id = ? and op_key = ?
+                """,
+                [
+                  name,
+                  Map.get(body, "exitCode"),
+                  Map.get(body, "signalCode"),
+                  Map.get(body, "stdoutRef"),
+                  Map.get(body, "stderrRef"),
+                  Jason.encode!(Map.get(body, "artifacts", [])),
+                  Jason.encode!(Map.get(body, "error", %{})),
+                  now,
+                  run["id"],
+                  op_key
+                ]
+              )
+
+              append_event!(
+                run["id"],
+                "ProcessFailed",
+                %{
+                  "name" => name,
+                  "key" => op_key,
+                  "attempt" => existing["attempt"],
+                  "exitCode" => Map.get(body, "exitCode"),
+                  "signalCode" => Map.get(body, "signalCode"),
+                  "stdoutRef" => Map.get(body, "stdoutRef"),
+                  "stderrRef" => Map.get(body, "stderrRef"),
+                  "artifacts" => Map.get(body, "artifacts", []),
+                  "error" => Map.get(body, "error", %{})
+                },
+                now
+              )
+
+              exec = get_run_exec(run["id"], op_key)
+              %{"status" => "failed", "error" => decode_json_value(exec["error_json"], nil)}
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
   def list_runs(project_name \\ nil) do
     query =
       if is_nil(project_name) do
@@ -634,6 +911,62 @@ defmodule VilanoKernel.Storage do
     |> Enum.map(&run_event_from_row/1)
   end
 
+  def list_run_steps(run_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        run_id,
+        op_key,
+        name,
+        status,
+        output_json,
+        created_at,
+        updated_at
+      from run_steps
+      where run_id = ?
+      order by created_at asc
+      """,
+      [run_id]
+    )
+    |> rows_to_maps()
+    |> Enum.map(&step_from_row/1)
+  end
+
+  def list_run_execs(run_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        run_id,
+        op_key,
+        name,
+        status,
+        cmd,
+        args_json,
+        cwd,
+        env_json,
+        timeout_ms,
+        attempt,
+        exit_code,
+        signal_code,
+        stdout_ref,
+        stderr_ref,
+        artifacts_json,
+        output_json,
+        error_json,
+        created_at,
+        updated_at
+      from run_execs
+      where run_id = ?
+      order by created_at asc
+      """,
+      [run_id]
+    )
+    |> rows_to_maps()
+    |> Enum.map(&exec_from_row/1)
+  end
+
   defp definitions_for_kind(project, "workflow"), do: project["definitions"]["workflows"]
   defp definitions_for_kind(project, "service"), do: project["definitions"]["services"]
 
@@ -679,6 +1012,42 @@ defmodule VilanoKernel.Storage do
     }
   end
 
+  defp step_from_row(row) do
+    %{
+      "runId" => row["run_id"],
+      "key" => row["op_key"],
+      "name" => row["name"],
+      "status" => row["status"],
+      "output" => decode_json_value(row["output_json"], nil),
+      "createdAt" => row["created_at"],
+      "updatedAt" => row["updated_at"]
+    }
+  end
+
+  defp exec_from_row(row) do
+    %{
+      "runId" => row["run_id"],
+      "key" => row["op_key"],
+      "name" => row["name"],
+      "status" => row["status"],
+      "cmd" => row["cmd"],
+      "args" => decode_json_list(row["args_json"]),
+      "cwd" => row["cwd"],
+      "env" => decode_json_value(row["env_json"], nil),
+      "timeoutMs" => row["timeout_ms"],
+      "attempt" => row["attempt"],
+      "exitCode" => row["exit_code"],
+      "signalCode" => row["signal_code"],
+      "stdoutRef" => row["stdout_ref"],
+      "stderrRef" => row["stderr_ref"],
+      "artifacts" => decode_json_list(row["artifacts_json"]),
+      "output" => decode_json_value(row["output_json"], nil),
+      "error" => decode_json_value(row["error_json"], nil),
+      "createdAt" => row["created_at"],
+      "updatedAt" => row["updated_at"]
+    }
+  end
+
   defp rows_to_maps(%{columns: columns, rows: rows}) do
     Enum.map(rows, fn row ->
       Enum.zip(columns, row) |> Map.new()
@@ -716,6 +1085,39 @@ defmodule VilanoKernel.Storage do
       where lease_id = ?
       """,
       [lease_id]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
+  defp get_run_exec(run_id, op_key) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        run_id,
+        op_key,
+        name,
+        status,
+        cmd,
+        args_json,
+        cwd,
+        env_json,
+        timeout_ms,
+        attempt,
+        exit_code,
+        signal_code,
+        stdout_ref,
+        stderr_ref,
+        artifacts_json,
+        output_json,
+        error_json,
+        created_at,
+        updated_at
+      from run_execs
+      where run_id = ? and op_key = ?
+      """,
+      [run_id, op_key]
     )
     |> rows_to_maps()
     |> List.first()
