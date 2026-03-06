@@ -24,6 +24,12 @@ export interface StepOptions {
   retries?: number;
 }
 
+export interface StepContext {
+  readonly signal: AbortSignal;
+  checkCancelled(): void;
+  yield(): Promise<void>;
+}
+
 export interface ExecOptions {
   key?: string;
   timeout?: string;
@@ -59,7 +65,7 @@ export interface ServiceTurnContext {
   readonly runId: string;
   step<TOutput>(
     name: string,
-    fn: () => Promise<TOutput> | TOutput,
+    fn: (step: StepContext) => Promise<TOutput> | TOutput,
     options?: StepOptions
   ): Promise<TOutput>;
   exec<TOutput = ExecResult>(spec: ExecSpec<TOutput>): Promise<TOutput>;

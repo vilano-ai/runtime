@@ -19,6 +19,7 @@ import type {
   SignalOptions,
   SignalResult,
   SpawnOptions,
+  StepContext,
   StepOptions,
   WorkflowHandle,
   WorkflowContext,
@@ -266,18 +267,68 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
     runId: activation.run.id,
     async step<TOutput>(
       name: string,
-      fn: () => Promise<TOutput> | TOutput,
+      fn: (step: StepContext) => Promise<TOutput> | TOutput,
       options: StepOptions = {}
     ) {
       const key = options.key ?? name;
-      const existing = await client.resolveStep(activation.leaseId, name, key);
+      const timeoutMs = parseDurationToMs(options.timeout);
+      const existing = await client.resolveStep(activation.leaseId, name, key, timeoutMs);
       if (existing.status === "completed") {
         return existing.output as TOutput;
       }
 
-      const output = await fn();
-      await client.completeStep(activation.leaseId, name, key, output);
-      return output;
+      if (existing.status === "failed") {
+        throw toStepError(name, existing.error);
+      }
+
+      const controller = createStepController(client, activation, {
+        name,
+        key,
+        timeoutMs,
+      });
+
+      try {
+        const output = await fn(controller.context);
+        controller.checkCancelled();
+        await client.completeStep(activation.leaseId, name, key, output);
+        return output;
+      } catch (error) {
+        if (error instanceof ActivationCancelledError || isInactiveActivationError(error)) {
+          throw error;
+        }
+
+        if (error instanceof StepControlError) {
+          if (error.reason === "activation_cancelled") {
+            throw error.toActivationCancelledError();
+          }
+
+          const stepError = buildStepError({
+            name,
+            key,
+            message: error.message,
+            timedOut: error.reason === "timeout",
+            timeoutMs,
+            cause: error.cause,
+          });
+
+          await client.failStep(activation.leaseId, name, key, stepError);
+          throw toStepError(name, stepError);
+        }
+
+        const stepError = buildStepError({
+          name,
+          key,
+          message: error instanceof Error ? error.message : String(error),
+          timedOut: false,
+          timeoutMs,
+          cause: error,
+        });
+
+        await client.failStep(activation.leaseId, name, key, stepError);
+        throw toStepError(name, stepError);
+      } finally {
+        controller.dispose();
+      }
     },
     async exec<TOutput = ExecResult>(spec: ExecSpec<TOutput>) {
       const key = spec.key ?? spec.name;
@@ -584,6 +635,98 @@ function nextImplicitServiceOpKey(
   const nextCount = (counters.get(counterKey) ?? 0) + 1;
   counters.set(counterKey, nextCount);
   return `${opKind}:${serviceRunId}:${messageName}:${nextCount}`;
+}
+
+function createStepController(
+  client: WorkerClient,
+  activation: Activation,
+  step: {
+    name: string;
+    key: string;
+    timeoutMs?: number;
+  }
+): {
+  context: StepContext;
+  checkCancelled(): void;
+  dispose(): void;
+} {
+  const abortController = new AbortController();
+  let leaseCheckInFlight = false;
+
+  const abortWith = (reason: unknown) => {
+    if (!abortController.signal.aborted) {
+      abortController.abort(reason);
+    }
+  };
+
+  const failForInactiveLease = () => {
+    abortWith(
+      new StepControlError(
+        "activation_cancelled",
+        `Step '${step.name}' stopped because activation ${activation.leaseId} is no longer active`
+      )
+    );
+  };
+
+  const timeoutTimer =
+    step.timeoutMs === undefined
+      ? undefined
+      : setTimeout(() => {
+          abortWith(
+            new StepControlError(
+              "timeout",
+              `Step '${step.name}' timed out after ${step.timeoutMs}ms`
+            )
+          );
+        }, step.timeoutMs);
+
+  const leasePoller = setInterval(() => {
+    if (leaseCheckInFlight || abortController.signal.aborted) {
+      return;
+    }
+
+    leaseCheckInFlight = true;
+    void client
+      .getLeaseStatus(activation.leaseId)
+      .then((lease) => {
+        if (!lease.active) {
+          failForInactiveLease();
+        }
+      })
+      .catch(() => {
+        failForInactiveLease();
+      })
+      .finally(() => {
+        leaseCheckInFlight = false;
+      });
+  }, 250);
+
+  const checkCancelled = () => {
+    if (!abortController.signal.aborted) {
+      return;
+    }
+
+    throwAbortReason(abortController.signal.reason);
+  };
+
+  return {
+    context: {
+      signal: abortController.signal,
+      checkCancelled,
+      async yield() {
+        checkCancelled();
+        await Bun.sleep(0);
+        checkCancelled();
+      },
+    },
+    checkCancelled,
+    dispose() {
+      clearInterval(leasePoller);
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+      }
+    },
+  };
 }
 
 async function sleep(durationMs: number): Promise<void> {
@@ -977,6 +1120,28 @@ function buildExecError(input: {
   };
 }
 
+function buildStepError(input: {
+  name: string;
+  key: string;
+  message: string;
+  timedOut: boolean;
+  timeoutMs?: number;
+  cause: unknown;
+}): Record<string, unknown> {
+  const stack =
+    input.cause instanceof Error && typeof input.cause.stack === "string" ? input.cause.stack : undefined;
+
+  return {
+    name: "StepError",
+    stepName: input.name,
+    key: input.key,
+    message: input.message,
+    timedOut: input.timedOut,
+    timeoutMs: input.timeoutMs,
+    stack,
+  };
+}
+
 function truncate(value: string, maxLength = 240): string {
   if (value.length <= maxLength) {
     return value;
@@ -991,6 +1156,14 @@ function toExecError(name: string, error: unknown): Error {
   }
 
   return new Error(`Exec '${name}' failed`);
+}
+
+function toStepError(name: string, error: unknown): Error {
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return Object.assign(new Error(error.message), { cause: error, stepName: name });
+  }
+
+  return new Error(`Step '${name}' failed`);
 }
 
 function toChildRunError(childRunId: string, error: unknown): Error {
@@ -1033,6 +1206,14 @@ function isInactiveActivationError(error: unknown): boolean {
   );
 }
 
+function throwAbortReason(reason: unknown): never {
+  if (reason instanceof Error) {
+    throw reason;
+  }
+
+  throw new Error(typeof reason === "string" ? reason : "Step aborted");
+}
+
 class ActivationCancelledError extends Error {
   constructor(
     message: string,
@@ -1040,6 +1221,24 @@ class ActivationCancelledError extends Error {
   ) {
     super(message);
     this.name = "ActivationCancelledError";
+  }
+}
+
+class StepControlError extends Error {
+  override readonly cause?: unknown;
+
+  constructor(
+    readonly reason: "timeout" | "activation_cancelled",
+    message: string,
+    cause?: unknown
+  ) {
+    super(message);
+    this.name = "StepControlError";
+    this.cause = cause;
+  }
+
+  toActivationCancelledError(): ActivationCancelledError {
+    return new ActivationCancelledError(this.message, "lease_inactive");
   }
 }
 

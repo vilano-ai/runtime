@@ -57,6 +57,36 @@ export const slowWorkflowStep = workflow({
   },
 });
 
+export const cooperativeStep = workflow({
+  name: "cooperativeStep",
+  run: async (input: { durationMs?: number; timeout?: string }, ctx) => {
+    return await ctx.step(
+      "cooperative-step",
+      async (step) => {
+        const durationMs = input.durationMs ?? 5_000;
+        const deadline = Date.now() + durationMs;
+        let ticks = 0;
+
+        while (Date.now() < deadline) {
+          ticks += 1;
+          await step.yield();
+        }
+
+        step.checkCancelled();
+
+        return {
+          ticks,
+          waitedMs: durationMs,
+        };
+      },
+      {
+        key: `cooperative-step:${input.durationMs ?? 5_000}`,
+        timeout: input.timeout,
+      }
+    );
+  },
+});
+
 export const gate = workflow({
   name: "gate",
   run: async (_input: Record<string, never>, ctx) => {
