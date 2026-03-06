@@ -1,7 +1,11 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "src"
+    "rootDir": "../..",
+    "baseUrl": ".",
+    "paths": {
+      "@vilano/runtime": ["../../sdk/typescript/src/index.ts"]
+    }
   },
   "include": ["src/**/*.ts"]
 }
