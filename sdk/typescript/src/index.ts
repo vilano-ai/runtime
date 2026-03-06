@@ -146,8 +146,13 @@ export interface ServiceDefinition<
   readonly onSignal?: TSignal;
 }
 
-type FirstArg<T> = T extends (arg1: infer TArg, ...rest: any[]) => any ? TArg : void;
-type AskReplyOf<THandler> =
+type FirstArg<THandler extends (...args: any[]) => any> = THandler extends (
+  arg1: infer TArg,
+  ...rest: any[]
+) => any
+  ? TArg
+  : void;
+type AskReplyOf<THandler extends (...args: any[]) => any> =
   Awaited<ReturnType<THandler>> extends { reply: infer TReply } ? TReply : never;
 
 type SendMethodArgs<TPayload> = [TPayload] extends [void]
