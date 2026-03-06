@@ -1494,157 +1494,238 @@ defmodule VilanoKernel.Storage do
   def resolve_step(lease_id, name, op_key, timeout_ms) do
     now = now_iso8601()
 
-    Repo.transaction(fn ->
-      case get_run_by_lease(lease_id) do
-        nil ->
-          nil
+    result =
+      Repo.transaction(fn ->
+        case get_run_by_lease(lease_id) do
+          nil ->
+            nil
 
-        run ->
-          existing =
-            Repo
-            |> SQL.query!(
-              """
-              select run_id, op_key, name, status, timeout_ms, output_json, error_json, created_at, updated_at
-              from run_steps
-              where run_id = ? and op_key = ?
-              """,
-              [run["id"], op_key]
-            )
-            |> rows_to_maps()
-            |> List.first()
-
-          cond do
-            existing && existing["status"] == "completed" ->
-              %{
-                "status" => "completed",
-                "output" => decode_json_value(existing["output_json"], nil)
-              }
-
-            existing && existing["status"] == "failed" ->
-              %{
-                "status" => "failed",
-                "error" => decode_json_value(existing["error_json"], nil)
-              }
-
-            true ->
-              SQL.query!(
-                Repo,
+          run ->
+            existing =
+              Repo
+              |> SQL.query!(
                 """
-                insert into run_steps (
-                  run_id,
-                  op_key,
-                  name,
-                  status,
-                  timeout_ms,
-                  output_json,
-                  error_json,
-                  created_at,
-                  updated_at
-                ) values (?, ?, ?, 'running', ?, null, null, ?, ?)
-                on conflict(run_id, op_key) do update set
-                  name = excluded.name,
-                  status = 'running',
-                  timeout_ms = excluded.timeout_ms,
-                  error_json = null,
-                  updated_at = excluded.updated_at
+                select run_id, op_key, name, status, timeout_ms, output_json, error_json, created_at, updated_at
+                from run_steps
+                where run_id = ? and op_key = ?
                 """,
-                [run["id"], op_key, name, timeout_ms, now, now]
+                [run["id"], op_key]
               )
+              |> rows_to_maps()
+              |> List.first()
 
-              append_event!(
-                run["id"],
-                "StepStarted",
-                %{"name" => name, "key" => op_key, "timeoutMs" => timeout_ms},
-                now
-              )
+            cond do
+              existing && existing["status"] == "completed" ->
+                %{
+                  "status" => "completed",
+                  "output" => decode_json_value(existing["output_json"], nil)
+                }
 
-              %{"status" => "pending"}
-          end
-      end
-    end)
-    |> unwrap_transaction_result()
+              existing && existing["status"] == "failed" ->
+                %{
+                  "status" => "failed",
+                  "error" => decode_json_value(existing["error_json"], nil)
+                }
+
+              true ->
+                SQL.query!(
+                  Repo,
+                  """
+                  insert into run_steps (
+                    run_id,
+                    op_key,
+                    name,
+                    status,
+                    timeout_ms,
+                    output_json,
+                    error_json,
+                    created_at,
+                    updated_at
+                  ) values (?, ?, ?, 'running', ?, null, null, ?, ?)
+                  on conflict(run_id, op_key) do update set
+                    name = excluded.name,
+                    status = 'running',
+                    timeout_ms = excluded.timeout_ms,
+                    error_json = null,
+                    updated_at = excluded.updated_at
+                  """,
+                  [run["id"], op_key, name, timeout_ms, now, now]
+                )
+
+                append_event!(
+                  run["id"],
+                  "StepStarted",
+                  %{"name" => name, "key" => op_key, "timeoutMs" => timeout_ms},
+                  now
+                )
+
+                %{
+                  "status" => "pending",
+                  "runId" => run["id"],
+                  "leaseId" => lease_id,
+                  "name" => name,
+                  "key" => op_key,
+                  "timeoutMs" => timeout_ms,
+                  "startedAt" => now
+                }
+            end
+        end
+      end)
+      |> unwrap_transaction_result()
+
+    if is_map(result) && result["status"] == "pending" && is_integer(result["timeoutMs"]) do
+      VilanoKernel.StepDeadlineManager.schedule_step(result)
+    end
+
+    result
   end
 
   def complete_step(lease_id, name, op_key, output) do
     now = now_iso8601()
 
-    Repo.transaction(fn ->
-      case get_run_by_lease(lease_id) do
-        nil ->
-          nil
+    result =
+      Repo.transaction(fn ->
+        case get_run_by_lease(lease_id) do
+          nil ->
+            nil
 
-        run ->
-          SQL.query!(
-            Repo,
-            """
-            insert into run_steps (
-              run_id,
-              op_key,
-              name,
-              status,
-              timeout_ms,
-              output_json,
-              error_json,
-              created_at,
-              updated_at
-            ) values (?, ?, ?, 'completed', null, ?, null, ?, ?)
-            on conflict(run_id, op_key) do update set
-              name = excluded.name,
-              status = 'completed',
-              output_json = excluded.output_json,
-              error_json = excluded.error_json,
-              updated_at = excluded.updated_at
-            """,
-            [run["id"], op_key, name, Jason.encode!(output), now, now]
-          )
+          run ->
+            SQL.query!(
+              Repo,
+              """
+              insert into run_steps (
+                run_id,
+                op_key,
+                name,
+                status,
+                timeout_ms,
+                output_json,
+                error_json,
+                created_at,
+                updated_at
+              ) values (?, ?, ?, 'completed', null, ?, null, ?, ?)
+              on conflict(run_id, op_key) do update set
+                name = excluded.name,
+                status = 'completed',
+                output_json = excluded.output_json,
+                error_json = excluded.error_json,
+                updated_at = excluded.updated_at
+              """,
+              [run["id"], op_key, name, Jason.encode!(output), now, now]
+            )
 
-          append_event!(
-            run["id"],
-            "StepCompleted",
-            %{"name" => name, "key" => op_key, "output" => output},
-            now
-          )
+            append_event!(
+              run["id"],
+              "StepCompleted",
+              %{"name" => name, "key" => op_key, "output" => output},
+              now
+            )
 
-          %{"status" => "completed", "output" => output}
-      end
-    end)
-    |> unwrap_transaction_result()
+            %{"status" => "completed", "output" => output, "runId" => run["id"], "key" => op_key}
+        end
+      end)
+      |> unwrap_transaction_result()
+
+    if is_map(result) && result["status"] == "completed" do
+      VilanoKernel.StepDeadlineManager.clear_step(result["runId"], result["key"])
+    end
+
+    result
   end
 
   def fail_step(lease_id, name, op_key, error_body) do
     now = now_iso8601()
 
-    Repo.transaction(fn ->
-      case get_run_by_lease(lease_id) do
-        nil ->
-          nil
+    result =
+      Repo.transaction(fn ->
+        case get_run_by_lease(lease_id) do
+          nil ->
+            nil
 
-        run ->
-          SQL.query!(
-            Repo,
-            """
-            update run_steps
-            set
-              name = ?,
-              status = 'failed',
-              error_json = ?,
-              updated_at = ?
-            where run_id = ? and op_key = ?
-            """,
-            [name, Jason.encode!(error_body), now, run["id"], op_key]
-          )
+          run ->
+            SQL.query!(
+              Repo,
+              """
+              update run_steps
+              set
+                name = ?,
+                status = 'failed',
+                error_json = ?,
+                updated_at = ?
+              where run_id = ? and op_key = ?
+              """,
+              [name, Jason.encode!(error_body), now, run["id"], op_key]
+            )
 
-          append_event!(
-            run["id"],
-            "StepFailed",
-            %{"name" => name, "key" => op_key, "error" => error_body},
-            now
-          )
+            append_event!(
+              run["id"],
+              "StepFailed",
+              %{"name" => name, "key" => op_key, "error" => error_body},
+              now
+            )
 
-          %{"status" => "failed", "error" => error_body}
-      end
-    end)
-    |> unwrap_transaction_result()
+            %{"status" => "failed", "error" => error_body, "runId" => run["id"], "key" => op_key}
+        end
+      end)
+      |> unwrap_transaction_result()
+
+    if is_map(result) && result["status"] == "failed" do
+      VilanoKernel.StepDeadlineManager.clear_step(result["runId"], result["key"])
+    end
+
+    result
+  end
+
+  def timeout_step(lease_id, op_key, error_body) do
+    now = now_iso8601()
+
+    result =
+      Repo.transaction(fn ->
+        case get_run_by_lease(lease_id) do
+          nil ->
+            nil
+
+          run ->
+            case get_run_step_row(run["id"], op_key) do
+              nil ->
+                nil
+
+              step ->
+                if step["status"] != "running" do
+                  nil
+                else
+                  SQL.query!(
+                    Repo,
+                    """
+                    update run_steps
+                    set
+                      status = 'failed',
+                      error_json = ?,
+                      updated_at = ?
+                    where run_id = ? and op_key = ?
+                    """,
+                    [Jason.encode!(error_body), now, run["id"], op_key]
+                  )
+
+                  append_event!(
+                    run["id"],
+                    "StepFailed",
+                    %{"name" => step["name"], "key" => op_key, "error" => error_body},
+                    now
+                  )
+
+                  timeout_result_for_run!(run, error_body, now)
+                end
+            end
+        end
+      end)
+      |> unwrap_transaction_result()
+
+    if is_map(result) && result["status"] in ["failed", "idle", "pending"] do
+      VilanoKernel.StepDeadlineManager.clear_step(result["run"]["id"], op_key)
+    end
+
+    result
   end
 
   def resolve_exec(lease_id, name, op_key, exec_spec) do
@@ -2497,6 +2578,43 @@ defmodule VilanoKernel.Storage do
     |> Enum.map(&step_from_row/1)
   end
 
+  def list_active_timed_steps do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        s.run_id,
+        s.op_key,
+        s.name,
+        s.timeout_ms,
+        s.updated_at,
+        r.lease_id,
+        r.lease_worker_id
+      from run_steps s
+      join runs r on r.id = s.run_id
+      where
+        s.status = 'running'
+        and s.timeout_ms is not null
+        and r.status in ('running', 'active')
+        and r.lease_id is not null
+      order by s.updated_at asc
+      """,
+      []
+    )
+    |> rows_to_maps()
+    |> Enum.map(fn row ->
+      %{
+        "runId" => row["run_id"],
+        "key" => row["op_key"],
+        "name" => row["name"],
+        "timeoutMs" => row["timeout_ms"],
+        "startedAt" => row["updated_at"],
+        "leaseId" => row["lease_id"],
+        "leaseWorkerId" => row["lease_worker_id"]
+      }
+    end)
+  end
+
   def list_run_execs(run_id) do
     Repo
     |> SQL.query!(
@@ -2858,6 +2976,29 @@ defmodule VilanoKernel.Storage do
         created_at,
         updated_at
       from run_execs
+      where run_id = ? and op_key = ?
+      """,
+      [run_id, op_key]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
+  defp get_run_step_row(run_id, op_key) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        run_id,
+        op_key,
+        name,
+        status,
+        timeout_ms,
+        output_json,
+        error_json,
+        created_at,
+        updated_at
+      from run_steps
       where run_id = ? and op_key = ?
       """,
       [run_id, op_key]
@@ -3253,7 +3394,8 @@ defmodule VilanoKernel.Storage do
         "cancelledWaitCount" => cancelled_wait_count,
         "cancelledChildRunCount" => cancelled_child_run_count,
         "cancelledServiceAskCount" => cancelled_service_ask_count,
-        "hadActiveLease" => not is_nil(run["leaseId"])
+        "hadActiveLease" => not is_nil(run["leaseId"]),
+        "activeLeaseWorkerId" => run["leaseWorkerId"]
       }
     end
   end
@@ -3327,8 +3469,118 @@ defmodule VilanoKernel.Storage do
         "cancelledChildRunCount" => cancelled_child_run_count,
         "cancelledServiceAskCount" => cancelled_service_ask_count,
         "hadInFlightTurn" => had_in_flight_turn,
-        "hadActiveLease" => not is_nil(service_run["leaseId"])
+        "hadActiveLease" => not is_nil(service_run["leaseId"]),
+        "activeLeaseWorkerId" => service_run["leaseWorkerId"]
       }
+    end
+  end
+
+  defp timeout_result_for_run!(run, error_body, now) do
+    case run["definitionKind"] do
+      "workflow" ->
+        SQL.query!(
+          Repo,
+          """
+          update runs
+          set
+            status = 'failed',
+            lease_id = null,
+            lease_worker_id = null,
+            lease_expires_at = null,
+            output_json = null,
+            error_json = ?,
+            updated_at = ?
+          where id = ?
+          """,
+          [Jason.encode!(error_body), now, run["id"]]
+        )
+
+        append_event!(run["id"], "RunFailed", %{"error" => error_body}, now)
+        wake_waiting_parents_for_child!(run["id"], "failed", error_body, now)
+
+        %{
+          "run" => get_run(run["id"]),
+          "status" => "failed",
+          "activeLeaseWorkerId" => run["leaseWorkerId"]
+        }
+
+      "service" ->
+        case get_processing_service_envelope_for_run(run["id"]) do
+          nil ->
+            SQL.query!(
+              Repo,
+              """
+              update runs
+              set
+                status = 'idle',
+                lease_id = null,
+                lease_worker_id = null,
+                lease_expires_at = null,
+                updated_at = ?
+              where id = ?
+              """,
+              [now, run["id"]]
+            )
+
+            %{
+              "run" => get_run(run["id"]),
+              "status" => "idle",
+              "activeLeaseWorkerId" => run["leaseWorkerId"]
+            }
+
+          envelope ->
+            SQL.query!(
+              Repo,
+              """
+              update service_envelopes
+              set
+                status = 'failed',
+                error_json = ?,
+                updated_at = ?
+              where id = ?
+              """,
+              [Jason.encode!(error_body), now, envelope["id"]]
+            )
+
+            append_event!(
+              run["id"],
+              "TurnFailed",
+              %{
+                "envelopeId" => envelope["id"],
+                "kind" => envelope["kind"],
+                "name" => envelope["name"],
+                "error" => error_body
+              },
+              now
+            )
+
+            if envelope["kind"] == "ask" do
+              wake_service_ask_waiter!(envelope["correlation_id"], "failed", error_body, now)
+            end
+
+            next_status = service_next_status(run["id"], false)
+
+            SQL.query!(
+              Repo,
+              """
+              update runs
+              set
+                status = ?,
+                lease_id = null,
+                lease_worker_id = null,
+                lease_expires_at = null,
+                updated_at = ?
+              where id = ?
+              """,
+              [next_status, now, run["id"]]
+            )
+
+            %{
+              "run" => get_run(run["id"]),
+              "status" => next_status,
+              "activeLeaseWorkerId" => run["leaseWorkerId"]
+            }
+        end
     end
   end
 
@@ -3357,6 +3609,8 @@ defmodule VilanoKernel.Storage do
     steps = list_running_step_rows(run_id)
 
     Enum.each(steps, fn step ->
+      VilanoKernel.StepDeadlineManager.clear_step(step["run_id"], step["op_key"])
+
       SQL.query!(
         Repo,
         """

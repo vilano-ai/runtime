@@ -548,6 +548,7 @@ defmodule VilanoKernel.Router do
          definition when not is_nil(definition) <- Storage.get_definition(project, "service", name),
          result when not is_nil(result) <- Storage.stop_service_run(project, definition["name"], service_key) do
       _ = project_record
+      maybe_kill_managed_worker(result)
       send_json(conn, 200, %{
         ok: true,
         run: result["run"],
@@ -606,6 +607,7 @@ defmodule VilanoKernel.Router do
         send_error(conn, 404, "not_found", "Unknown run: #{id}")
 
       result ->
+        maybe_kill_managed_worker(result)
         send_json(conn, 200, %{
           ok: true,
           run: result["run"],
@@ -686,6 +688,17 @@ defmodule VilanoKernel.Router do
           children: Storage.list_run_children(run_id),
           envelopes: Storage.list_service_envelopes(run_id)
         })
+    end
+  end
+
+  defp maybe_kill_managed_worker(result) do
+    case Map.get(result, "activeLeaseWorkerId") do
+      worker_id when is_binary(worker_id) ->
+        _ = VilanoKernel.ManagedWorker.kill_worker(worker_id, :activation_cancelled)
+        :ok
+
+      _ ->
+        :ok
     end
   end
 

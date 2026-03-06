@@ -20,6 +20,7 @@ defmodule VilanoKernel.RuntimeSupervisor do
         restart: :transient
       ),
       VilanoKernel.WaitManager,
+      VilanoKernel.StepDeadlineManager,
       {Bandit, plug: VilanoKernel.Router, scheme: :http, port: runtime.port, ip: {127, 0, 0, 1}}
     ]
 
