@@ -445,6 +445,86 @@ test("cooperative step timeouts fail the step and run durably", async () => {
   }
 });
 
+test("blocking step timeout is enforced by the kernel and restarts the worker", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/blockingStep", {
+      durationMs: 5_000,
+      timeout: "200ms",
+    });
+
+    const failed = await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "failed" &&
+        inspect.steps.some((step) => step.name === "blocking-step" && step.status === "failed"),
+      10_000
+    );
+
+    const step = failed.steps.find((entry) => entry.name === "blocking-step");
+    expect(step).toBeTruthy();
+    expect(step?.error && typeof step.error === "object" ? (step.error as Record<string, unknown>).timedOut : null).toBe(
+      true
+    );
+    expect(
+      step?.error && typeof step.error === "object"
+        ? (step.error as Record<string, unknown>).forcedTermination
+        : null
+    ).toBe(true);
+
+    const planner = await harness.startWorkflow("demo/planner", { topic: "after-blocking-timeout" });
+    const plannerInspect = await harness.waitForRun(
+      planner.run.id,
+      (inspect) => inspect.run.status === "completed",
+      10_000
+    );
+
+    expect(plannerInspect.run.output).toEqual({ summary: "planned: after-blocking-timeout" });
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("run cancel kills the managed worker for non-cooperative steps", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/blockingStep", {
+      durationMs: 30_000,
+    });
+
+    await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "running" && inspect.steps.some((step) => step.status === "running")
+    );
+
+    const cancelled = await harness.cancelRun(run.run.id);
+    expect(cancelled.run.status).toBe("cancelled");
+
+    const planner = await harness.startWorkflow("demo/planner", { topic: "after-blocking-cancel" });
+    const plannerInspect = await harness.waitForRun(
+      planner.run.id,
+      (inspect) => inspect.run.status === "completed",
+      10_000
+    );
+
+    expect(plannerInspect.run.output).toEqual({ summary: "planned: after-blocking-cancel" });
+
+    const cancelledInspect = await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "cancelled" &&
+        inspect.steps.some((step) => step.name === "blocking-step" && step.status === "cancelled"),
+      10_000
+    );
+
+    expect(cancelledInspect.events.map((event) => event.type)).toContain("RunCancelled");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("workflow runs resume after worker loss and lease expiry", async () => {
   const harness = await RuntimeHarness.create({
     env: {

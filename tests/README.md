@@ -15,6 +15,8 @@ Current coverage:
 - exec timeout persistence with captured failure artifacts
 - cooperative step cancellation that releases the worker
 - cooperative step timeout persistence for run and step failure state
+- kernel-enforced timeout for non-cooperative blocking steps
+- managed-worker kill/restart on cancellation of non-cooperative blocking steps
 
 Run it from the dev shell:
 
@@ -22,4 +24,5 @@ Run it from the dev shell:
 
 Next high-value additions:
 
-- isolated step execution for truly preemptive cancellation of long-running in-process code
+- service-turn coverage for kernel-enforced hard-stop on non-cooperative blocking steps
+- hard-stop semantics for externally managed workers

@@ -87,6 +87,31 @@ export const cooperativeStep = workflow({
   },
 });
 
+export const blockingStep = workflow({
+  name: "blockingStep",
+  run: async (input: { durationMs?: number; timeout?: string }, ctx) => {
+    return await ctx.step(
+      "blocking-step",
+      async () => {
+        const durationMs = input.durationMs ?? 5_000;
+        const deadline = Date.now() + durationMs;
+
+        while (Date.now() < deadline) {
+          // Intentionally blocks the event loop to exercise kernel-enforced worker termination.
+        }
+
+        return {
+          waitedMs: durationMs,
+        };
+      },
+      {
+        key: `blocking-step:${input.durationMs ?? 5_000}`,
+        timeout: input.timeout,
+      }
+    );
+  },
+});
+
 export const gate = workflow({
   name: "gate",
   run: async (_input: Record<string, never>, ctx) => {
