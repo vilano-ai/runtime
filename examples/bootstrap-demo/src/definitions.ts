@@ -296,3 +296,32 @@ export const longExec = workflow({
     });
   },
 });
+
+export const timedExec = workflow({
+  name: "timedExec",
+  run: async (input: { durationMs?: number; timeout?: string }, ctx) => {
+    return await ctx.exec({
+      name: "timed-exec",
+      key: "timed-exec",
+      cmd: "bun",
+      args: [
+        "-e",
+        [
+          "const fs = require('node:fs');",
+          "fs.mkdirSync('tmp', { recursive: true });",
+          "fs.writeFileSync('tmp/before-timeout.txt', 'before-timeout');",
+          "console.error('still running');",
+          `await new Promise((resolve) => setTimeout(resolve, ${input.durationMs ?? 5_000}));`,
+          "console.log(JSON.stringify({ ok: true }));",
+        ].join(" "),
+      ],
+      timeout: input.timeout ?? "200ms",
+      capture: {
+        stdout: true,
+        stderr: true,
+        artifacts: ["tmp/before-timeout.txt"],
+      },
+      parse: (stdout) => JSON.parse(stdout.trim()) as { ok: true },
+    });
+  },
+});
