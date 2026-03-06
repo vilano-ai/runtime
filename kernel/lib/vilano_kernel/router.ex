@@ -101,6 +101,25 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  get "/v1/services/:project/:name/runs/:service_key" do
+    with project_record when not is_nil(project_record) <- Storage.get_project(project),
+         definition when not is_nil(definition) <- Storage.get_definition(project, "service", name),
+         service_run when not is_nil(service_run) <- Storage.find_service_run(project, definition["name"], service_key) do
+      _ = project_record
+      send_run_inspect(conn, service_run["id"])
+    else
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown service instance '#{name}/#{service_key}' in project '#{project}'")
+    end
+  end
+
+  get "/v1/service-envelopes/:id" do
+    case Storage.find_service_envelope(id) do
+      nil -> send_error(conn, 404, "not_found", "Unknown service envelope: #{id}")
+      envelope -> send_json(conn, 200, %{ok: true, envelope: envelope})
+    end
+  end
+
   post "/v1/activations/lease" do
     worker_id = fetch_required_string(conn.body_params, "workerId")
 
@@ -393,6 +412,60 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  post "/v1/services/:project/:name/runs/:service_key/send" do
+    with project_record when not is_nil(project_record) <- Storage.get_project(project),
+         definition when not is_nil(definition) <- Storage.get_definition(project, "service", name),
+         result <-
+           Storage.enqueue_service_envelope!(
+             project,
+             definition["name"],
+             service_key,
+             Map.get(conn.body_params, "keyInput", %{}),
+             "send",
+             fetch_required_string(conn.body_params, "message"),
+             Map.get(conn.body_params, "payload")
+           ) do
+      _ = project_record
+      send_json(conn, 200, %{ok: true, run: result["run"], envelope: result["envelope"]})
+    else
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown service '#{name}' in project '#{project}'")
+    end
+  end
+
+  post "/v1/services/:project/:name/runs/:service_key/ask" do
+    with project_record when not is_nil(project_record) <- Storage.get_project(project),
+         definition when not is_nil(definition) <- Storage.get_definition(project, "service", name),
+         result <-
+           Storage.enqueue_service_envelope!(
+             project,
+             definition["name"],
+             service_key,
+             Map.get(conn.body_params, "keyInput", %{}),
+             "ask",
+             fetch_required_string(conn.body_params, "message"),
+             Map.get(conn.body_params, "payload")
+           ) do
+      _ = project_record
+      send_json(conn, 200, %{ok: true, run: result["run"], envelope: result["envelope"]})
+    else
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown service '#{name}' in project '#{project}'")
+    end
+  end
+
+  post "/v1/services/:project/:name/runs/:service_key/stop" do
+    with project_record when not is_nil(project_record) <- Storage.get_project(project),
+         definition when not is_nil(definition) <- Storage.get_definition(project, "service", name),
+         result when not is_nil(result) <- Storage.stop_service_run(project, definition["name"], service_key) do
+      _ = project_record
+      send_json(conn, 200, %{ok: true, run: result["run"], stoppedEnvelopeCount: result["stoppedEnvelopeCount"]})
+    else
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown service instance '#{name}/#{service_key}' in project '#{project}'")
+    end
+  end
+
   post "/v1/runs" do
     project = fetch_required_string(conn.body_params, "project")
     workflow = fetch_required_string(conn.body_params, "workflow")
@@ -427,23 +500,7 @@ defmodule VilanoKernel.Router do
   end
 
   get "/v1/runs/:id" do
-    case Storage.get_run(id) do
-      nil ->
-        send_error(conn, 404, "not_found", "Unknown run: #{id}")
-
-      run ->
-        send_json(conn, 200, %{
-          ok: true,
-          run: run,
-          events: Storage.list_run_events(id),
-          steps: Storage.list_run_steps(id),
-          execs: Storage.list_run_execs(id),
-          waits: Storage.list_run_waits(id),
-          signals: Storage.list_run_signals(id),
-          children: Storage.list_run_children(id),
-          envelopes: Storage.list_service_envelopes(id)
-        })
-    end
+    send_run_inspect(conn, id)
   end
 
   post "/v1/runs/:id/signals" do
@@ -493,6 +550,26 @@ defmodule VilanoKernel.Router do
     case Storage.list_definitions(kind, project_name) do
       nil -> {:error, "Unknown project: #{project_name}"}
       definitions -> {:ok, definitions}
+    end
+  end
+
+  defp send_run_inspect(conn, run_id) do
+    case Storage.get_run_for_inspect(run_id) do
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown run: #{run_id}")
+
+      run ->
+        send_json(conn, 200, %{
+          ok: true,
+          run: run,
+          events: Storage.list_run_events(run_id),
+          steps: Storage.list_run_steps(run_id),
+          execs: Storage.list_run_execs(run_id),
+          waits: Storage.list_run_waits(run_id),
+          signals: Storage.list_run_signals(run_id),
+          children: Storage.list_run_children(run_id),
+          envelopes: Storage.list_service_envelopes(run_id)
+        })
     end
   end
 

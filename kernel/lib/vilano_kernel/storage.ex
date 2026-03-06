@@ -434,6 +434,125 @@ defmodule VilanoKernel.Storage do
     |> unwrap_transaction_result()
   end
 
+  def find_service_run(project_name, definition_name, service_key) do
+    get_service_run(project_name, definition_name, service_key)
+  end
+
+  def enqueue_service_envelope!(project_name, definition_name, service_key, key_input, kind, name, payload) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      service_run = ensure_service_run!(project_name, definition_name, service_key, key_input || %{})
+      envelope_id = insert_service_envelope!(service_run["id"], kind, name, payload, nil, nil, now)
+
+      %{
+        "run" => get_service_run_by_id(service_run["id"]),
+        "envelope" => service_envelope_from_row(get_service_envelope(envelope_id))
+      }
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def find_service_envelope(envelope_id) do
+    case get_service_envelope(envelope_id) do
+      nil -> nil
+      row -> service_envelope_from_row(row)
+    end
+  end
+
+  def stop_service_run(project_name, definition_name, service_key) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case get_service_run(project_name, definition_name, service_key) do
+        nil ->
+          nil
+
+        service_run ->
+          if service_run["status"] == "stopped" do
+            %{
+              "run" => service_run,
+              "stoppedEnvelopeCount" => 0
+            }
+          else
+            queued_envelopes =
+              Repo
+              |> SQL.query!(
+                """
+                select
+                  id,
+                  service_run_id,
+                  kind,
+                  name,
+                  payload_json,
+                  correlation_id,
+                  sender_run_id,
+                  status,
+                  reply_json,
+                  error_json,
+                  created_at,
+                  updated_at
+                from service_envelopes
+                where service_run_id = ? and status = 'queued'
+                order by created_at asc
+                """,
+                [service_run["id"]]
+              )
+              |> rows_to_maps()
+
+            stop_error = %{"message" => "Service stopped"}
+
+            Enum.each(queued_envelopes, fn envelope ->
+              SQL.query!(
+                Repo,
+                """
+                update service_envelopes
+                set
+                  status = 'failed',
+                  error_json = ?,
+                  updated_at = ?
+                where id = ?
+                """,
+                [Jason.encode!(stop_error), now, envelope["id"]]
+              )
+
+              if envelope["kind"] == "ask" and envelope["correlation_id"] do
+                wake_service_ask_waiter!(envelope["correlation_id"], "failed", stop_error, now)
+              end
+            end)
+
+            SQL.query!(
+              Repo,
+              """
+              update runs
+              set
+                status = 'stopped',
+                updated_at = ?
+              where id = ?
+              """,
+              [now, service_run["id"]]
+            )
+
+            append_event!(
+              service_run["id"],
+              "ServiceStopped",
+              %{
+                "reason" => "cli_stop",
+                "stoppedEnvelopeCount" => length(queued_envelopes)
+              },
+              now
+            )
+
+            %{
+              "run" => get_service_run_by_id(service_run["id"]),
+              "stoppedEnvelopeCount" => length(queued_envelopes)
+            }
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
   def resolve_spawn(lease_id, definition_name, op_key, child_run_id, input) do
     now = now_iso8601()
 
@@ -2124,6 +2243,19 @@ defmodule VilanoKernel.Storage do
     end
   end
 
+  def get_run_for_inspect(run_id) do
+    case get_run(run_id) do
+      nil ->
+        nil
+
+      %{"definitionKind" => "service"} ->
+        get_service_run_by_id(run_id) || get_run(run_id)
+
+      run ->
+        run
+    end
+  end
+
   def list_run_events(run_id) do
     Repo
     |> SQL.query!(
@@ -3095,8 +3227,10 @@ defmodule VilanoKernel.Storage do
   end
 
   defp service_next_status(service_run_id, stop?) do
+    current_run = get_run(service_run_id)
+
     cond do
-      stop? ->
+      stop? or (current_run && current_run["status"] == "stopped") ->
         "stopped"
 
       service_has_queued_envelopes?(service_run_id) ->
