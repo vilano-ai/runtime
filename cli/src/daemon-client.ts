@@ -50,6 +50,7 @@ export async function ensureDaemonStarted(port = 4141): Promise<DaemonStatusResp
   await ensureDir(runtimePaths.homeDir);
 
   const kernelDir = path.resolve(import.meta.dir, "..", "..", "kernel");
+  const projectRoot = path.resolve(import.meta.dir, "..", "..");
   const child = spawn("mix", ["run", "--no-halt"], {
     cwd: kernelDir,
     detached: true,
@@ -58,6 +59,7 @@ export async function ensureDaemonStarted(port = 4141): Promise<DaemonStatusResp
       ...process.env,
       VILANO_HOME: runtimePaths.homeDir,
       VILANO_KERNEL_PORT: String(port),
+      VILANO_ROOT: projectRoot,
     },
   });
 

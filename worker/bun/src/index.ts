@@ -51,7 +51,18 @@ export async function startWorker(options: WorkerOptions = {}): Promise<void> {
   const client = new WorkerClient(serverUrl, workerId);
 
   while (true) {
-    const activation = await client.leaseActivation();
+    let activation: WorkflowActivation | ServiceTurnActivation | null;
+
+    try {
+      activation = await client.leaseActivation();
+    } catch (error) {
+      if (options.once) {
+        throw error;
+      }
+
+      await sleep(pollIntervalMs);
+      continue;
+    }
 
     if (!activation) {
       if (options.once) {
