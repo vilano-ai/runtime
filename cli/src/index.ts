@@ -22,6 +22,7 @@ import type {
   DefinitionRecord,
   ProjectRecord,
   RunExecRecord,
+  RunChildRecord,
   RunEventRecord,
   RunRecord,
   RunSignalRecord,
@@ -268,7 +269,7 @@ async function handleRun(args: string[], flags: Record<string, string | boolean>
 
       const response = await inspectRun(runId);
       writeOutput(flags, response, (body) =>
-        renderRunInspect(body.run, body.events, body.steps, body.execs, body.waits, body.signals)
+        renderRunInspect(body.run, body.events, body.steps, body.execs, body.waits, body.signals, body.children)
       );
       return 0;
     }
@@ -579,7 +580,8 @@ function renderRunInspect(
   steps: RunStepRecord[],
   execs: RunExecRecord[],
   waits: RunWaitRecord[],
-  signals: RunSignalRecord[]
+  signals: RunSignalRecord[],
+  children: RunChildRecord[]
 ): string {
   const eventLines =
     events.length === 0
@@ -617,6 +619,15 @@ function renderRunInspect(
             `  ${signal.name}\tcreated_at=${signal.createdAt}${signal.consumedAt ? `\tconsumed_at=${signal.consumedAt}` : ""}`
           ),
         ];
+  const childLines =
+    children.length === 0
+      ? ["children: none"]
+      : [
+          "children:",
+          ...children.map((child) =>
+            `  ${child.definitionName}\tkey=${child.key}\tchild_run=${child.childRunId}\tstatus=${child.status}`
+          ),
+        ];
 
   return [
     renderRun(run),
@@ -625,6 +636,7 @@ function renderRunInspect(
     ...execLines,
     ...waitLines,
     ...signalLines,
+    ...childLines,
   ].join("\n");
 }
 

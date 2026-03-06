@@ -152,6 +152,16 @@ export interface RunSignalRecord {
   createdAt: string;
 }
 
+export interface RunChildRecord {
+  parentRunId: string;
+  key: string;
+  childRunId: string;
+  definitionName: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RunListResponse {
   ok: true;
   project: string | null;
@@ -166,6 +176,7 @@ export interface RunInspectResponse {
   execs: RunExecRecord[];
   waits: RunWaitRecord[];
   signals: RunSignalRecord[];
+  children: RunChildRecord[];
 }
 
 export interface SignalSendResponse {

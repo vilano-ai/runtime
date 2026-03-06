@@ -49,6 +49,33 @@ export const gate = workflow({
   },
 });
 
+export const childTask = workflow({
+  name: "childTask",
+  run: async (input: { topic: string }, ctx) => {
+    const summary = await ctx.step(
+      "child-summary",
+      async () => `child planned: ${input.topic}`,
+      { key: "child-summary" }
+    );
+
+    return { summary };
+  },
+});
+
+export const delegator = workflow({
+  name: "delegator",
+  run: async (input: { topic: string }, ctx) => {
+    const child = ctx.spawn(childTask, { topic: input.topic }, { key: "child" });
+    const result = await child.result();
+
+    return {
+      delegated: true,
+      childRunId: child.id,
+      child: result,
+    };
+  },
+});
+
 export const reviewer = service({
   name: "reviewer",
   key: (input: { repoId: string }) => input.repoId,
