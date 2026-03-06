@@ -3,6 +3,7 @@ node_modules/
 dist/
 coverage/
 .direnv/
+.vilano-cache/
 .DS_Store
 *.log
 _build/

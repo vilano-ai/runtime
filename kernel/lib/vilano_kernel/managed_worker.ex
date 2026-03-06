@@ -43,7 +43,8 @@ defmodule VilanoKernel.ManagedWorker do
     Process.flag(:trap_exit, true)
 
     runtime = Application.fetch_env!(:vilano_kernel, :runtime)
-    worker_entry = Path.join([runtime.project_root, "worker", "bun", "src", "cli.ts"])
+    worker_source_dir = Path.join([runtime.project_root, "worker", "bun", "src"])
+    worker_entry = Path.join(worker_source_dir, "cli.ts")
 
     case {System.find_executable("bun"), File.exists?(worker_entry)} do
       {nil, _} ->
@@ -55,7 +56,8 @@ defmodule VilanoKernel.ManagedWorker do
         :ignore
 
       {bun_path, true} ->
-        port = start_port(bun_path, worker_entry, runtime, index)
+        cached_worker_entry = materialize_worker_entry!(runtime.project_root, worker_source_dir)
+        port = start_port(bun_path, cached_worker_entry, runtime, index)
 
         state = %{
           index: index,
@@ -122,6 +124,42 @@ defmodule VilanoKernel.ManagedWorker do
          )}
       ]
     )
+  end
+
+  defp materialize_worker_entry!(project_root, worker_source_dir) do
+    version = worker_source_version(worker_source_dir)
+    cache_root = Path.join([project_root, ".vilano-cache", "managed-workers", version])
+    cached_source_dir = Path.join([cache_root, "worker", "bun", "src"])
+
+    unless File.exists?(cached_source_dir) do
+      File.mkdir_p!(Path.dirname(cached_source_dir))
+      File.cp_r!(worker_source_dir, cached_source_dir)
+    end
+
+    Path.join(cached_source_dir, "cli.ts")
+  end
+
+  defp worker_source_version(worker_source_dir) do
+    files =
+      worker_source_dir
+      |> File.ls!()
+      |> Enum.sort()
+      |> Enum.map(fn entry ->
+        path = Path.join(worker_source_dir, entry)
+
+        case File.stat(path) do
+          {:ok, stat} ->
+            "#{entry}:#{stat.size}:#{inspect(stat.mtime)}"
+
+          {:error, _reason} ->
+            "#{entry}:missing"
+        end
+      end)
+      |> Enum.join("|")
+
+    :crypto.hash(:sha256, files)
+    |> Base.encode16(case: :lower)
+    |> binary_part(0, 16)
   end
 
   defp port_os_pid(port) do

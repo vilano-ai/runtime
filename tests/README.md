@@ -16,6 +16,7 @@ Current coverage:
 - explicit non-retryable failures bypassing retries
 - retry-family filtering for steps, execs, and service turns
 - exponential retry backoff scheduling
+- capped and jittered retry backoff scheduling
 - durable signal delivery, including buffered signals before first activation
 - sleep wait durability across daemon restart
 - signal wait durability across daemon restart
@@ -25,6 +26,7 @@ Current coverage:
 - `run replay` workflow timeline rendering
 - `run replay --json` service turn timeline projection
 - replay coverage for wait/signal and retry-backoff timelines
+- inspect/replay retry-series projections with cap and jitter details
 - inspect/replay visibility for retry decisions
 - cooperative step cancellation that releases the worker
 - cooperative step timeout persistence for run and step failure state
@@ -36,6 +38,7 @@ Current coverage:
 Run it from the dev shell:
 
 - `bun test tests --timeout 30000 --max-concurrency 1`
+- `VILANO_KERNEL_NO_COMPILE=1 bun test tests --timeout 30000 --max-concurrency 1`
 
 Next high-value additions:
 

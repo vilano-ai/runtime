@@ -111,6 +111,7 @@ It supports:
 - command, args, cwd, env
 - timeout
 - durable retry policies with retry families and fixed/linear/exponential backoff
+- capped backoff and jitter scheduling
 - stdout/stderr capture
 - artifact capture
 - parse callback for typed output
@@ -147,8 +148,10 @@ Current retry policy shape:
 
 - `retry: { retries, backoff, on }`
 - `backoff` may be `"50ms"`, `{ kind: "fixed", delay: "50ms" }`, `{ kind: "linear", initial: "50ms", step: "50ms", max: "1s" }`, or `{ kind: "exponential", initial: "50ms", factor: 2, max: "1s" }`
+- object backoff policies may also add `jitter: "full" | "half" | { kind: "ratio", ratio: 0.5 }`
 - `on` may target `application`, `timeout`, `process_exit`, or `process_spawn`
 - legacy top-level `retries` and `backoff` fields still work for `step()` and `exec()`
+- inspect and replay surface a retry series with per-attempt base delay, capped delay, and applied jitter
 
 ## Current Limits
 

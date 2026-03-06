@@ -178,8 +178,11 @@ Current retry behavior is durable, kernel-scheduled, and configurable:
 - `retry: { retries, backoff, on }` is the preferred shape for new code
 - `backoff` can now be:
   `"50ms"`, `{ kind: "fixed", delay: "50ms" }`, `{ kind: "linear", initial: "50ms", step: "50ms", max: "1s" }`, or `{ kind: "exponential", initial: "50ms", factor: 2, max: "1s" }`
+- object backoff policies can also add `jitter: "full" | "half" | { kind: "ratio", ratio: 0.5 }`
+- capped backoff and applied jitter are persisted durably, so retries schedule from recorded data instead of worker-local timers
 - `on` can target retry families like `application`, `timeout`, `process_exit`, or `process_spawn`
 - `run inspect` and `run replay` surface the retry decision directly as `scheduled`, `non_retryable`, `family_not_selected`, `retries_disabled`, or `attempts_exhausted`
+- `run inspect`, `service inspect`, and `run replay` now also show a `retry_series` view with base delay, capped delay, and applied jitter per attempt
 
 ## Operator Surface
 
@@ -209,7 +212,7 @@ Current limits worth knowing:
 
 - `step()` hard-stop escalation is only available for managed workers the kernel supervises.
 - In-process TypeScript code is still cooperative first; the hard-stop path is a fallback, not normal control flow.
-- Retry policies are fixed-count and fixed-backoff only.
+- Managed local workers materialize a versioned source copy under `.vilano-cache/managed-workers/` so Bun always runs the matching worker implementation.
 - `run replay` is served by a dedicated kernel endpoint and rendered by the CLI.
 - Hosted, clustered, and multi-node execution are not built yet.
 

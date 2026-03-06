@@ -53,7 +53,12 @@ export async function ensureDaemonStarted(port = 4141): Promise<DaemonStatusResp
 
   const kernelDir = path.resolve(import.meta.dir, "..", "..", "kernel");
   const projectRoot = path.resolve(import.meta.dir, "..", "..");
-  const child = spawn("mix", ["run", "--no-halt"], {
+  const mixArgs =
+    process.env.VILANO_KERNEL_NO_COMPILE === "1"
+      ? ["run", "--no-compile", "--no-halt"]
+      : ["run", "--no-halt"];
+
+  const child = spawn("mix", mixArgs, {
     cwd: kernelDir,
     detached: true,
     stdio: "ignore",
@@ -79,10 +84,12 @@ export async function ensureDaemonStarted(port = 4141): Promise<DaemonStatusResp
       reject(error);
     });
   });
+  let childExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  child.once("exit", (code, signal) => {
+    childExit = { code, signal };
+  });
 
-  child.unref();
-
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + 40_000;
   while (Date.now() < deadline) {
     const kernelStatus = await pingKernelStatus(port);
     if (kernelStatus) {
@@ -95,10 +102,32 @@ export async function ensureDaemonStarted(port = 4141): Promise<DaemonStatusResp
       };
 
       await writeJsonFileAtomic(runtimePaths.daemonStateFile, daemonState);
+      child.unref();
       return toDaemonStatus(daemonState, kernelStatus);
     }
 
+    if (childExit !== null) {
+      const exit = childExit as {
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      };
+      throw new Error(
+        `Vilano kernel exited before startup (code=${exit.code ?? "null"} signal=${exit.signal ?? "null"})`
+      );
+    }
+
     await sleep(150);
+  }
+
+  try {
+    if (child.pid) {
+      process.kill(child.pid, "SIGKILL");
+    }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH") {
+      throw error;
+    }
   }
 
   throw new Error("Timed out waiting for the Vilano kernel to start");
