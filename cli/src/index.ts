@@ -38,6 +38,7 @@ import type {
   RunRecord,
   RunSignalRecord,
   RunStepRecord,
+  RunTurnRecord,
   RunWaitRecord,
 } from "./types.ts";
 
@@ -278,7 +279,7 @@ async function handleRun(args: string[], flags: Record<string, string | boolean>
         throw new CliError("Usage: vilano run inspect <run-id>");
       }
 
-      const response = await inspectRun(runId);
+      const response = decorateRunInspect(await inspectRun(runId));
       writeOutput(flags, response, (body) =>
         renderRunInspect(
           body.run,
@@ -288,7 +289,8 @@ async function handleRun(args: string[], flags: Record<string, string | boolean>
           body.waits,
           body.signals,
           body.children,
-          body.envelopes
+          body.envelopes,
+          body.turns
         )
       );
       return 0;
@@ -348,10 +350,12 @@ async function handleService(
       }
 
       const target = await resolveServiceTarget(reference, flags, { syncDefinition: true });
-      const response = await inspectServiceRun(
+      const response = decorateRunInspect(
+        await inspectServiceRun(
         target.project.name,
         target.definition.name,
         target.serviceKey
+        )
       );
       writeOutput(flags, response, (body) =>
         renderRunInspect(
@@ -362,7 +366,8 @@ async function handleService(
           body.waits,
           body.signals,
           body.children,
-          body.envelopes
+          body.envelopes,
+          body.turns
         )
       );
       return 0;
@@ -949,12 +954,13 @@ function renderRunInspect(
   waits: RunWaitRecord[],
   signals: RunSignalRecord[],
   children: RunChildRecord[],
-  envelopes: RunEnvelopeRecord[]
+  envelopes: RunEnvelopeRecord[],
+  turns: RunTurnRecord[]
 ): string {
   const eventLines =
     events.length === 0
       ? ["events: none"]
-      : ["events:", ...events.map((event) => `  ${event.seq}. ${event.type}\t${event.createdAt}`)];
+      : ["events:", ...events.map((event) => `  ${event.seq}. ${event.type}\t${event.createdAt}${renderEventSummary(event)}`)];
   const stepLines =
     steps.length === 0
       ? ["steps: none"]
@@ -1019,10 +1025,41 @@ function renderRunInspect(
             return parts.join("\t");
           }),
         ];
+  const turnLines =
+    turns.length === 0
+      ? ["turns: none"]
+      : [
+          "turns:",
+          ...turns.map((turn) => {
+            const parts = [
+              `  ${turn.kind}`,
+              `name=${turn.name}`,
+              `envelope=${turn.envelopeId}`,
+              `status=${turn.status}`,
+              `phase=${turn.phase}`,
+              `attempts=${turn.attempts}`,
+            ];
+
+            if (turn.waitKind && turn.waitKey) {
+              parts.push(`waiting=${turn.waitKind}:${turn.waitKey}`);
+            }
+
+            if (turn.lastResumeReason) {
+              parts.push(`resumed=${turn.lastResumeReason}`);
+            }
+
+            if (turn.correlationId) {
+              parts.push(`correlation=${turn.correlationId}`);
+            }
+
+            return parts.join("\t");
+          }),
+        ];
 
   return [
     renderRun(run),
     ...eventLines,
+    ...turnLines,
     ...stepLines,
     ...execLines,
     ...waitLines,
@@ -1030,6 +1067,153 @@ function renderRunInspect(
     ...childLines,
     ...envelopeLines,
   ].join("\n");
+}
+
+function decorateRunInspect<T extends {
+  events: RunEventRecord[];
+  envelopes: RunEnvelopeRecord[];
+}>(body: T): T & { turns: RunTurnRecord[] } {
+  return {
+    ...body,
+    turns: deriveServiceTurns(body.events, body.envelopes),
+  };
+}
+
+function deriveServiceTurns(
+  events: RunEventRecord[],
+  envelopes: RunEnvelopeRecord[]
+): RunTurnRecord[] {
+  const turns = new Map<string, RunTurnRecord>();
+
+  for (const envelope of envelopes) {
+    turns.set(envelope.id, {
+      envelopeId: envelope.id,
+      kind: envelope.kind,
+      name: envelope.name,
+      status: envelope.status,
+      phase: envelope.status,
+      attempts: 0,
+      correlationId: envelope.correlationId,
+      senderRunId: envelope.senderRunId,
+      waitKind: null,
+      waitKey: null,
+      waitName: null,
+      lastResumeReason: null,
+      lastEventType: null,
+      lastEventAt: null,
+      reply: envelope.reply,
+      error: envelope.error,
+      createdAt: envelope.createdAt,
+      updatedAt: envelope.updatedAt,
+    });
+  }
+
+  for (const event of events) {
+    const body = asRecord(event.body);
+    const envelopeId = typeof body.envelopeId === "string" ? body.envelopeId : null;
+    if (!envelopeId) {
+      continue;
+    }
+
+    const turn = turns.get(envelopeId);
+    if (!turn) {
+      continue;
+    }
+
+    turn.lastEventType = event.type;
+    turn.lastEventAt = event.createdAt;
+
+    if (event.type === "TurnStarted" || event.type === "TurnResumed") {
+      turn.attempts += 1;
+      turn.phase = "running";
+    }
+
+    if (event.type === "TurnWaiting") {
+      turn.phase = "waiting";
+      turn.waitKind = typeof body.waitKind === "string" ? body.waitKind : null;
+      turn.waitKey = typeof body.key === "string" ? body.key : null;
+      turn.waitName = typeof body.name === "string" ? body.name : null;
+    }
+
+    if (event.type === "TurnResumed") {
+      turn.lastResumeReason = typeof body.reason === "string" ? body.reason : null;
+      turn.waitKind = null;
+      turn.waitKey = null;
+      turn.waitName = null;
+    }
+
+    if (event.type === "TurnCompleted") {
+      turn.phase = "completed";
+      turn.waitKind = null;
+      turn.waitKey = null;
+      turn.waitName = null;
+    }
+
+    if (event.type === "TurnFailed") {
+      turn.phase = "failed";
+    }
+  }
+
+  return Array.from(turns.values()).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+function renderEventSummary(event: RunEventRecord): string {
+  const body = asRecord(event.body);
+
+  switch (event.type) {
+    case "TurnStarted":
+      return formatSummary({
+        envelope: body.envelopeId,
+        kind: body.kind,
+        name: body.name,
+      });
+    case "TurnWaiting":
+      return formatSummary({
+        envelope: body.envelopeId,
+        wait: body.waitKind,
+        key: body.key,
+        name: body.turnName ?? body.name,
+      });
+    case "TurnResumed":
+      return formatSummary({
+        envelope: body.envelopeId,
+        reason: body.reason,
+        name: body.name,
+      });
+    case "TurnCompleted":
+    case "TurnFailed":
+      return formatSummary({
+        envelope: body.envelopeId,
+        kind: body.kind,
+        name: body.name,
+      });
+    case "WaitSatisfied":
+      return formatSummary({
+        kind: body.kind,
+        key: body.key,
+      });
+    case "RunSuspended":
+      return formatSummary({
+        reason: body.reason,
+        key: body.key,
+      });
+    default:
+      return "";
+  }
+}
+
+function formatSummary(fields: Record<string, unknown>): string {
+  const parts = Object.entries(fields)
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(([key, value]) => `${key}=${String(value)}`);
+
+  return parts.length > 0 ? `\t${parts.join("\t")}` : "";
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 async function handleError(error: unknown, argv: string[]): Promise<number> {

@@ -180,6 +180,27 @@ export interface RunEnvelopeRecord {
   updatedAt: string;
 }
 
+export interface RunTurnRecord {
+  envelopeId: string;
+  kind: "send" | "ask" | "signal";
+  name: string;
+  status: string;
+  phase: string;
+  attempts: number;
+  correlationId: string | null;
+  senderRunId: string | null;
+  waitKind: string | null;
+  waitKey: string | null;
+  waitName: string | null;
+  lastResumeReason: string | null;
+  lastEventType: string | null;
+  lastEventAt: string | null;
+  reply: unknown | null;
+  error: unknown | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RunListResponse {
   ok: true;
   project: string | null;
@@ -196,6 +217,7 @@ export interface RunInspectResponse {
   signals: RunSignalRecord[];
   children: RunChildRecord[];
   envelopes: RunEnvelopeRecord[];
+  turns?: RunTurnRecord[];
 }
 
 export interface ServiceEnsureResponse {
