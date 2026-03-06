@@ -486,6 +486,38 @@ test("blocking step timeout is enforced by the kernel and restarts the worker", 
   }
 });
 
+test("step retries back off durably and eventually complete", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/retryingStep", {
+      token: "step-retry",
+      retries: 1,
+      backoff: "50ms",
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "completed" &&
+        inspect.steps.some((step) => step.name === "retrying-step" && step.status === "completed"),
+      10_000
+    );
+
+    expect(completed.run.output).toEqual({ attempt: 2, token: "step-retry" });
+    expect(completed.events.map((event) => event.type)).toContain("RetryScheduled");
+
+    const step = completed.steps.find((entry) => entry.name === "retrying-step");
+    expect(step?.attempts).toBe(2);
+    expect(step?.status).toBe("completed");
+    expect(
+      completed.waits.some((wait) => wait.kind === "retry_backoff" && wait.status === "completed")
+    ).toBe(true);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("run cancel kills the managed worker for non-cooperative steps", async () => {
   const harness = await RuntimeHarness.create();
 
@@ -643,6 +675,39 @@ test("service turns resume after worker loss and lease expiry", async () => {
   }
 });
 
+test("service turns retry durably after handler failures", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { sessionId: "service-retry" };
+
+  try {
+    const reply = await harness.askService(
+      "demo/retryingResponder",
+      "unstable",
+      keyInput,
+      { token: "service-retry" }
+    );
+
+    expect(reply).toEqual({ attempt: 2, token: "service-retry" });
+
+    const inspect = await harness.waitForService(
+      "demo/retryingResponder",
+      keyInput,
+      (body) =>
+        body.run.status === "idle" &&
+        (body.turns ?? []).some((turn) => turn.phase === "completed"),
+      10_000
+    );
+
+    expect(inspect.events.map((event) => event.type)).toContain("RetryScheduled");
+    expect((inspect.turns ?? []).map((turn) => turn.attempts)).toContain(2);
+    expect(
+      inspect.waits.some((wait) => wait.kind === "retry_backoff" && wait.status === "completed")
+    ).toBe(true);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("signals wake waiting workflows durably after downtime", async () => {
   const harness = await RuntimeHarness.create({
     env: {
@@ -751,6 +816,38 @@ test("exec success captures stdout stderr and artifacts", async () => {
     await fs.access(path.join(harness.homeDir, exec.stdoutRef as string));
     await fs.access(path.join(harness.homeDir, exec.stderrRef as string));
     await fs.access(path.join(harness.homeDir, exec.artifacts[0]!.ref));
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("exec retries back off durably and eventually complete", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/retryingExec", {
+      token: "exec-retry",
+      retries: 1,
+      backoff: "50ms",
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "completed" &&
+        inspect.execs.some((entry) => entry.name === "retrying-exec" && entry.status === "completed"),
+      10_000
+    );
+
+    expect(completed.run.output).toEqual({ attempt: 2, token: "exec-retry" });
+    expect(completed.events.map((event) => event.type)).toContain("RetryScheduled");
+
+    const exec = completed.execs.find((entry) => entry.name === "retrying-exec");
+    expect(exec?.attempts).toBe(2);
+    expect(exec?.status).toBe("completed");
+    expect(
+      completed.waits.some((wait) => wait.kind === "retry_backoff" && wait.status === "completed")
+    ).toBe(true);
   } finally {
     await harness.dispose();
   }

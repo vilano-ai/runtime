@@ -1186,7 +1186,7 @@ function deriveStepViews(steps: RunStepRecord[], events: RunEventRecord[]): RunS
 
   return steps.map((step) => ({
     ...step,
-    attempts: attempts.get(step.key) ?? 1,
+    attempts: attempts.get(step.key) ?? step.attempt ?? 1,
     lastEventType: lastEvent.get(step.key)?.type ?? null,
     lastEventAt: lastEvent.get(step.key)?.at ?? null,
   }));
@@ -1238,7 +1238,7 @@ function deriveServiceTurns(
       name: envelope.name,
       status: envelope.status,
       phase: envelope.status,
-      attempts: 0,
+      attempts: envelope.attempt ?? 0,
       correlationId: envelope.correlationId,
       senderRunId: envelope.senderRunId,
       waitKind: null,
@@ -1270,7 +1270,6 @@ function deriveServiceTurns(
     turn.lastEventAt = event.createdAt;
 
     if (event.type === "TurnStarted" || event.type === "TurnResumed") {
-      turn.attempts += 1;
       turn.phase = "running";
     }
 

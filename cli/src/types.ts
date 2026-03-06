@@ -118,6 +118,9 @@ export interface RunStepRecord {
   key: string;
   name: string;
   status: string;
+  attempt?: number | null;
+  maxAttempts?: number | null;
+  backoffMs?: number | null;
   timeoutMs: number | null;
   output: unknown | null;
   error: unknown | null;
@@ -189,6 +192,7 @@ export interface RunEnvelopeRecord {
   serviceRunId: string;
   kind: "send" | "ask" | "signal";
   name: string;
+  attempt?: number | null;
   payload: unknown | null;
   correlationId: string | null;
   senderRunId: string | null;

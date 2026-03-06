@@ -10,6 +10,9 @@ Current coverage:
 - active `exec()` cancellation
 - workflow replay after worker loss and lease expiry
 - service turn replay after worker loss and lease expiry
+- durable step retry/backoff
+- durable exec retry/backoff
+- durable service-turn retry/backoff
 - durable signal delivery, including buffered signals before first activation
 - exec stdout/stderr/artifact capture on success
 - exec timeout persistence with captured failure artifacts
@@ -26,3 +29,4 @@ Next high-value additions:
 
 - service-turn coverage for kernel-enforced hard-stop on non-cooperative blocking steps
 - hard-stop semantics for externally managed workers
+- operator-facing replay output assertions once `vilano run replay` lands
