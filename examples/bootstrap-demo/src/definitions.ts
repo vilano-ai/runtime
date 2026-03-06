@@ -38,6 +38,25 @@ export const sleeper = workflow({
   },
 });
 
+export const slowWorkflowStep = workflow({
+  name: "slowWorkflowStep",
+  run: async (input: { durationMs?: number }, ctx) => {
+    return await ctx.step(
+      "slow-workflow-step",
+      async () => {
+        await new Promise((resolve) => {
+          setTimeout(resolve, input.durationMs ?? 1500);
+        });
+
+        return {
+          waitedMs: input.durationMs ?? 1500,
+        };
+      },
+      { key: `slow-workflow-step:${input.durationMs ?? 1500}` }
+    );
+  },
+});
+
 export const gate = workflow({
   name: "gate",
   run: async (_input: Record<string, never>, ctx) => {
