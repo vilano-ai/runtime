@@ -77,6 +77,8 @@ defmodule VilanoKernel.Storage do
         backoff_step_ms integer,
         backoff_factor real,
         max_backoff_ms integer,
+        backoff_jitter_kind text,
+        backoff_jitter_ratio real,
         retry_on_json text,
         timeout_ms integer,
         output_json text,
@@ -96,6 +98,8 @@ defmodule VilanoKernel.Storage do
     ensure_column!("run_steps", "backoff_step_ms", "integer")
     ensure_column!("run_steps", "backoff_factor", "real")
     ensure_column!("run_steps", "max_backoff_ms", "integer")
+    ensure_column!("run_steps", "backoff_jitter_kind", "text")
+    ensure_column!("run_steps", "backoff_jitter_ratio", "real")
     ensure_column!("run_steps", "retry_on_json", "text")
     ensure_column!("run_steps", "timeout_ms", "integer")
     ensure_column!("run_steps", "error_json", "text")
@@ -1510,6 +1514,8 @@ defmodule VilanoKernel.Storage do
                   backoff_step_ms,
                   backoff_factor,
                   max_backoff_ms,
+                  backoff_jitter_kind,
+                  backoff_jitter_ratio,
                   retry_on_json,
                   timeout_ms,
                   output_json,
@@ -1618,6 +1624,36 @@ defmodule VilanoKernel.Storage do
                       nil
                   end
 
+                persisted_backoff_jitter_kind =
+                  cond do
+                    is_binary(Map.get(retry_policy, "backoffJitterKind")) ->
+                      normalize_backoff_jitter_kind(Map.get(retry_policy, "backoffJitterKind"))
+
+                    existing && is_binary(existing["backoff_jitter_kind"]) ->
+                      normalize_backoff_jitter_kind(existing["backoff_jitter_kind"])
+
+                    true ->
+                      nil
+                  end
+
+                persisted_backoff_jitter_ratio =
+                  cond do
+                    is_number(Map.get(retry_policy, "backoffJitterRatio")) ->
+                      normalize_backoff_jitter_ratio(
+                        Map.get(retry_policy, "backoffJitterRatio"),
+                        persisted_backoff_jitter_kind
+                      )
+
+                    existing && is_number(existing["backoff_jitter_ratio"]) ->
+                      normalize_backoff_jitter_ratio(
+                        existing["backoff_jitter_ratio"],
+                        persisted_backoff_jitter_kind
+                      )
+
+                    true ->
+                      normalize_backoff_jitter_ratio(nil, persisted_backoff_jitter_kind)
+                  end
+
                 persisted_retry_on =
                   cond do
                     is_list(Map.get(retry_policy, "retryOn")) ->
@@ -1645,13 +1681,15 @@ defmodule VilanoKernel.Storage do
                     backoff_step_ms,
                     backoff_factor,
                     max_backoff_ms,
+                    backoff_jitter_kind,
+                    backoff_jitter_ratio,
                     retry_on_json,
                     timeout_ms,
                     output_json,
                     error_json,
                     created_at,
                     updated_at
-                  ) values (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, ?, ?)
+                  ) values (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, ?, ?)
                   on conflict(run_id, op_key) do update set
                     name = excluded.name,
                     status = 'running',
@@ -1662,6 +1700,8 @@ defmodule VilanoKernel.Storage do
                     backoff_step_ms = excluded.backoff_step_ms,
                     backoff_factor = excluded.backoff_factor,
                     max_backoff_ms = excluded.max_backoff_ms,
+                    backoff_jitter_kind = excluded.backoff_jitter_kind,
+                    backoff_jitter_ratio = excluded.backoff_jitter_ratio,
                     retry_on_json = excluded.retry_on_json,
                     timeout_ms = excluded.timeout_ms,
                     error_json = null,
@@ -1679,6 +1719,8 @@ defmodule VilanoKernel.Storage do
                     persisted_backoff_step_ms,
                     persisted_backoff_factor,
                     persisted_max_backoff_ms,
+                    persisted_backoff_jitter_kind,
+                    persisted_backoff_jitter_ratio,
                     Jason.encode!(persisted_retry_on),
                     timeout_ms,
                     now,
@@ -1699,6 +1741,8 @@ defmodule VilanoKernel.Storage do
                     "backoffStepMs" => persisted_backoff_step_ms,
                     "backoffFactor" => persisted_backoff_factor,
                     "maxBackoffMs" => persisted_max_backoff_ms,
+                    "backoffJitterKind" => persisted_backoff_jitter_kind,
+                    "backoffJitterRatio" => persisted_backoff_jitter_ratio,
                     "retryOn" => persisted_retry_on,
                     "timeoutMs" => timeout_ms
                   },
@@ -2651,6 +2695,8 @@ defmodule VilanoKernel.Storage do
         backoff_step_ms,
         backoff_factor,
         max_backoff_ms,
+        backoff_jitter_kind,
+        backoff_jitter_ratio,
         retry_on_json,
         timeout_ms,
         output_json,
@@ -2891,6 +2937,8 @@ defmodule VilanoKernel.Storage do
       "backoffStepMs" => row["backoff_step_ms"],
       "backoffFactor" => row["backoff_factor"],
       "maxBackoffMs" => row["max_backoff_ms"],
+      "backoffJitterKind" => row["backoff_jitter_kind"],
+      "backoffJitterRatio" => row["backoff_jitter_ratio"],
       "retryOn" => decode_json_list(row["retry_on_json"]),
       "timeoutMs" => row["timeout_ms"],
       "output" => decode_json_value(row["output_json"], nil),
@@ -3099,6 +3147,8 @@ defmodule VilanoKernel.Storage do
         backoff_step_ms,
         backoff_factor,
         max_backoff_ms,
+        backoff_jitter_kind,
+        backoff_jitter_ratio,
         retry_on_json,
         timeout_ms,
         output_json,
@@ -3698,14 +3748,17 @@ defmodule VilanoKernel.Storage do
     attempt = step_attempt(step)
     max_attempts = normalize_max_attempts(step["max_attempts"])
     retry_on = decode_json_list(step["retry_on_json"])
-    backoff_kind = normalize_backoff_kind(step["backoff_kind"])
-    backoff_ms = compute_backoff_ms(%{
-      "backoffKind" => backoff_kind,
+    backoff = compute_backoff_details(%{
+      "backoffKind" => step["backoff_kind"],
       "backoffMs" => step["backoff_ms"],
       "backoffStepMs" => step["backoff_step_ms"],
       "backoffFactor" => step["backoff_factor"],
-      "maxBackoffMs" => step["max_backoff_ms"]
-    }, attempt)
+      "maxBackoffMs" => step["max_backoff_ms"],
+      "backoffJitterKind" => step["backoff_jitter_kind"],
+      "backoffJitterRatio" => step["backoff_jitter_ratio"]
+    }, attempt, {"step", run["id"], step["op_key"]})
+    backoff_kind = backoff["backoffKind"]
+    backoff_ms = backoff["backoffMs"]
     decision = retry_decision(error_body, attempt, max_attempts, retry_on)
     wake_at = if decision["willRetry"], do: shift_milliseconds(now, backoff_ms), else: nil
 
@@ -3719,6 +3772,12 @@ defmodule VilanoKernel.Storage do
         "maxAttempts" => max_attempts,
         "backoffKind" => backoff_kind,
         "backoffMs" => backoff_ms,
+        "backoffBaseMs" => backoff["backoffBaseMs"],
+        "backoffCappedMs" => backoff["backoffCappedMs"],
+        "backoffCapMs" => backoff["backoffCapMs"],
+        "backoffJitterKind" => backoff["backoffJitterKind"],
+        "backoffJitterRatio" => backoff["backoffJitterRatio"],
+        "backoffJitterMs" => backoff["backoffJitterMs"],
         "retryOn" => retry_on,
         "retryFamily" => decision["retryFamily"],
         "retryable" => decision["retryable"],
@@ -3760,6 +3819,12 @@ defmodule VilanoKernel.Storage do
           "maxAttempts" => max_attempts,
           "backoffKind" => backoff_kind,
           "backoffMs" => backoff_ms,
+          "backoffBaseMs" => backoff["backoffBaseMs"],
+          "backoffCappedMs" => backoff["backoffCappedMs"],
+          "backoffCapMs" => backoff["backoffCapMs"],
+          "backoffJitterKind" => backoff["backoffJitterKind"],
+          "backoffJitterRatio" => backoff["backoffJitterRatio"],
+          "backoffJitterMs" => backoff["backoffJitterMs"],
           "retryOn" => retry_on,
           "wakeAt" => wake_at
         },
@@ -3804,8 +3869,9 @@ defmodule VilanoKernel.Storage do
     attempt = exec["attempt"] || 1
     max_attempts = normalize_max_attempts(Map.get(body, "maxAttempts"))
     retry_on = normalize_retry_on(Map.get(body, "retryOn"))
-    backoff_kind = normalize_backoff_kind(Map.get(body, "backoffKind"))
-    backoff_ms = compute_backoff_ms(body, attempt)
+    backoff = compute_backoff_details(body, attempt, {"exec", run["id"], op_key})
+    backoff_kind = backoff["backoffKind"]
+    backoff_ms = backoff["backoffMs"]
     decision = retry_decision(error_body, attempt, max_attempts, retry_on)
     wake_at = if decision["willRetry"], do: shift_milliseconds(now, backoff_ms), else: nil
 
@@ -3819,6 +3885,12 @@ defmodule VilanoKernel.Storage do
         "maxAttempts" => max_attempts,
         "backoffKind" => backoff_kind,
         "backoffMs" => backoff_ms,
+        "backoffBaseMs" => backoff["backoffBaseMs"],
+        "backoffCappedMs" => backoff["backoffCappedMs"],
+        "backoffCapMs" => backoff["backoffCapMs"],
+        "backoffJitterKind" => backoff["backoffJitterKind"],
+        "backoffJitterRatio" => backoff["backoffJitterRatio"],
+        "backoffJitterMs" => backoff["backoffJitterMs"],
         "retryOn" => retry_on,
         "retryFamily" => decision["retryFamily"],
         "retryable" => decision["retryable"],
@@ -3882,6 +3954,12 @@ defmodule VilanoKernel.Storage do
           "maxAttempts" => max_attempts,
           "backoffKind" => backoff_kind,
           "backoffMs" => backoff_ms,
+          "backoffBaseMs" => backoff["backoffBaseMs"],
+          "backoffCappedMs" => backoff["backoffCappedMs"],
+          "backoffCapMs" => backoff["backoffCapMs"],
+          "backoffJitterKind" => backoff["backoffJitterKind"],
+          "backoffJitterRatio" => backoff["backoffJitterRatio"],
+          "backoffJitterMs" => backoff["backoffJitterMs"],
           "retryOn" => retry_on,
           "wakeAt" => wake_at
         },
@@ -3941,8 +4019,9 @@ defmodule VilanoKernel.Storage do
     max_attempts = normalize_max_attempts(Map.get(retry_options, "maxAttempts"))
     attempt = envelope["attempt"] || 1
     retry_on = normalize_retry_on(Map.get(retry_options, "retryOn"))
-    backoff_kind = normalize_backoff_kind(Map.get(retry_options, "backoffKind"))
-    backoff_ms = compute_backoff_ms(retry_options, attempt)
+    backoff = compute_backoff_details(retry_options, attempt, {"service_turn", service_run["id"], envelope["id"]})
+    backoff_kind = backoff["backoffKind"]
+    backoff_ms = backoff["backoffMs"]
     decision = retry_decision(error_body, attempt, max_attempts, retry_on)
     wake_at = if decision["willRetry"], do: shift_milliseconds(now, backoff_ms), else: nil
 
@@ -3957,6 +4036,12 @@ defmodule VilanoKernel.Storage do
         "maxAttempts" => max_attempts,
         "backoffKind" => backoff_kind,
         "backoffMs" => backoff_ms,
+        "backoffBaseMs" => backoff["backoffBaseMs"],
+        "backoffCappedMs" => backoff["backoffCappedMs"],
+        "backoffCapMs" => backoff["backoffCapMs"],
+        "backoffJitterKind" => backoff["backoffJitterKind"],
+        "backoffJitterRatio" => backoff["backoffJitterRatio"],
+        "backoffJitterMs" => backoff["backoffJitterMs"],
         "retryOn" => retry_on,
         "retryFamily" => decision["retryFamily"],
         "retryable" => decision["retryable"],
@@ -3998,6 +4083,12 @@ defmodule VilanoKernel.Storage do
           "maxAttempts" => max_attempts,
           "backoffKind" => backoff_kind,
           "backoffMs" => backoff_ms,
+          "backoffBaseMs" => backoff["backoffBaseMs"],
+          "backoffCappedMs" => backoff["backoffCappedMs"],
+          "backoffCapMs" => backoff["backoffCapMs"],
+          "backoffJitterKind" => backoff["backoffJitterKind"],
+          "backoffJitterRatio" => backoff["backoffJitterRatio"],
+          "backoffJitterMs" => backoff["backoffJitterMs"],
           "retryOn" => retry_on,
           "wakeAt" => wake_at
         },
@@ -4108,6 +4199,12 @@ defmodule VilanoKernel.Storage do
         "maxAttempts" => Map.fetch!(body, "maxAttempts"),
         "backoffKind" => Map.get(body, "backoffKind"),
         "backoffMs" => Map.fetch!(body, "backoffMs"),
+        "backoffBaseMs" => Map.get(body, "backoffBaseMs"),
+        "backoffCappedMs" => Map.get(body, "backoffCappedMs"),
+        "backoffCapMs" => Map.get(body, "backoffCapMs"),
+        "backoffJitterKind" => Map.get(body, "backoffJitterKind"),
+        "backoffJitterRatio" => Map.get(body, "backoffJitterRatio"),
+        "backoffJitterMs" => Map.get(body, "backoffJitterMs"),
         "retryOn" => Map.get(body, "retryOn"),
         "waitKey" => wait_key,
         "wakeAt" => Map.fetch!(body, "wakeAt")
@@ -4127,6 +4224,13 @@ defmodule VilanoKernel.Storage do
         "attempt" => Map.fetch!(body, "attempt"),
         "nextAttempt" => Map.fetch!(body, "nextAttempt"),
         "backoffKind" => Map.get(body, "backoffKind"),
+        "backoffMs" => Map.get(body, "backoffMs"),
+        "backoffBaseMs" => Map.get(body, "backoffBaseMs"),
+        "backoffCappedMs" => Map.get(body, "backoffCappedMs"),
+        "backoffCapMs" => Map.get(body, "backoffCapMs"),
+        "backoffJitterKind" => Map.get(body, "backoffJitterKind"),
+        "backoffJitterRatio" => Map.get(body, "backoffJitterRatio"),
+        "backoffJitterMs" => Map.get(body, "backoffJitterMs"),
         "wakeAt" => Map.fetch!(body, "wakeAt")
       },
       now
@@ -4142,6 +4246,13 @@ defmodule VilanoKernel.Storage do
         "operationKey" => Map.fetch!(body, "operationKey"),
         "name" => Map.fetch!(body, "operationName"),
         "backoffKind" => Map.get(body, "backoffKind"),
+        "backoffMs" => Map.get(body, "backoffMs"),
+        "backoffBaseMs" => Map.get(body, "backoffBaseMs"),
+        "backoffCappedMs" => Map.get(body, "backoffCappedMs"),
+        "backoffCapMs" => Map.get(body, "backoffCapMs"),
+        "backoffJitterKind" => Map.get(body, "backoffJitterKind"),
+        "backoffJitterRatio" => Map.get(body, "backoffJitterRatio"),
+        "backoffJitterMs" => Map.get(body, "backoffJitterMs"),
         "wakeAt" => Map.fetch!(body, "wakeAt")
       },
       now
@@ -4210,12 +4321,14 @@ defmodule VilanoKernel.Storage do
 
   defp retry_family_allowed?(_family, _retry_on), do: true
 
-  defp compute_backoff_ms(policy, attempt) do
+  defp compute_backoff_details(policy, attempt, seed) do
     kind = normalize_backoff_kind(Map.get(policy, "backoffKind"))
     base_ms = normalize_backoff_ms(Map.get(policy, "backoffMs"))
     max_ms = normalize_optional_backoff_ms(Map.get(policy, "maxBackoffMs"))
+    jitter_kind = normalize_backoff_jitter_kind(Map.get(policy, "backoffJitterKind"))
+    jitter_ratio = normalize_backoff_jitter_ratio(Map.get(policy, "backoffJitterRatio"), jitter_kind)
 
-    computed =
+    base_delay_ms =
       case kind do
         "linear" ->
           step_ms = normalize_optional_backoff_ms(Map.get(policy, "backoffStepMs")) || base_ms
@@ -4229,10 +4342,32 @@ defmodule VilanoKernel.Storage do
           base_ms
       end
 
-    case max_ms do
-      nil -> computed
-      value -> min(computed, value)
-    end
+    capped_ms =
+      case max_ms do
+        nil -> base_delay_ms
+        value -> min(base_delay_ms, value)
+      end
+
+    jitter_bound_ms =
+      cond do
+        capped_ms <= 0 -> 0
+        is_nil(jitter_kind) -> 0
+        true -> round(capped_ms * jitter_ratio)
+      end
+
+    jitter_ms = deterministic_jitter_ms(seed, jitter_bound_ms)
+    applied_ms = max(capped_ms - jitter_ms, 0)
+
+    %{
+      "backoffKind" => kind,
+      "backoffMs" => applied_ms,
+      "backoffBaseMs" => base_delay_ms,
+      "backoffCappedMs" => capped_ms,
+      "backoffCapMs" => max_ms,
+      "backoffJitterKind" => jitter_kind,
+      "backoffJitterRatio" => if(is_nil(jitter_kind), do: nil, else: jitter_ratio),
+      "backoffJitterMs" => if(is_nil(jitter_kind), do: nil, else: jitter_ms)
+    }
   end
 
   defp normalize_max_attempts(value) when is_integer(value) and value > 0, do: value
@@ -4250,6 +4385,37 @@ defmodule VilanoKernel.Storage do
 
   defp normalize_backoff_factor(value) when is_number(value) and value > 0, do: value
   defp normalize_backoff_factor(_value), do: 2.0
+
+  defp normalize_backoff_jitter_kind("full"), do: "full"
+  defp normalize_backoff_jitter_kind("half"), do: "half"
+  defp normalize_backoff_jitter_kind("ratio"), do: "ratio"
+  defp normalize_backoff_jitter_kind(_value), do: nil
+
+  defp normalize_backoff_jitter_ratio(value, "full") when is_number(value) do
+    min(max(value * 1.0, 0.0), 1.0)
+  end
+
+  defp normalize_backoff_jitter_ratio(_value, "full"), do: 1.0
+
+  defp normalize_backoff_jitter_ratio(value, "half") when is_number(value) do
+    min(max(value * 1.0, 0.0), 0.5)
+  end
+
+  defp normalize_backoff_jitter_ratio(_value, "half"), do: 0.5
+
+  defp normalize_backoff_jitter_ratio(value, "ratio") when is_number(value) do
+    min(max(value * 1.0, 0.0), 1.0)
+  end
+
+  defp normalize_backoff_jitter_ratio(_value, "ratio"), do: 0.0
+
+  defp normalize_backoff_jitter_ratio(_value, _kind), do: nil
+
+  defp deterministic_jitter_ms(_seed, max_jitter_ms) when not is_integer(max_jitter_ms) or max_jitter_ms <= 0,
+    do: 0
+
+  defp deterministic_jitter_ms(seed, max_jitter_ms),
+    do: :erlang.phash2(seed, max_jitter_ms + 1)
 
   defp normalize_retry_family("timeout"), do: "timeout"
   defp normalize_retry_family("process_exit"), do: "process_exit"

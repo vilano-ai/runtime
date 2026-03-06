@@ -25,23 +25,34 @@ export type RetryFamily =
   | "process_exit"
   | "process_spawn";
 
+export type RetryJitter =
+  | "full"
+  | "half"
+  | {
+      kind: "ratio";
+      ratio: number;
+    };
+
 export type RetryBackoff =
   | string
   | {
       kind: "fixed";
       delay: string;
+      jitter?: RetryJitter;
     }
   | {
       kind: "linear";
       initial: string;
       step?: string;
       max?: string;
+      jitter?: RetryJitter;
     }
   | {
       kind: "exponential";
       initial: string;
       factor?: number;
       max?: string;
+      jitter?: RetryJitter;
     };
 
 export interface StepOptions {

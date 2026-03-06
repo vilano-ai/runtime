@@ -67,6 +67,8 @@ interface ResolvedRetryPolicy {
   backoffStepMs?: number;
   backoffFactor?: number;
   maxBackoffMs?: number;
+  backoffJitterKind?: "full" | "half" | "ratio";
+  backoffJitterRatio?: number;
   retryOn?: string[];
 }
 
@@ -214,6 +216,8 @@ export class WorkerClient {
         backoffStepMs: retry?.backoffStepMs,
         backoffFactor: retry?.backoffFactor,
         maxBackoffMs: retry?.maxBackoffMs,
+        backoffJitterKind: retry?.backoffJitterKind,
+        backoffJitterRatio: retry?.backoffJitterRatio,
         retryOn: retry?.retryOn,
       }
     );
@@ -317,6 +321,8 @@ export class WorkerClient {
         backoffStepMs: spec.retry?.backoffStepMs,
         backoffFactor: spec.retry?.backoffFactor,
         maxBackoffMs: spec.retry?.maxBackoffMs,
+        backoffJitterKind: spec.retry?.backoffJitterKind,
+        backoffJitterRatio: spec.retry?.backoffJitterRatio,
         retryOn: spec.retry?.retryOn,
       }
     );
@@ -472,6 +478,8 @@ export class WorkerClient {
         backoffStepMs: retry?.backoffStepMs,
         backoffFactor: retry?.backoffFactor,
         maxBackoffMs: retry?.maxBackoffMs,
+        backoffJitterKind: retry?.backoffJitterKind,
+        backoffJitterRatio: retry?.backoffJitterRatio,
         retryOn: retry?.retryOn,
       }
     );
@@ -509,7 +517,9 @@ export class WorkerClient {
         parsed.error &&
         typeof parsed.error.message === "string"
           ? parsed.error.message
-          : `Worker request failed with status ${response.status}`;
+          : raw
+            ? `Worker request failed with status ${response.status}: ${raw}`
+            : `Worker request failed with status ${response.status}`;
 
       throw new Error(message);
     }

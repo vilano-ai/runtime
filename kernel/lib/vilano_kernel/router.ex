@@ -1,6 +1,7 @@
 defmodule VilanoKernel.Router do
   @moduledoc false
 
+  use Plug.ErrorHandler
   use Plug.Router
 
   alias Plug.Conn
@@ -264,6 +265,8 @@ defmodule VilanoKernel.Router do
       "backoffStepMs" => Map.get(conn.body_params, "backoffStepMs"),
       "backoffFactor" => Map.get(conn.body_params, "backoffFactor"),
       "maxBackoffMs" => Map.get(conn.body_params, "maxBackoffMs"),
+      "backoffJitterKind" => Map.get(conn.body_params, "backoffJitterKind"),
+      "backoffJitterRatio" => Map.get(conn.body_params, "backoffJitterRatio"),
       "retryOn" => Map.get(conn.body_params, "retryOn")
     }
 
@@ -352,6 +355,8 @@ defmodule VilanoKernel.Router do
       "backoffStepMs" => Map.get(conn.body_params, "backoffStepMs"),
       "backoffFactor" => Map.get(conn.body_params, "backoffFactor"),
       "maxBackoffMs" => Map.get(conn.body_params, "maxBackoffMs"),
+      "backoffJitterKind" => Map.get(conn.body_params, "backoffJitterKind"),
+      "backoffJitterRatio" => Map.get(conn.body_params, "backoffJitterRatio"),
       "retryOn" => Map.get(conn.body_params, "retryOn")
     }
 
@@ -469,6 +474,8 @@ defmodule VilanoKernel.Router do
       "backoffStepMs" => Map.get(conn.body_params, "backoffStepMs"),
       "backoffFactor" => Map.get(conn.body_params, "backoffFactor"),
       "maxBackoffMs" => Map.get(conn.body_params, "maxBackoffMs"),
+      "backoffJitterKind" => Map.get(conn.body_params, "backoffJitterKind"),
+      "backoffJitterRatio" => Map.get(conn.body_params, "backoffJitterRatio"),
       "retryOn" => Map.get(conn.body_params, "retryOn")
     }
 
@@ -824,6 +831,12 @@ defmodule VilanoKernel.Router do
           retry: Map.get(body, "retryDecision"),
           retryable: Map.get(body, "retryable"),
           willRetry: Map.get(body, "willRetry"),
+          backoffKind: Map.get(body, "backoffKind"),
+          backoffMs: Map.get(body, "backoffMs"),
+          backoffBaseMs: Map.get(body, "backoffBaseMs"),
+          backoffCappedMs: Map.get(body, "backoffCappedMs"),
+          backoffJitterKind: Map.get(body, "backoffJitterKind"),
+          backoffJitterMs: Map.get(body, "backoffJitterMs"),
           error: error_message(Map.get(body, "error"))
         })
 
@@ -854,6 +867,12 @@ defmodule VilanoKernel.Router do
           retry: Map.get(body, "retryDecision"),
           retryable: Map.get(body, "retryable"),
           willRetry: Map.get(body, "willRetry"),
+          backoffKind: Map.get(body, "backoffKind"),
+          backoffMs: Map.get(body, "backoffMs"),
+          backoffBaseMs: Map.get(body, "backoffBaseMs"),
+          backoffCappedMs: Map.get(body, "backoffCappedMs"),
+          backoffJitterKind: Map.get(body, "backoffJitterKind"),
+          backoffJitterMs: Map.get(body, "backoffJitterMs"),
           error: if(type == "ProcessCompleted", do: nil, else: error_message(Map.get(body, "error")))
         })
 
@@ -884,6 +903,12 @@ defmodule VilanoKernel.Router do
           nextAttempt: Map.get(body, "nextAttempt"),
           backoffKind: Map.get(body, "backoffKind"),
           backoffMs: Map.get(body, "backoffMs"),
+          backoffBaseMs: Map.get(body, "backoffBaseMs"),
+          backoffCappedMs: Map.get(body, "backoffCappedMs"),
+          backoffCapMs: Map.get(body, "backoffCapMs"),
+          backoffJitterKind: Map.get(body, "backoffJitterKind"),
+          backoffJitterRatio: Map.get(body, "backoffJitterRatio"),
+          backoffJitterMs: Map.get(body, "backoffJitterMs"),
           wakeAt: Map.get(body, "wakeAt")
         })
 
@@ -924,6 +949,12 @@ defmodule VilanoKernel.Router do
           retry: Map.get(body, "retryDecision"),
           retryable: Map.get(body, "retryable"),
           willRetry: Map.get(body, "willRetry"),
+          backoffKind: Map.get(body, "backoffKind"),
+          backoffMs: Map.get(body, "backoffMs"),
+          backoffBaseMs: Map.get(body, "backoffBaseMs"),
+          backoffCappedMs: Map.get(body, "backoffCappedMs"),
+          backoffJitterKind: Map.get(body, "backoffJitterKind"),
+          backoffJitterMs: Map.get(body, "backoffJitterMs"),
           error: if(type == "TurnFailed", do: error_message(Map.get(body, "error")), else: nil)
         })
 
@@ -992,5 +1023,16 @@ defmodule VilanoKernel.Router do
 
   defp send_error(conn, status, code, message) do
     send_json(conn, status, %{ok: false, error: %{code: code, message: message}})
+  end
+
+  @impl Plug.ErrorHandler
+  def handle_errors(conn, %{reason: reason}) do
+    message =
+      cond do
+        is_exception(reason) -> Exception.message(reason)
+        true -> inspect(reason)
+      end
+
+    send_json(conn, conn.status || 500, %{ok: false, error: %{code: "internal_error", message: message}})
   end
 end

@@ -15,6 +15,7 @@ import type {
   MessageOptions,
   RetryBackoff,
   RetryFamily,
+  RetryJitter,
   RetryOptions,
   RunStatus,
   ServiceDefinition,
@@ -152,15 +153,22 @@ async function executeActivation(
 async function loadWorkflowDefinition(
   activation: WorkflowActivation
 ): Promise<WorkflowDefinition<any, any>> {
-  const definition = await loadDefinitionModule(
+  const moduleExports = await loadDefinitionModule(
     activation.project.path,
     activation.definition.file,
     activation.definition.exportName
   );
+  const definition = selectDefinitionExport(
+    moduleExports,
+    activation.definition.exportName,
+    activation.definition.name,
+    "workflow"
+  );
 
   if (!definition || typeof definition !== "object" || (definition as { kind?: string }).kind !== "workflow") {
+    const exportsList = Object.keys(moduleExports).sort().join(", ");
     throw new Error(
-      `Export '${activation.definition.exportName}' from ${activation.definition.file} is not a workflow definition`
+      `Export '${activation.definition.exportName}' from ${activation.definition.file} is not a workflow definition (exports: ${exportsList})`
     );
   }
 
@@ -170,15 +178,22 @@ async function loadWorkflowDefinition(
 async function loadServiceDefinition(
   activation: ServiceTurnActivation
 ): Promise<ServiceDefinition<any, any, any, any, any>> {
-  const definition = await loadDefinitionModule(
+  const moduleExports = await loadDefinitionModule(
     activation.project.path,
     activation.definition.file,
     activation.definition.exportName
   );
+  const definition = selectDefinitionExport(
+    moduleExports,
+    activation.definition.exportName,
+    activation.definition.name,
+    "service"
+  );
 
   if (!definition || typeof definition !== "object" || (definition as { kind?: string }).kind !== "service") {
+    const exportsList = Object.keys(moduleExports).sort().join(", ");
     throw new Error(
-      `Export '${activation.definition.exportName}' from ${activation.definition.file} is not a service definition`
+      `Export '${activation.definition.exportName}' from ${activation.definition.file} is not a service definition (exports: ${exportsList})`
     );
   }
 
@@ -189,11 +204,57 @@ async function loadDefinitionModule(
   projectPath: string,
   file: string,
   exportName: string
-): Promise<unknown> {
+): Promise<Record<string, unknown>> {
   const absolutePath = path.join(projectPath, file);
-  const moduleUrl = pathToFileURL(absolutePath).href;
+  const stats = await fs.stat(absolutePath);
+  const version = `${stats.mtimeMs}-${stats.size}`;
+  const moduleUrl = `${pathToFileURL(absolutePath).href}?v=${encodeURIComponent(version)}`;
   const moduleExports = (await import(moduleUrl)) as Record<string, unknown>;
-  return moduleExports[exportName];
+  if (!(exportName in moduleExports)) {
+    return moduleExports;
+  }
+
+  return moduleExports;
+}
+
+function selectDefinitionExport(
+  moduleExports: Record<string, unknown>,
+  exportName: string,
+  definitionName: string,
+  kind: "workflow" | "service"
+): unknown {
+  const candidates: unknown[] = [];
+  const defaultExports =
+    moduleExports.default && typeof moduleExports.default === "object" && !Array.isArray(moduleExports.default)
+      ? (moduleExports.default as Record<string, unknown>)
+      : null;
+
+  candidates.push(moduleExports[exportName]);
+
+  if (defaultExports) {
+    candidates.push(defaultExports[exportName]);
+  }
+
+  candidates.push(...Object.values(moduleExports));
+
+  if (defaultExports) {
+    candidates.push(...Object.values(defaultExports));
+  }
+
+  return candidates.find((candidate) => isDefinitionLike(candidate, definitionName, kind));
+}
+
+function isDefinitionLike(
+  candidate: unknown,
+  definitionName: string,
+  kind: "workflow" | "service"
+): candidate is WorkflowDefinition<any, any> | ServiceDefinition<any, any, any, any, any> {
+  if (!candidate || typeof candidate !== "object") {
+    return false;
+  }
+
+  const record = candidate as { kind?: string; name?: string };
+  return record.kind === kind && record.name === definitionName;
 }
 
 function createTurnContext(client: WorkerClient, activation: Activation): WorkflowContext {
@@ -1258,6 +1319,8 @@ function toRetryPolicy(
       backoffStepMs?: number;
       backoffFactor?: number;
       maxBackoffMs?: number;
+      backoffJitterKind?: "full" | "half" | "ratio";
+      backoffJitterRatio?: number;
       retryOn?: string[];
     }
   | undefined {
@@ -1277,6 +1340,8 @@ function toRetryPolicy(
     backoffStepMs: backoff.backoffStepMs,
     backoffFactor: backoff.backoffFactor,
     maxBackoffMs: backoff.maxBackoffMs,
+    backoffJitterKind: backoff.backoffJitterKind,
+    backoffJitterRatio: backoff.backoffJitterRatio,
     retryOn,
   };
 }
@@ -1306,6 +1371,8 @@ function resolveRetryBackoff(backoff?: RetryBackoff): {
   backoffStepMs?: number;
   backoffFactor?: number;
   maxBackoffMs?: number;
+  backoffJitterKind?: "full" | "half" | "ratio";
+  backoffJitterRatio?: number;
 } {
   if (!backoff) {
     return {
@@ -1326,6 +1393,7 @@ function resolveRetryBackoff(backoff?: RetryBackoff): {
       return {
         backoffKind: "fixed",
         backoffMs: parseDurationToMs(backoff.delay) ?? 0,
+        ...resolveRetryJitter(backoff.jitter),
       };
     case "linear":
       return {
@@ -1333,6 +1401,7 @@ function resolveRetryBackoff(backoff?: RetryBackoff): {
         backoffMs: parseDurationToMs(backoff.initial) ?? 0,
         backoffStepMs: parseDurationToMs(backoff.step ?? backoff.initial) ?? 0,
         maxBackoffMs: parseDurationToMs(backoff.max),
+        ...resolveRetryJitter(backoff.jitter),
       };
     case "exponential":
       return {
@@ -1343,8 +1412,42 @@ function resolveRetryBackoff(backoff?: RetryBackoff): {
             ? backoff.factor
             : 2,
         maxBackoffMs: parseDurationToMs(backoff.max),
+        ...resolveRetryJitter(backoff.jitter),
       };
   }
+}
+
+function resolveRetryJitter(jitter?: RetryJitter): {
+  backoffJitterKind?: "full" | "half" | "ratio";
+  backoffJitterRatio?: number;
+} {
+  if (!jitter) {
+    return {};
+  }
+
+  if (jitter === "full") {
+    return {
+      backoffJitterKind: "full",
+      backoffJitterRatio: 1,
+    };
+  }
+
+  if (jitter === "half") {
+    return {
+      backoffJitterKind: "half",
+      backoffJitterRatio: 0.5,
+    };
+  }
+
+  if (jitter.kind === "ratio") {
+    const ratio = Math.min(Math.max(jitter.ratio, 0), 1);
+    return {
+      backoffJitterKind: "ratio",
+      backoffJitterRatio: Number.isFinite(ratio) ? ratio : 0,
+    };
+  }
+
+  return {};
 }
 
 function normalizeRetryOn(on?: RetryFamily[]): string[] | undefined {

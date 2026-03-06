@@ -3,23 +3,33 @@ import fs from "node:fs/promises";
 import { nonRetryable, service, workflow } from "@vilano/runtime";
 
 type DemoRetryFamily = "always" | "application" | "timeout" | "process_exit" | "process_spawn";
+type DemoRetryJitter =
+  | "full"
+  | "half"
+  | {
+      kind: "ratio";
+      ratio: number;
+    };
 type DemoRetryBackoff =
   | string
   | {
       kind: "fixed";
       delay: string;
+      jitter?: DemoRetryJitter;
     }
   | {
       kind: "linear";
       initial: string;
       step?: string;
       max?: string;
+      jitter?: DemoRetryJitter;
     }
   | {
       kind: "exponential";
       initial: string;
       factor?: number;
       max?: string;
+      jitter?: DemoRetryJitter;
     };
 
 async function bumpMarkerAttempt(markerPath: string): Promise<number> {
