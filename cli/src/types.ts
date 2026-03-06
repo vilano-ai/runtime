@@ -75,6 +75,9 @@ export interface RunRecord {
   definitionKind: DefinitionKind;
   definitionName: string;
   status: RunStatus;
+  leaseId?: string | null;
+  leaseWorkerId?: string | null;
+  leaseExpiresAt?: string | null;
   input: unknown;
   output: unknown | null;
   error: unknown | null;
@@ -96,6 +99,38 @@ export interface RunStartResponse {
   run: RunRecord;
 }
 
+export interface RunStepRecord {
+  runId: string;
+  key: string;
+  name: string;
+  status: string;
+  output: unknown | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RunExecRecord {
+  runId: string;
+  key: string;
+  name: string;
+  status: string;
+  cmd: string;
+  args: string[];
+  cwd: string | null;
+  env: Record<string, string> | null;
+  timeoutMs: number | null;
+  attempt: number;
+  exitCode: number | null;
+  signalCode: string | null;
+  stdoutRef: string | null;
+  stderrRef: string | null;
+  artifacts: Array<{ path: string; ref: string }>;
+  output: unknown | null;
+  error: unknown | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RunListResponse {
   ok: true;
   project: string | null;
@@ -106,6 +141,8 @@ export interface RunInspectResponse {
   ok: true;
   run: RunRecord;
   events: RunEventRecord[];
+  steps: RunStepRecord[];
+  execs: RunExecRecord[];
 }
 
 export interface ErrorResponse {

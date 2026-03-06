@@ -3,15 +3,27 @@ import { service, workflow } from "@vilano/runtime";
 export const planner = workflow({
   name: "planner",
   run: async (input: { topic: string }, ctx) => {
-    const summary = await ctx.step(
-      "summarize",
-      async () => `planned: ${input.topic}`,
-      { key: "summary" }
-    );
-
-    return {
-      summary,
-    };
+    return await ctx.exec({
+      name: "summarize",
+      key: "summary",
+      cmd: "bun",
+      args: [
+        "-e",
+        [
+          "const fs = require('node:fs');",
+          `const summary = ${JSON.stringify(`planned: ${input.topic}`)};`,
+          "fs.mkdirSync('tmp', { recursive: true });",
+          "fs.writeFileSync('tmp/summary.txt', summary);",
+          "console.log(JSON.stringify({ summary }));",
+        ].join(" "),
+      ],
+      capture: {
+        stdout: true,
+        stderr: true,
+        artifacts: ["tmp/summary.txt"],
+      },
+      parse: (stdout) => JSON.parse(stdout.trim()) as { summary: string },
+    });
   },
 });
 

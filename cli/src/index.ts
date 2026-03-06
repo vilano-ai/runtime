@@ -20,8 +20,10 @@ import { buildProjectManifest, findDefinition, resolveProjectForCwd } from "./re
 import type {
   DefinitionRecord,
   ProjectRecord,
+  RunExecRecord,
   RunEventRecord,
   RunRecord,
+  RunStepRecord,
 } from "./types.ts";
 
 class CliError extends Error {
@@ -259,7 +261,7 @@ async function handleRun(args: string[], flags: Record<string, string | boolean>
       }
 
       const response = await inspectRun(runId);
-      writeOutput(flags, response, (body) => renderRunInspect(body.run, body.events));
+      writeOutput(flags, response, (body) => renderRunInspect(body.run, body.events, body.steps, body.execs));
       return 0;
     }
     default:
@@ -542,15 +544,36 @@ function renderRunList(project: string | null, runs: RunRecord[]): string {
   ].join("\n");
 }
 
-function renderRunInspect(run: RunRecord, events: RunEventRecord[]): string {
+function renderRunInspect(
+  run: RunRecord,
+  events: RunEventRecord[],
+  steps: RunStepRecord[],
+  execs: RunExecRecord[]
+): string {
   const eventLines =
     events.length === 0
       ? ["events: none"]
       : ["events:", ...events.map((event) => `  ${event.seq}. ${event.type}\t${event.createdAt}`)];
+  const stepLines =
+    steps.length === 0
+      ? ["steps: none"]
+      : ["steps:", ...steps.map((step) => `  ${step.name}\tkey=${step.key}\tstatus=${step.status}`)];
+  const execLines =
+    execs.length === 0
+      ? ["execs: none"]
+      : [
+          "execs:",
+          ...execs.map((exec) => {
+            const refs = [exec.stdoutRef, exec.stderrRef].filter(Boolean).join(",");
+            return `  ${exec.name}\tkey=${exec.key}\tstatus=${exec.status}\tattempt=${exec.attempt}\tcmd=${[exec.cmd, ...exec.args].join(" ")}${refs ? `\trefs=${refs}` : ""}`;
+          }),
+        ];
 
   return [
     renderRun(run),
     ...eventLines,
+    ...stepLines,
+    ...execLines,
   ].join("\n");
 }
 
