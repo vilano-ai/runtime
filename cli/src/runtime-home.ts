@@ -3,7 +3,6 @@ import path from "node:path";
 
 export interface RuntimePaths {
   homeDir: string;
-  registryFile: string;
   daemonStateFile: string;
 }
 
@@ -14,7 +13,6 @@ export function getRuntimePaths(): RuntimePaths {
 
   return {
     homeDir,
-    registryFile: path.join(homeDir, "projects.json"),
     daemonStateFile: path.join(homeDir, "daemon.json"),
   };
 }

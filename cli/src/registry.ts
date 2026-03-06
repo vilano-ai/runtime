@@ -2,14 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { readJsonFile, writeJsonFileAtomic } from "./json-file";
-import { getRuntimePaths } from "./runtime-home";
-import type { DefinitionRecord, ProjectRecord, RegistryFile } from "./types";
-
-const EMPTY_REGISTRY: RegistryFile = {
-  version: 1,
-  projects: {},
-};
+import type { DefinitionRecord, ProjectRecord } from "./types.ts";
 
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
 const IGNORED_DIRS = new Set([
@@ -26,17 +19,10 @@ const IGNORED_DIRS = new Set([
   "spec",
 ]);
 
-export async function loadRegistry(): Promise<RegistryFile> {
-  const { registryFile } = getRuntimePaths();
-  return readJsonFile<RegistryFile>(registryFile, EMPTY_REGISTRY);
-}
-
-export async function saveRegistry(registry: RegistryFile): Promise<void> {
-  const { registryFile } = getRuntimePaths();
-  await writeJsonFileAtomic(registryFile, registry);
-}
-
-export async function addProject(projectName: string, projectPath: string): Promise<ProjectRecord> {
+export async function buildProjectManifest(
+  projectName: string,
+  projectPath: string
+): Promise<ProjectRecord> {
   const resolvedPath = path.resolve(projectPath);
   const stat = await fs.stat(resolvedPath);
 
@@ -44,81 +30,21 @@ export async function addProject(projectName: string, projectPath: string): Prom
     throw new Error(`Project path is not a directory: ${resolvedPath}`);
   }
 
-  const registry = await loadRegistry();
+  const manifest = await scanProjectDefinitions(resolvedPath);
 
-  registry.projects[projectName] = {
+  return {
     name: projectName,
     path: resolvedPath,
-    lastSyncedAt: null,
-    definitionsManifestHash: null,
-    definitions: {
-      workflows: [],
-      services: [],
-    },
+    lastSyncedAt: new Date().toISOString(),
+    definitionsManifestHash: manifest.hash,
+    definitions: manifest.definitions,
   };
-
-  const synced = await syncProject(projectName, registry);
-  await saveRegistry(registry);
-  return synced;
 }
 
-export async function removeProject(projectName: string): Promise<ProjectRecord> {
-  const registry = await loadRegistry();
-  const project = registry.projects[projectName];
-
-  if (!project) {
-    throw new Error(`Unknown project: ${projectName}`);
-  }
-
-  delete registry.projects[projectName];
-  await saveRegistry(registry);
-  return project;
-}
-
-export async function getProject(projectName: string): Promise<ProjectRecord> {
-  const registry = await loadRegistry();
-  const project = registry.projects[projectName];
-
-  if (!project) {
-    throw new Error(`Unknown project: ${projectName}`);
-  }
-
-  return project;
-}
-
-export async function listProjects(): Promise<ProjectRecord[]> {
-  const registry = await loadRegistry();
-  return Object.values(registry.projects).sort((a, b) => a.name.localeCompare(b.name));
-}
-
-export async function syncProject(projectName: string, registryArg?: RegistryFile): Promise<ProjectRecord> {
-  const registry = registryArg ?? (await loadRegistry());
-  const project = registry.projects[projectName];
-
-  if (!project) {
-    throw new Error(`Unknown project: ${projectName}`);
-  }
-
-  const manifest = await scanProjectDefinitions(project.path);
-
-  project.lastSyncedAt = new Date().toISOString();
-  project.definitionsManifestHash = manifest.hash;
-  project.definitions = manifest.definitions;
-
-  if (!registryArg) {
-    await saveRegistry(registry);
-  }
-
-  return project;
-}
-
-export function resolveProjectForCwd(
-  registry: RegistryFile,
-  cwd: string
-): ProjectRecord | null {
+export function resolveProjectForCwd(projects: ProjectRecord[], cwd: string): ProjectRecord | null {
   const resolvedCwd = path.resolve(cwd);
 
-  const matches = Object.values(registry.projects)
+  const matches = projects
     .filter((project) => resolvedCwd === project.path || resolvedCwd.startsWith(`${project.path}${path.sep}`))
     .sort((a, b) => b.path.length - a.path.length);
 
@@ -126,7 +52,7 @@ export function resolveProjectForCwd(
 }
 
 export function findDefinition(
-  registry: RegistryFile,
+  projects: ProjectRecord[],
   kind: "workflow" | "service",
   reference: string,
   cwd: string,
@@ -138,10 +64,10 @@ export function findDefinition(
   let definitionName: string;
 
   if (parsed.projectName) {
-    project = registry.projects[parsed.projectName];
+    project = projects.find((entry) => entry.name === parsed.projectName);
     definitionName = parsed.definitionName;
   } else {
-    project = resolveProjectForCwd(registry, cwd) ?? undefined;
+    project = resolveProjectForCwd(projects, cwd) ?? undefined;
     definitionName = parsed.definitionName;
   }
 
@@ -263,6 +189,10 @@ function scanDefinitionsInSource(
   let match: RegExpExecArray | null;
   while ((match = exportPattern.exec(source)) !== null) {
     const exportName = match[1];
+    if (!exportName) {
+      continue;
+    }
+
     const slice = source.slice(match.index, match.index + 1200);
     const nameMatch = /name\s*:\s*["'`]([^"'`]+)["'`]/.exec(slice);
 

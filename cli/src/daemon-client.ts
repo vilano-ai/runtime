@@ -1,10 +1,10 @@
-import http from "node:http";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import process from "node:process";
 
-import { readJsonFile } from "./json-file";
-import { getRuntimePaths } from "./runtime-home";
+import { ensureDir, readJsonFile, writeJsonFileAtomic } from "./json-file.ts";
+import { getRuntimePaths } from "./runtime-home.ts";
 import type {
   DaemonState,
   DaemonStatusResponse,
@@ -13,7 +13,11 @@ import type {
   ErrorResponse,
   ProjectListResponse,
   ProjectResponse,
-} from "./types";
+  ProjectRecord,
+  RunInspectResponse,
+  RunListResponse,
+  RunStartResponse,
+} from "./types.ts";
 
 interface RequestOptions {
   method: "GET" | "POST" | "DELETE";
@@ -22,35 +26,72 @@ interface RequestOptions {
   autoStart?: boolean;
 }
 
+interface KernelStatusBody {
+  ok: true;
+  port: number;
+  startedAt: string;
+  runtimeDbPath: string;
+  projectCount: number;
+}
+
 export async function ensureDaemonStarted(port = 4141): Promise<DaemonStatusResponse> {
   const status = await getRunningDaemonStatus();
   if (status) {
     return status;
   }
 
-  const entryPath = path.join(__dirname, "index.js");
-  const child = spawn(
-    process.execPath,
-    [entryPath, "__daemon-serve", "--port", String(port)],
-    {
-      detached: true,
-      stdio: "ignore",
-    }
-  );
+  const runtimePaths = getRuntimePaths();
+  await ensureDir(runtimePaths.homeDir);
+
+  const kernelDir = path.resolve(import.meta.dir, "..", "..", "kernel");
+  const child = spawn("mix", ["run", "--no-halt"], {
+    cwd: kernelDir,
+    detached: true,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      VILANO_HOME: runtimePaths.homeDir,
+      VILANO_KERNEL_PORT: String(port),
+    },
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    child.once("spawn", () => resolve());
+    child.once("error", (error) => {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        reject(
+          new Error("Failed to start the Vilano kernel because 'mix' was not found. Install Elixir 1.17+ and ensure `mix` is on your PATH.")
+        );
+        return;
+      }
+
+      reject(error);
+    });
+  });
 
   child.unref();
 
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
-    const running = await getRunningDaemonStatus();
-    if (running) {
-      return running;
+    const kernelStatus = await pingKernelStatus(port);
+    if (kernelStatus) {
+      const daemonState: DaemonState = {
+        version: 1,
+        pid: child.pid ?? 0,
+        port,
+        startedAt: kernelStatus.startedAt,
+        runtimeDbPath: kernelStatus.runtimeDbPath,
+      };
+
+      await writeJsonFileAtomic(runtimePaths.daemonStateFile, daemonState);
+      return toDaemonStatus(daemonState, kernelStatus);
     }
 
     await sleep(150);
   }
 
-  throw new Error("Timed out waiting for the Vilano daemon to start");
+  throw new Error("Timed out waiting for the Vilano kernel to start");
 }
 
 export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
@@ -72,7 +113,7 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
 
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
-    const running = await getRunningDaemonStatus();
+    const running = await pingKernelStatus(daemonState.port);
     if (!running) {
       await fs.rm(runtimePaths.daemonStateFile, { force: true });
       return {
@@ -80,7 +121,7 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
         pid: daemonState.pid,
         port: daemonState.port,
         startedAt: daemonState.startedAt,
-        registryPath: daemonState.registryPath,
+        runtimeDbPath: daemonState.runtimeDbPath,
         projectCount: 0,
       };
     }
@@ -88,7 +129,7 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
     await sleep(150);
   }
 
-  throw new Error("Timed out waiting for the Vilano daemon to stop");
+  throw new Error("Timed out waiting for the Vilano kernel to stop");
 }
 
 export async function getRunningDaemonStatus(): Promise<DaemonStatusResponse | null> {
@@ -100,11 +141,13 @@ export async function getRunningDaemonStatus(): Promise<DaemonStatusResponse | n
   }
 
   try {
-    return await requestJsonWithState<DaemonStatusResponse>(daemonState, {
+    const kernelStatus = await requestJsonWithState<KernelStatusBody>(daemonState, {
       method: "GET",
       pathname: "/v1/status",
       autoStart: false,
     });
+
+    return toDaemonStatus(daemonState, kernelStatus);
   } catch {
     await fs.rm(runtimePaths.daemonStateFile, { force: true });
     return null;
@@ -119,11 +162,11 @@ export async function listProjects(): Promise<ProjectListResponse> {
   });
 }
 
-export async function addProject(name: string, projectPath: string): Promise<ProjectResponse> {
+export async function addProject(project: ProjectRecord): Promise<ProjectResponse> {
   return requestJson<ProjectResponse>({
     method: "POST",
     pathname: "/v1/projects",
-    body: { name, path: projectPath },
+    body: project,
     autoStart: true,
   });
 }
@@ -136,10 +179,11 @@ export async function inspectProject(name: string): Promise<ProjectResponse> {
   });
 }
 
-export async function syncProject(name: string): Promise<ProjectResponse> {
+export async function syncProject(project: ProjectRecord): Promise<ProjectResponse> {
   return requestJson<ProjectResponse>({
     method: "POST",
-    pathname: `/v1/projects/${encodeURIComponent(name)}/sync`,
+    pathname: `/v1/projects/${encodeURIComponent(project.name)}/sync`,
+    body: project,
     autoStart: true,
   });
 }
@@ -177,6 +221,40 @@ export async function inspectWorkflowDefinition(
   });
 }
 
+export async function startWorkflowRun(
+  project: string,
+  workflow: string,
+  input: unknown
+): Promise<RunStartResponse> {
+  return requestJson<RunStartResponse>({
+    method: "POST",
+    pathname: "/v1/runs",
+    body: {
+      project,
+      workflow,
+      input,
+    },
+    autoStart: true,
+  });
+}
+
+export async function listRuns(project?: string): Promise<RunListResponse> {
+  const query = project ? `?project=${encodeURIComponent(project)}` : "";
+  return requestJson<RunListResponse>({
+    method: "GET",
+    pathname: `/v1/runs${query}`,
+    autoStart: true,
+  });
+}
+
+export async function inspectRun(runId: string): Promise<RunInspectResponse> {
+  return requestJson<RunInspectResponse>({
+    method: "GET",
+    pathname: `/v1/runs/${encodeURIComponent(runId)}`,
+    autoStart: true,
+  });
+}
+
 async function requestJson<T>({
   method,
   pathname,
@@ -189,7 +267,7 @@ async function requestJson<T>({
   }
 
   if (!status) {
-    throw new Error("Vilano daemon is not running");
+    throw new Error("Vilano kernel is not running");
   }
 
   return requestJsonWithState<T>(status, { method, pathname, body, autoStart });
@@ -197,69 +275,61 @@ async function requestJson<T>({
 
 async function requestJsonWithState<T>(
   status: Pick<DaemonStatusResponse, "port">,
-  {
-    method,
-    pathname,
-    body,
-  }: RequestOptions
+  { method, pathname, body }: RequestOptions
 ): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const req = http.request(
-      {
-        host: "127.0.0.1",
-        port: status.port,
-        method,
-        path: pathname,
-        headers: {
-          "content-type": "application/json; charset=utf-8",
-        },
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-
-        res.on("data", (chunk) => {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-        });
-
-        res.on("end", () => {
-          try {
-            const raw = Buffer.concat(chunks).toString("utf8");
-            const parsed = raw ? (JSON.parse(raw) as T | ErrorResponse) : ({} as T);
-
-            if (!res.statusCode || res.statusCode >= 400) {
-              const message =
-                typeof parsed === "object" &&
-                parsed !== null &&
-                "error" in parsed &&
-                parsed.error &&
-                typeof parsed.error.message === "string"
-                  ? parsed.error.message
-                  : `Daemon request failed with status ${res.statusCode ?? 0}`;
-
-              reject(new Error(message));
-              return;
-            }
-
-            resolve(parsed as T);
-          } catch (error) {
-            reject(error);
-          }
-        });
-      }
-    );
-
-    req.on("error", reject);
-
-    if (body !== undefined) {
-      req.write(JSON.stringify(body));
-    }
-
-    req.end();
+  const response = await fetch(`http://127.0.0.1:${status.port}${pathname}`, {
+    method,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
+
+  const raw = await response.text();
+  const parsed = raw ? (JSON.parse(raw) as T | ErrorResponse) : ({} as T);
+
+  if (!response.ok) {
+    const message =
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "error" in parsed &&
+      parsed.error &&
+      typeof parsed.error.message === "string"
+        ? parsed.error.message
+        : `Kernel request failed with status ${response.status}`;
+
+    throw new Error(message);
+  }
+
+  return parsed as T;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
+async function pingKernelStatus(port: number): Promise<KernelStatusBody | null> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/v1/status`);
+    if (!response.ok) {
+      return null;
+    }
+
+    return (await response.json()) as KernelStatusBody;
+  } catch {
+    return null;
+  }
+}
+
+function toDaemonStatus(state: DaemonState, body: KernelStatusBody): DaemonStatusResponse {
+  return {
+    ok: true,
+    pid: state.pid,
+    port: state.port,
+    startedAt: body.startedAt,
+    runtimeDbPath: body.runtimeDbPath,
+    projectCount: body.projectCount,
+  };
+}
+
+async function sleep(durationMs: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, durationMs);
   });
 }

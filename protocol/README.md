@@ -3,8 +3,8 @@
 This directory is reserved for shared protocol artifacts between:
 
 - the Elixir kernel
-- the Node worker
-- the CLI / daemon control plane
+- the Bun worker
+- the CLI / kernel client surface
 
 The current v1 direction is:
 

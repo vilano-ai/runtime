@@ -5,6 +5,20 @@ export interface DefinitionRecord {
   file: string;
 }
 
+export type DefinitionKind = DefinitionRecord["kind"];
+
+export type RunStatus =
+  | "pending"
+  | "running"
+  | "waiting"
+  | "sleeping"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "idle"
+  | "active"
+  | "stopped";
+
 export interface ProjectRecord {
   name: string;
   path: string;
@@ -16,17 +30,12 @@ export interface ProjectRecord {
   };
 }
 
-export interface RegistryFile {
-  version: 1;
-  projects: Record<string, ProjectRecord>;
-}
-
 export interface DaemonState {
   version: 1;
   pid: number;
   port: number;
   startedAt: string;
-  registryPath: string;
+  runtimeDbPath: string;
 }
 
 export interface DaemonStatusResponse {
@@ -34,7 +43,7 @@ export interface DaemonStatusResponse {
   pid: number;
   port: number;
   startedAt: string;
-  registryPath: string;
+  runtimeDbPath: string;
   projectCount: number;
 }
 
@@ -58,6 +67,45 @@ export interface DefinitionInspectResponse {
   ok: true;
   project: string;
   definition: DefinitionRecord;
+}
+
+export interface RunRecord {
+  id: string;
+  project: string;
+  definitionKind: DefinitionKind;
+  definitionName: string;
+  status: RunStatus;
+  input: unknown;
+  output: unknown | null;
+  error: unknown | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RunEventRecord {
+  id: string;
+  runId: string;
+  seq: number;
+  type: string;
+  body: unknown;
+  createdAt: string;
+}
+
+export interface RunStartResponse {
+  ok: true;
+  run: RunRecord;
+}
+
+export interface RunListResponse {
+  ok: true;
+  project: string | null;
+  runs: RunRecord[];
+}
+
+export interface RunInspectResponse {
+  ok: true;
+  run: RunRecord;
+  events: RunEventRecord[];
 }
 
 export interface ErrorResponse {
