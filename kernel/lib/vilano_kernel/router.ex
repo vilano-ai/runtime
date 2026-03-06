@@ -259,6 +259,27 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  post "/v1/leases/:lease_id/spawns/resolve" do
+    name = fetch_required_string(conn.body_params, "name")
+    key = fetch_required_string(conn.body_params, "key")
+    child_run_id = fetch_required_string(conn.body_params, "childRunId")
+
+    case Storage.resolve_spawn(lease_id, name, key, child_run_id, Map.get(conn.body_params, "input", %{})) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+      spawn -> send_json(conn, 200, %{ok: true, spawn: spawn})
+    end
+  end
+
+  post "/v1/leases/:lease_id/children/result" do
+    child_run_id = fetch_required_string(conn.body_params, "childRunId")
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.resolve_child_result_wait(lease_id, child_run_id, key) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease or child run: #{lease_id}")
+      child -> send_json(conn, 200, %{ok: true, child: child})
+    end
+  end
+
   post "/v1/runs" do
     project = fetch_required_string(conn.body_params, "project")
     workflow = fetch_required_string(conn.body_params, "workflow")
@@ -305,7 +326,8 @@ defmodule VilanoKernel.Router do
           steps: Storage.list_run_steps(id),
           execs: Storage.list_run_execs(id),
           waits: Storage.list_run_waits(id),
-          signals: Storage.list_run_signals(id)
+          signals: Storage.list_run_signals(id),
+          children: Storage.list_run_children(id)
         })
     end
   end

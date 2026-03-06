@@ -132,6 +132,24 @@ defmodule VilanoKernel.Storage do
     SQL.query!(
       Repo,
       """
+      create table if not exists run_children (
+        parent_run_id text not null,
+        op_key text not null,
+        child_run_id text not null,
+        definition_name text not null,
+        status text not null,
+        created_at text not null,
+        updated_at text not null,
+        primary key (parent_run_id, op_key),
+        unique (child_run_id)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
       create table if not exists run_signals (
         id text primary key,
         run_id text not null,
@@ -284,59 +302,192 @@ defmodule VilanoKernel.Storage do
   def create_workflow_run!(project_name, definition_name, input) do
     now = now_iso8601()
     run_id = "run_" <> Ecto.UUID.generate()
-    input_json = Jason.encode!(input || %{})
 
     Repo.transaction(fn ->
-      SQL.query!(
-        Repo,
-        """
-        insert into runs (
-          id,
-          project_name,
-          definition_kind,
-          definition_name,
-          status,
-          lease_id,
-          lease_worker_id,
-          lease_expires_at,
-          input_json,
-          output_json,
-          error_json,
-          created_at,
-          updated_at
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-          run_id,
-          project_name,
-          "workflow",
-          definition_name,
-          "pending",
-          nil,
-          nil,
-          nil,
-          input_json,
-          nil,
-          nil,
-          now,
-          now
-        ]
-      )
-
-      append_event!(
-        run_id,
-        "RunStarted",
-        %{
-          project: project_name,
-          definitionKind: "workflow",
-          definitionName: definition_name,
-          input: input || %{}
-        },
-        now
-      )
+      insert_workflow_run!(run_id, project_name, definition_name, input || %{}, now)
     end)
 
     get_run(run_id)
+  end
+
+  def resolve_spawn(lease_id, definition_name, op_key, child_run_id, input) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case get_run_by_lease(lease_id) do
+        nil ->
+          nil
+
+        parent_run ->
+          existing_child = get_run_child(parent_run["id"], op_key)
+
+          if existing_child do
+            %{"status" => "existing", "childRun" => get_run(existing_child["child_run_id"])}
+          else
+            insert_workflow_run!(
+              child_run_id,
+              parent_run["project_name"],
+              definition_name,
+              input || %{},
+              now
+            )
+
+            SQL.query!(
+              Repo,
+              """
+              insert into run_children (
+                parent_run_id,
+                op_key,
+                child_run_id,
+                definition_name,
+                status,
+                created_at,
+                updated_at
+              ) values (?, ?, ?, ?, 'pending', ?, ?)
+              """,
+              [parent_run["id"], op_key, child_run_id, definition_name, now, now]
+            )
+
+            append_event!(
+              parent_run["id"],
+              "ChildRunSpawned",
+              %{
+                "key" => op_key,
+                "childRunId" => child_run_id,
+                "definitionName" => definition_name,
+                "input" => input || %{}
+              },
+              now
+            )
+
+            %{"status" => "created", "childRun" => get_run(child_run_id)}
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def resolve_child_result_wait(lease_id, child_run_id, op_key) do
+    now = now_iso8601()
+    wait_key = "child_result:" <> child_run_id
+
+    Repo.transaction(fn ->
+      case get_run_by_lease(lease_id) do
+        nil ->
+          nil
+
+        parent_run ->
+          case get_run_child_by_child(parent_run["id"], child_run_id) do
+            nil ->
+              nil
+
+            child_link ->
+              if child_link["op_key"] != op_key do
+                nil
+              else
+                case get_run(child_run_id) do
+                  nil ->
+                    nil
+
+                  child_run ->
+                    cond do
+                      child_run["status"] == "completed" ->
+                        %{"status" => "completed", "output" => child_run["output"]}
+
+                      child_run["status"] == "failed" ->
+                        %{"status" => "failed", "error" => child_run["error"]}
+
+                      true ->
+                        existing_wait = get_run_wait(parent_run["id"], wait_key)
+
+                        if existing_wait && existing_wait["status"] == "waiting" do
+                          %{
+                            "status" => "suspended",
+                            "wait" => %{
+                              "runId" => parent_run["id"],
+                              "key" => wait_key,
+                              "kind" => "child_result",
+                              "name" => child_run_id,
+                              "status" => "waiting",
+                              "wakeAt" => nil,
+                              "output" => nil
+                            }
+                          }
+                        else
+                          SQL.query!(
+                            Repo,
+                            """
+                            insert into run_waits (
+                              run_id,
+                              op_key,
+                              wait_kind,
+                              wait_name,
+                              status,
+                              wake_at,
+                              output_json,
+                              created_at,
+                              updated_at
+                            ) values (?, ?, 'child_result', ?, 'waiting', null, null, ?, ?)
+                            on conflict(run_id, op_key) do update set
+                              wait_kind = excluded.wait_kind,
+                              wait_name = excluded.wait_name,
+                              status = 'waiting',
+                              wake_at = null,
+                              output_json = null,
+                              updated_at = excluded.updated_at
+                            """,
+                            [parent_run["id"], wait_key, child_run_id, now, now]
+                          )
+
+                          SQL.query!(
+                            Repo,
+                            """
+                            update runs
+                            set
+                              status = 'waiting',
+                              lease_id = null,
+                              lease_worker_id = null,
+                              lease_expires_at = null,
+                              updated_at = ?
+                            where id = ?
+                            """,
+                            [now, parent_run["id"]]
+                          )
+
+                          append_event!(
+                            parent_run["id"],
+                            "WaitRegistered",
+                            %{"kind" => "child_result", "key" => wait_key, "childRunId" => child_run_id},
+                            now
+                          )
+
+                          append_event!(
+                            parent_run["id"],
+                            "RunSuspended",
+                            %{"reason" => "child_result", "key" => wait_key, "childRunId" => child_run_id},
+                            now
+                          )
+
+                          %{
+                            "status" => "suspended",
+                            "wait" => %{
+                              "runId" => parent_run["id"],
+                              "key" => wait_key,
+                              "kind" => "child_result",
+                              "name" => child_run_id,
+                              "status" => "waiting",
+                              "wakeAt" => nil,
+                              "output" => nil
+                            }
+                          }
+                        end
+                    end
+                end
+              end
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
   end
 
   def lease_next_run(worker_id) do
@@ -457,6 +608,7 @@ defmodule VilanoKernel.Storage do
           )
 
           append_event!(run["id"], "RunCompleted", %{"result" => result}, now)
+          wake_waiting_parents_for_child!(run["id"], "completed", result, now)
           get_run(run["id"])
       end
     end)
@@ -489,6 +641,7 @@ defmodule VilanoKernel.Storage do
           )
 
           append_event!(run["id"], "RunFailed", %{"error" => error_body}, now)
+          wake_waiting_parents_for_child!(run["id"], "failed", error_body, now)
           get_run(run["id"])
       end
     end)
@@ -1486,6 +1639,28 @@ defmodule VilanoKernel.Storage do
     |> Enum.map(&signal_from_row/1)
   end
 
+  def list_run_children(run_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        parent_run_id,
+        op_key,
+        child_run_id,
+        definition_name,
+        status,
+        created_at,
+        updated_at
+      from run_children
+      where parent_run_id = ?
+      order by created_at asc
+      """,
+      [run_id]
+    )
+    |> rows_to_maps()
+    |> Enum.map(&child_from_row/1)
+  end
+
   defp definitions_for_kind(project, "workflow"), do: project["definitions"]["workflows"]
   defp definitions_for_kind(project, "service"), do: project["definitions"]["services"]
 
@@ -1589,6 +1764,18 @@ defmodule VilanoKernel.Storage do
       "payload" => decode_json_value(row["payload_json"], nil),
       "consumedAt" => row["consumed_at"],
       "createdAt" => row["created_at"]
+    }
+  end
+
+  defp child_from_row(row) do
+    %{
+      "parentRunId" => row["parent_run_id"],
+      "key" => row["op_key"],
+      "childRunId" => row["child_run_id"],
+      "definitionName" => row["definition_name"],
+      "status" => row["status"],
+      "createdAt" => row["created_at"],
+      "updatedAt" => row["updated_at"]
     }
   end
 
@@ -1712,6 +1899,48 @@ defmodule VilanoKernel.Storage do
     |> List.first()
   end
 
+  defp get_run_child(parent_run_id, op_key) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        parent_run_id,
+        op_key,
+        child_run_id,
+        definition_name,
+        status,
+        created_at,
+        updated_at
+      from run_children
+      where parent_run_id = ? and op_key = ?
+      """,
+      [parent_run_id, op_key]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
+  defp get_run_child_by_child(parent_run_id, child_run_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        parent_run_id,
+        op_key,
+        child_run_id,
+        definition_name,
+        status,
+        created_at,
+        updated_at
+      from run_children
+      where parent_run_id = ? and child_run_id = ?
+      """,
+      [parent_run_id, child_run_id]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
   defp append_event!(run_id, event_type, body, created_at) do
     next_seq =
       Repo
@@ -1749,6 +1978,135 @@ defmodule VilanoKernel.Storage do
   defp shift_milliseconds(iso8601, milliseconds) do
     {:ok, datetime, _offset} = DateTime.from_iso8601(iso8601)
     datetime |> DateTime.add(milliseconds, :millisecond) |> DateTime.to_iso8601()
+  end
+
+  defp insert_workflow_run!(run_id, project_name, definition_name, input, now) do
+    input_json = Jason.encode!(input || %{})
+
+    SQL.query!(
+      Repo,
+      """
+      insert into runs (
+        id,
+        project_name,
+        definition_kind,
+        definition_name,
+        status,
+        lease_id,
+        lease_worker_id,
+        lease_expires_at,
+        input_json,
+        output_json,
+        error_json,
+        created_at,
+        updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      """,
+      [
+        run_id,
+        project_name,
+        "workflow",
+        definition_name,
+        "pending",
+        nil,
+        nil,
+        nil,
+        input_json,
+        nil,
+        nil,
+        now,
+        now
+      ]
+    )
+
+    append_event!(
+      run_id,
+      "RunStarted",
+      %{
+        project: project_name,
+        definitionKind: "workflow",
+        definitionName: definition_name,
+        input: input || %{}
+      },
+      now
+    )
+  end
+
+  defp wake_waiting_parents_for_child!(child_run_id, child_status, payload, now) do
+    SQL.query!(
+      Repo,
+      """
+      update run_children
+      set
+        status = ?,
+        updated_at = ?
+      where child_run_id = ?
+      """,
+      [child_status, now, child_run_id]
+    )
+
+    waiting_rows =
+      Repo
+      |> SQL.query!(
+        """
+        select
+          run_id,
+          op_key,
+          wait_kind,
+          wait_name,
+          status,
+          wake_at,
+          output_json,
+          created_at,
+          updated_at
+        from run_waits
+        where wait_kind = 'child_result' and wait_name = ? and status = 'waiting'
+        """,
+        [child_run_id]
+      )
+      |> rows_to_maps()
+
+    Enum.each(waiting_rows, fn wait ->
+      wait_status = if child_status == "completed", do: "completed", else: "failed"
+
+      SQL.query!(
+        Repo,
+        """
+        update run_waits
+        set
+          status = ?,
+          output_json = ?,
+          updated_at = ?
+        where run_id = ? and op_key = ?
+        """,
+        [wait_status, Jason.encode!(payload), now, wait["run_id"], wait["op_key"]]
+      )
+
+      SQL.query!(
+        Repo,
+        """
+        update runs
+        set
+          status = 'pending',
+          updated_at = ?
+        where id = ? and status = 'waiting'
+        """,
+        [now, wait["run_id"]]
+      )
+
+      append_event!(
+        wait["run_id"],
+        "WaitSatisfied",
+        %{
+          "kind" => "child_result",
+          "key" => wait["op_key"],
+          "childRunId" => child_run_id,
+          "childStatus" => child_status,
+          "payload" => payload
+        },
+        now
+      )
+    end)
   end
 
   defp unwrap_transaction_result({:ok, value}), do: value
