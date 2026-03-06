@@ -150,6 +150,65 @@ defmodule VilanoKernel.Storage do
     SQL.query!(
       Repo,
       """
+      create table if not exists service_runs (
+        run_id text primary key,
+        service_key text not null,
+        key_input_json text not null,
+        state_json text,
+        created_at text not null,
+        updated_at text not null,
+        unique (run_id)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists service_envelopes (
+        id text primary key,
+        service_run_id text not null,
+        kind text not null,
+        name text not null,
+        payload_json text,
+        correlation_id text,
+        sender_run_id text,
+        status text not null,
+        reply_json text,
+        error_json text,
+        created_at text not null,
+        updated_at text not null
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists run_service_ops (
+        caller_run_id text not null,
+        op_key text not null,
+        service_run_id text not null,
+        op_kind text not null,
+        message_name text not null,
+        correlation_id text,
+        status text not null,
+        payload_json text not null,
+        response_json text,
+        error_json text,
+        created_at text not null,
+        updated_at text not null,
+        primary key (caller_run_id, op_key)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
       create table if not exists run_signals (
         id text primary key,
         run_id text not null,
@@ -308,6 +367,71 @@ defmodule VilanoKernel.Storage do
     end)
 
     get_run(run_id)
+  end
+
+  def ensure_service_run!(project_name, definition_name, service_key, key_input) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case get_service_run(project_name, definition_name, service_key) do
+        nil ->
+          run_id = "run_" <> Ecto.UUID.generate()
+
+          SQL.query!(
+            Repo,
+            """
+            insert into runs (
+              id,
+              project_name,
+              definition_kind,
+              definition_name,
+              status,
+              lease_id,
+              lease_worker_id,
+              lease_expires_at,
+              input_json,
+              output_json,
+              error_json,
+              created_at,
+              updated_at
+            ) values (?, ?, 'service', ?, 'idle', null, null, null, ?, null, null, ?, ?)
+            """,
+            [run_id, project_name, definition_name, Jason.encode!(key_input || %{}), now, now]
+          )
+
+          SQL.query!(
+            Repo,
+            """
+            insert into service_runs (
+              run_id,
+              service_key,
+              key_input_json,
+              state_json,
+              created_at,
+              updated_at
+            ) values (?, ?, ?, null, ?, ?)
+            """,
+            [run_id, service_key, Jason.encode!(key_input || %{}), now, now]
+          )
+
+          append_event!(
+            run_id,
+            "ServiceInstantiated",
+            %{
+              "serviceKey" => service_key,
+              "definitionName" => definition_name,
+              "keyInput" => key_input || %{}
+            },
+            now
+          )
+
+          get_service_run(project_name, definition_name, service_key)
+
+        service_run ->
+          service_run
+      end
+    end)
+    |> unwrap_transaction_result()
   end
 
   def resolve_spawn(lease_id, definition_name, op_key, child_run_id, input) do
@@ -490,74 +614,557 @@ defmodule VilanoKernel.Storage do
     |> unwrap_transaction_result()
   end
 
+  def resolve_service_send(lease_id, service_run_id, name, op_key, payload) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case {get_run_by_lease(lease_id), get_service_run_by_id(service_run_id)} do
+        {nil, _} ->
+          nil
+
+        {_, nil} ->
+          nil
+
+        {caller_run, _service_run} ->
+          case get_run_service_op(caller_run["id"], op_key) do
+            existing when not is_nil(existing) ->
+              %{"status" => existing["status"]}
+
+            nil ->
+              insert_service_envelope!(
+                service_run_id,
+                "send",
+                name,
+                payload,
+                nil,
+                caller_run["id"],
+                now
+              )
+
+              SQL.query!(
+                Repo,
+                """
+                insert into run_service_ops (
+                  caller_run_id,
+                  op_key,
+                  service_run_id,
+                  op_kind,
+                  message_name,
+                  correlation_id,
+                  status,
+                  payload_json,
+                  response_json,
+                  error_json,
+                  created_at,
+                  updated_at
+                ) values (?, ?, ?, 'send', ?, null, 'completed', ?, null, null, ?, ?)
+                """,
+                [caller_run["id"], op_key, service_run_id, name, Jason.encode!(payload), now, now]
+              )
+
+              append_event!(
+                caller_run["id"],
+                "MessageSent",
+                %{"key" => op_key, "serviceRunId" => service_run_id, "name" => name, "payload" => payload},
+                now
+              )
+
+              %{"status" => "completed"}
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def resolve_service_signal(lease_id, service_run_id, name, op_key, payload) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case {get_run_by_lease(lease_id), get_service_run_by_id(service_run_id)} do
+        {nil, _} ->
+          nil
+
+        {_, nil} ->
+          nil
+
+        {caller_run, _service_run} ->
+          case get_run_service_op(caller_run["id"], op_key) do
+            existing when not is_nil(existing) ->
+              %{"status" => existing["status"]}
+
+            nil ->
+              insert_service_envelope!(
+                service_run_id,
+                "signal",
+                name,
+                payload,
+                nil,
+                caller_run["id"],
+                now
+              )
+
+              SQL.query!(
+                Repo,
+                """
+                insert into run_service_ops (
+                  caller_run_id,
+                  op_key,
+                  service_run_id,
+                  op_kind,
+                  message_name,
+                  correlation_id,
+                  status,
+                  payload_json,
+                  response_json,
+                  error_json,
+                  created_at,
+                  updated_at
+                ) values (?, ?, ?, 'signal', ?, null, 'completed', ?, null, null, ?, ?)
+                """,
+                [caller_run["id"], op_key, service_run_id, name, Jason.encode!(payload), now, now]
+              )
+
+              append_event!(
+                caller_run["id"],
+                "SignalSent",
+                %{"key" => op_key, "serviceRunId" => service_run_id, "name" => name, "payload" => payload},
+                now
+              )
+
+              %{"status" => "completed"}
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def resolve_service_ask(lease_id, service_run_id, name, op_key, payload) do
+    now = now_iso8601()
+    correlation_id = "ask:" <> op_key
+
+    Repo.transaction(fn ->
+      case {get_run_by_lease(lease_id), get_service_run_by_id(service_run_id)} do
+        {nil, _} ->
+          nil
+
+        {_, nil} ->
+          nil
+
+        {caller_run, _service_run} ->
+          case get_run_service_op(caller_run["id"], op_key) do
+            existing when not is_nil(existing) ->
+              case existing["status"] do
+                "completed" ->
+                  %{
+                    "status" => "completed",
+                    "output" => decode_json_value(existing["response_json"], nil)
+                  }
+
+                "failed" ->
+                  %{
+                    "status" => "failed",
+                    "error" => decode_json_value(existing["error_json"], nil)
+                  }
+
+                "waiting" ->
+                  %{
+                    "status" => "suspended",
+                    "wait" => %{
+                      "runId" => caller_run["id"],
+                      "key" => "ask_reply:" <> correlation_id,
+                      "kind" => "ask_reply",
+                      "name" => correlation_id,
+                      "status" => "waiting",
+                      "wakeAt" => nil,
+                      "output" => nil
+                    }
+                  }
+              end
+
+            nil ->
+              insert_service_envelope!(
+                service_run_id,
+                "ask",
+                name,
+                payload,
+                correlation_id,
+                caller_run["id"],
+                now
+              )
+
+              SQL.query!(
+                Repo,
+                """
+                insert into run_service_ops (
+                  caller_run_id,
+                  op_key,
+                  service_run_id,
+                  op_kind,
+                  message_name,
+                  correlation_id,
+                  status,
+                  payload_json,
+                  response_json,
+                  error_json,
+                  created_at,
+                  updated_at
+                ) values (?, ?, ?, 'ask', ?, ?, 'waiting', ?, null, null, ?, ?)
+                """,
+                [
+                  caller_run["id"],
+                  op_key,
+                  service_run_id,
+                  name,
+                  correlation_id,
+                  Jason.encode!(payload),
+                  now,
+                  now
+                ]
+              )
+
+              SQL.query!(
+                Repo,
+                """
+                insert into run_waits (
+                  run_id,
+                  op_key,
+                  wait_kind,
+                  wait_name,
+                  status,
+                  wake_at,
+                  output_json,
+                  created_at,
+                  updated_at
+                ) values (?, ?, 'ask_reply', ?, 'waiting', null, null, ?, ?)
+                on conflict(run_id, op_key) do update set
+                  wait_kind = excluded.wait_kind,
+                  wait_name = excluded.wait_name,
+                  status = 'waiting',
+                  wake_at = null,
+                  output_json = null,
+                  updated_at = excluded.updated_at
+                """,
+                [caller_run["id"], "ask_reply:" <> correlation_id, correlation_id, now, now]
+              )
+
+              SQL.query!(
+                Repo,
+                """
+                update runs
+                set
+                  status = 'waiting',
+                  lease_id = null,
+                  lease_worker_id = null,
+                  lease_expires_at = null,
+                  updated_at = ?
+                where id = ?
+                """,
+                [now, caller_run["id"]]
+              )
+
+              append_event!(
+                caller_run["id"],
+                "AskRequested",
+                %{
+                  "key" => op_key,
+                  "serviceRunId" => service_run_id,
+                  "name" => name,
+                  "correlationId" => correlation_id,
+                  "payload" => payload
+                },
+                now
+              )
+
+              append_event!(
+                caller_run["id"],
+                "WaitRegistered",
+                %{"kind" => "ask_reply", "key" => "ask_reply:" <> correlation_id, "correlationId" => correlation_id},
+                now
+              )
+
+              append_event!(
+                caller_run["id"],
+                "RunSuspended",
+                %{"reason" => "ask_reply", "key" => "ask_reply:" <> correlation_id, "correlationId" => correlation_id},
+                now
+              )
+
+              %{
+                "status" => "suspended",
+                "wait" => %{
+                  "runId" => caller_run["id"],
+                  "key" => "ask_reply:" <> correlation_id,
+                  "kind" => "ask_reply",
+                  "name" => correlation_id,
+                  "status" => "waiting",
+                  "wakeAt" => nil,
+                  "output" => nil
+                }
+              }
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def complete_service_turn(lease_id, envelope_id, body) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case {get_run_by_lease(lease_id), get_service_envelope(envelope_id)} do
+        {nil, _} ->
+          nil
+
+        {_, nil} ->
+          nil
+
+        {service_run, envelope} ->
+          if envelope["service_run_id"] == service_run["id"] do
+            state = Map.get(body, "state")
+
+            state_commit = maybe_commit_service_state!(service_run["id"], state, now)
+
+            SQL.query!(
+              Repo,
+              """
+              update service_envelopes
+              set
+                status = 'completed',
+                reply_json = ?,
+                error_json = null,
+                updated_at = ?
+              where id = ?
+              """,
+              [maybe_encode_json(Map.get(body, "reply")), now, envelope_id]
+            )
+
+            if state_commit == :initialized do
+              append_event!(
+                service_run["id"],
+                "ServiceInitialized",
+                %{"state" => state},
+                now
+              )
+            end
+
+            if state_commit in [:initialized, :updated] do
+              append_event!(
+                service_run["id"],
+                "ServiceStateCommitted",
+                %{"state" => state},
+                now
+              )
+            end
+
+            if envelope["kind"] == "ask" do
+              append_event!(
+                service_run["id"],
+                "AskReplyCommitted",
+                %{
+                  "envelopeId" => envelope_id,
+                  "correlationId" => envelope["correlation_id"],
+                  "reply" => Map.get(body, "reply")
+                },
+                now
+              )
+
+              wake_service_ask_waiter!(envelope["correlation_id"], "completed", Map.get(body, "reply"), now)
+            end
+
+            append_event!(
+              service_run["id"],
+              "TurnCompleted",
+              %{"envelopeId" => envelope_id, "kind" => envelope["kind"], "name" => envelope["name"]},
+              now
+            )
+
+            next_status = service_next_status(service_run["id"], Map.get(body, "stop") == true)
+
+            SQL.query!(
+              Repo,
+              """
+              update runs
+              set
+                status = ?,
+                lease_id = null,
+                lease_worker_id = null,
+                lease_expires_at = null,
+                updated_at = ?
+              where id = ?
+              """,
+              [next_status, now, service_run["id"]]
+            )
+
+            get_run(service_run["id"])
+          else
+            nil
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def fail_service_turn(lease_id, envelope_id, error_body) do
+    now = now_iso8601()
+
+    Repo.transaction(fn ->
+      case {get_run_by_lease(lease_id), get_service_envelope(envelope_id)} do
+        {nil, _} ->
+          nil
+
+        {_, nil} ->
+          nil
+
+        {service_run, envelope} ->
+          if envelope["service_run_id"] == service_run["id"] do
+            SQL.query!(
+              Repo,
+              """
+              update service_envelopes
+              set
+                status = 'failed',
+                error_json = ?,
+                updated_at = ?
+              where id = ?
+              """,
+              [Jason.encode!(error_body), now, envelope_id]
+            )
+
+            append_event!(
+              service_run["id"],
+              "TurnFailed",
+              %{
+                "envelopeId" => envelope_id,
+                "kind" => envelope["kind"],
+                "name" => envelope["name"],
+                "error" => error_body
+              },
+              now
+            )
+
+            if envelope["kind"] == "ask" do
+              wake_service_ask_waiter!(envelope["correlation_id"], "failed", error_body, now)
+            end
+
+            next_status = service_next_status(service_run["id"], false)
+
+            SQL.query!(
+              Repo,
+              """
+              update runs
+              set
+                status = ?,
+                lease_id = null,
+                lease_worker_id = null,
+                lease_expires_at = null,
+                updated_at = ?
+              where id = ?
+              """,
+              [next_status, now, service_run["id"]]
+            )
+
+            get_run(service_run["id"])
+          else
+            nil
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
   def lease_next_run(worker_id) do
     now = now_iso8601()
     expires_at = shift_seconds(now, @lease_duration_seconds)
 
     Repo.transaction(fn ->
-      candidate =
-        Repo
-        |> SQL.query!(
-          """
-          select
-            id,
-            project_name,
-            definition_kind,
-            definition_name,
-            status,
-            lease_id,
-            lease_worker_id,
-            lease_expires_at,
-            input_json,
-            output_json,
-            error_json,
-            created_at,
-            updated_at
-          from runs
-          where
-            status in ('pending', 'running')
-            and (lease_expires_at is null or lease_expires_at < ?)
-          order by created_at asc
-          limit 1
-          """,
-          [now]
-        )
-        |> rows_to_maps()
-        |> List.first()
+      case next_activation_candidate(now) do
+        nil ->
+          nil
 
-      if candidate do
-        lease_id = "lease_" <> Ecto.UUID.generate()
-        run_id = candidate["id"]
+        {:workflow, candidate} ->
+          lease_id = "lease_" <> Ecto.UUID.generate()
+          run_id = candidate["id"]
 
-        SQL.query!(
-          Repo,
-          """
-          update runs
-          set
-            status = 'running',
-            lease_id = ?,
-            lease_worker_id = ?,
-            lease_expires_at = ?,
-            updated_at = ?
-          where id = ?
-          """,
-          [lease_id, worker_id, expires_at, now, run_id]
-        )
+          SQL.query!(
+            Repo,
+            """
+            update runs
+            set
+              status = 'running',
+              lease_id = ?,
+              lease_worker_id = ?,
+              lease_expires_at = ?,
+              updated_at = ?
+            where id = ?
+            """,
+            [lease_id, worker_id, expires_at, now, run_id]
+          )
 
-        append_event!(
-          run_id,
-          "RunLeaseGranted",
+          append_event!(
+            run_id,
+            "RunLeaseGranted",
+            %{
+              leaseId: lease_id,
+              workerId: worker_id,
+              leaseExpiresAt: expires_at
+            },
+            now
+          )
+
+          %{lease_id: lease_id, lease_expires_at: expires_at, activation_kind: "workflow", run: get_run(run_id)}
+
+        {:service_turn, candidate} ->
+          lease_id = "lease_" <> Ecto.UUID.generate()
+          run_id = candidate["service_run_id"]
+          envelope_id = candidate["id"]
+
+          SQL.query!(
+            Repo,
+            """
+            update runs
+            set
+              status = 'active',
+              lease_id = ?,
+              lease_worker_id = ?,
+              lease_expires_at = ?,
+              updated_at = ?
+            where id = ?
+            """,
+            [lease_id, worker_id, expires_at, now, run_id]
+          )
+
+          SQL.query!(
+            Repo,
+            """
+            update service_envelopes
+            set
+              status = 'processing',
+              updated_at = ?
+            where id = ?
+            """,
+            [now, envelope_id]
+          )
+
+          append_event!(
+            run_id,
+            "TurnStarted",
+            %{
+              "envelopeId" => envelope_id,
+              "kind" => candidate["kind"],
+              "name" => candidate["name"],
+              "correlationId" => candidate["correlation_id"]
+            },
+            now
+          )
+
           %{
-            leaseId: lease_id,
-            workerId: worker_id,
-            leaseExpiresAt: expires_at
-          },
-          now
-        )
-
-        %{lease_id: lease_id, lease_expires_at: expires_at, run: get_run(run_id)}
-      else
-        nil
+            lease_id: lease_id,
+            lease_expires_at: expires_at,
+            activation_kind: "service_turn",
+            run: get_run(run_id),
+            service: get_service_run_by_id(run_id),
+            envelope: service_envelope_from_row(get_service_envelope(envelope_id))
+          }
       end
     end)
     |> unwrap_transaction_result()
@@ -573,7 +1180,7 @@ defmodule VilanoKernel.Storage do
         """
         update runs
         set lease_expires_at = ?, updated_at = ?
-        where lease_id = ? and lease_worker_id = ? and status = 'running'
+        where lease_id = ? and lease_worker_id = ? and status in ('running', 'active')
         """,
         [expires_at, now, lease_id, worker_id]
       ).num_rows
@@ -1661,6 +2268,33 @@ defmodule VilanoKernel.Storage do
     |> Enum.map(&child_from_row/1)
   end
 
+  def list_service_envelopes(service_run_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        id,
+        service_run_id,
+        kind,
+        name,
+        payload_json,
+        correlation_id,
+        sender_run_id,
+        status,
+        reply_json,
+        error_json,
+        created_at,
+        updated_at
+      from service_envelopes
+      where service_run_id = ?
+      order by created_at asc
+      """,
+      [service_run_id]
+    )
+    |> rows_to_maps()
+    |> Enum.map(&service_envelope_from_row/1)
+  end
+
   defp definitions_for_kind(project, "workflow"), do: project["definitions"]["workflows"]
   defp definitions_for_kind(project, "service"), do: project["definitions"]["services"]
 
@@ -1779,6 +2413,33 @@ defmodule VilanoKernel.Storage do
     }
   end
 
+  defp service_run_from_row(run_row, service_row) do
+    run =
+      run_from_row(run_row)
+      |> Map.put("serviceKey", service_row["service_key"])
+      |> Map.put("keyInput", decode_json_value(service_row["key_input_json"], %{}))
+      |> Map.put("state", decode_json_value(service_row["state_json"], nil))
+
+    run
+  end
+
+  defp service_envelope_from_row(row) do
+    %{
+      "id" => row["id"],
+      "serviceRunId" => row["service_run_id"],
+      "kind" => row["kind"],
+      "name" => row["name"],
+      "payload" => decode_json_value(row["payload_json"], nil),
+      "correlationId" => row["correlation_id"],
+      "senderRunId" => row["sender_run_id"],
+      "status" => row["status"],
+      "reply" => decode_json_value(row["reply_json"], nil),
+      "error" => decode_json_value(row["error_json"], nil),
+      "createdAt" => row["created_at"],
+      "updatedAt" => row["updated_at"]
+    }
+  end
+
   defp rows_to_maps(%{columns: columns, rows: rows}) do
     Enum.map(rows, fn row ->
       Enum.zip(columns, row) |> Map.new()
@@ -1793,6 +2454,9 @@ defmodule VilanoKernel.Storage do
 
   defp decode_json_value(nil, fallback), do: fallback
   defp decode_json_value(value, _fallback) when is_binary(value), do: Jason.decode!(value)
+
+  defp maybe_encode_json(nil), do: nil
+  defp maybe_encode_json(value), do: Jason.encode!(value)
 
   defp get_run_by_lease(lease_id) do
     Repo
@@ -1941,6 +2605,133 @@ defmodule VilanoKernel.Storage do
     |> List.first()
   end
 
+  defp get_service_run(project_name, definition_name, service_key) do
+    query_service_run(
+      """
+      select
+        r.id,
+        r.project_name,
+        r.definition_kind,
+        r.definition_name,
+        r.status,
+        r.lease_id,
+        r.lease_worker_id,
+        r.lease_expires_at,
+        r.input_json,
+        r.output_json,
+        r.error_json,
+        r.created_at,
+        r.updated_at,
+        s.service_key,
+        s.key_input_json,
+        s.state_json,
+        s.created_at as service_created_at,
+        s.updated_at as service_updated_at
+      from runs r
+      join service_runs s on s.run_id = r.id
+      where
+        r.project_name = ?
+        and r.definition_kind = 'service'
+        and r.definition_name = ?
+        and s.service_key = ?
+      """,
+      [project_name, definition_name, service_key]
+    )
+  end
+
+  defp get_service_run_by_id(run_id) do
+    query_service_run(
+      """
+      select
+        r.id,
+        r.project_name,
+        r.definition_kind,
+        r.definition_name,
+        r.status,
+        r.lease_id,
+        r.lease_worker_id,
+        r.lease_expires_at,
+        r.input_json,
+        r.output_json,
+        r.error_json,
+        r.created_at,
+        r.updated_at,
+        s.service_key,
+        s.key_input_json,
+        s.state_json,
+        s.created_at as service_created_at,
+        s.updated_at as service_updated_at
+      from runs r
+      join service_runs s on s.run_id = r.id
+      where r.id = ?
+      """,
+      [run_id]
+    )
+  end
+
+  defp query_service_run(sql, args) do
+    Repo
+    |> SQL.query!(sql, args)
+    |> rows_to_maps()
+    |> List.first()
+    |> case do
+      nil -> nil
+      row -> service_run_from_row(row, row)
+    end
+  end
+
+  defp get_service_envelope(envelope_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        id,
+        service_run_id,
+        kind,
+        name,
+        payload_json,
+        correlation_id,
+        sender_run_id,
+        status,
+        reply_json,
+        error_json,
+        created_at,
+        updated_at
+      from service_envelopes
+      where id = ?
+      """,
+      [envelope_id]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
+  defp get_run_service_op(caller_run_id, op_key) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        caller_run_id,
+        op_key,
+        service_run_id,
+        op_kind,
+        message_name,
+        correlation_id,
+        status,
+        payload_json,
+        response_json,
+        error_json,
+        created_at,
+        updated_at
+      from run_service_ops
+      where caller_run_id = ? and op_key = ?
+      """,
+      [caller_run_id, op_key]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
   defp append_event!(run_id, event_type, body, created_at) do
     next_seq =
       Repo
@@ -2030,6 +2821,304 @@ defmodule VilanoKernel.Storage do
       },
       now
     )
+  end
+
+  defp next_activation_candidate(now) do
+    workflow_candidate = next_workflow_activation_candidate(now)
+    service_candidate = next_service_activation_candidate(now)
+
+    cond do
+      workflow_candidate == nil and service_candidate == nil ->
+        nil
+
+      workflow_candidate == nil ->
+        {:service_turn, service_candidate}
+
+      service_candidate == nil ->
+        {:workflow, workflow_candidate}
+
+      workflow_candidate["created_at"] <= service_candidate["created_at"] ->
+        {:workflow, workflow_candidate}
+
+      true ->
+        {:service_turn, service_candidate}
+    end
+  end
+
+  defp next_workflow_activation_candidate(now) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        id,
+        project_name,
+        definition_kind,
+        definition_name,
+        status,
+        lease_id,
+        lease_worker_id,
+        lease_expires_at,
+        input_json,
+        output_json,
+        error_json,
+        created_at,
+        updated_at
+      from runs
+      where
+        definition_kind = 'workflow'
+        and status in ('pending', 'running')
+        and (lease_expires_at is null or lease_expires_at < ?)
+      order by created_at asc
+      limit 1
+      """,
+      [now]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
+  defp next_service_activation_candidate(now) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        e.id,
+        e.service_run_id,
+        e.kind,
+        e.name,
+        e.payload_json,
+        e.correlation_id,
+        e.sender_run_id,
+        e.status,
+        e.reply_json,
+        e.error_json,
+        e.created_at,
+        e.updated_at
+      from service_envelopes e
+      join runs r on r.id = e.service_run_id
+      where
+        e.status in ('queued', 'processing')
+        and r.definition_kind = 'service'
+        and r.status in ('idle', 'pending', 'active')
+        and (r.lease_expires_at is null or r.lease_expires_at < ?)
+      order by
+        case when e.status = 'processing' then 0 else 1 end asc,
+        e.created_at asc
+      limit 1
+      """,
+      [now]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
+  defp insert_service_envelope!(service_run_id, kind, name, payload, correlation_id, sender_run_id, now) do
+    envelope_id = "env_" <> Ecto.UUID.generate()
+
+    SQL.query!(
+      Repo,
+      """
+      insert into service_envelopes (
+        id,
+        service_run_id,
+        kind,
+        name,
+        payload_json,
+        correlation_id,
+        sender_run_id,
+        status,
+        reply_json,
+        error_json,
+        created_at,
+        updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, 'queued', null, null, ?, ?)
+      """,
+      [
+        envelope_id,
+        service_run_id,
+        kind,
+        name,
+        maybe_encode_json(payload),
+        correlation_id,
+        sender_run_id,
+        now,
+        now
+      ]
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      update runs
+      set
+        status = case when status = 'stopped' then status else 'pending' end,
+        updated_at = ?
+      where id = ?
+      """,
+      [now, service_run_id]
+    )
+
+    append_event!(
+      service_run_id,
+      "InboundEnqueued",
+      %{
+        "envelopeId" => envelope_id,
+        "kind" => kind,
+        "name" => name,
+        "payload" => payload,
+        "correlationId" => correlation_id,
+        "senderRunId" => sender_run_id
+      },
+      now
+    )
+
+    envelope_id
+  end
+
+  defp maybe_commit_service_state!(_run_id, nil, _now), do: :unchanged
+
+  defp maybe_commit_service_state!(run_id, state, now) do
+    current = get_service_run_by_id(run_id)
+    encoded_state = Jason.encode!(state)
+    initial? = is_nil(current["state"])
+
+    SQL.query!(
+      Repo,
+      """
+      update service_runs
+      set
+        state_json = ?,
+        updated_at = ?
+      where run_id = ?
+      """,
+      [encoded_state, now, run_id]
+    )
+
+    if initial?, do: :initialized, else: :updated
+  end
+
+  defp wake_service_ask_waiter!(correlation_id, status, payload, now) do
+    op =
+      Repo
+      |> SQL.query!(
+        """
+        select
+          caller_run_id,
+          op_key,
+          service_run_id,
+          op_kind,
+          message_name,
+          correlation_id,
+          status,
+          payload_json,
+          response_json,
+          error_json,
+          created_at,
+          updated_at
+        from run_service_ops
+        where correlation_id = ?
+        limit 1
+        """,
+        [correlation_id]
+      )
+      |> rows_to_maps()
+      |> List.first()
+
+    if op do
+      case status do
+        "completed" ->
+          SQL.query!(
+            Repo,
+            """
+            update run_service_ops
+            set
+              status = 'completed',
+              response_json = ?,
+              error_json = null,
+              updated_at = ?
+            where caller_run_id = ? and op_key = ?
+            """,
+            [maybe_encode_json(payload), now, op["caller_run_id"], op["op_key"]]
+          )
+
+        "failed" ->
+          SQL.query!(
+            Repo,
+            """
+            update run_service_ops
+            set
+              status = 'failed',
+              response_json = null,
+              error_json = ?,
+              updated_at = ?
+            where caller_run_id = ? and op_key = ?
+            """,
+            [maybe_encode_json(payload), now, op["caller_run_id"], op["op_key"]]
+          )
+      end
+
+      wait_key = "ask_reply:" <> correlation_id
+      wait_status = if status == "completed", do: "completed", else: "failed"
+
+      SQL.query!(
+        Repo,
+        """
+        update run_waits
+        set
+          status = ?,
+          output_json = ?,
+          updated_at = ?
+        where run_id = ? and op_key = ?
+        """,
+        [wait_status, maybe_encode_json(payload), now, op["caller_run_id"], wait_key]
+      )
+
+      SQL.query!(
+        Repo,
+        """
+        update runs
+        set
+          status = 'pending',
+          updated_at = ?
+        where id = ? and status = 'waiting'
+        """,
+        [now, op["caller_run_id"]]
+      )
+
+      append_event!(
+        op["caller_run_id"],
+        "WaitSatisfied",
+        %{"kind" => "ask_reply", "key" => wait_key, "correlationId" => correlation_id, "payload" => payload},
+        now
+      )
+    end
+  end
+
+  defp service_next_status(service_run_id, stop?) do
+    cond do
+      stop? ->
+        "stopped"
+
+      service_has_queued_envelopes?(service_run_id) ->
+        "pending"
+
+      true ->
+        "idle"
+    end
+  end
+
+  defp service_has_queued_envelopes?(service_run_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select count(*)
+      from service_envelopes
+      where service_run_id = ? and status = 'queued'
+      """,
+      [service_run_id]
+    )
+    |> first_integer()
+    |> Kernel.>(0)
   end
 
   defp wake_waiting_parents_for_child!(child_run_id, child_status, payload, now) do

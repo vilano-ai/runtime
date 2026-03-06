@@ -108,13 +108,14 @@ defmodule VilanoKernel.Router do
       nil ->
         send_json(conn, 200, %{ok: true, activation: nil})
 
-      %{lease_id: lease_id, lease_expires_at: lease_expires_at, run: run} ->
+      %{activation_kind: "workflow", lease_id: lease_id, lease_expires_at: lease_expires_at, run: run} ->
         project = Storage.get_project(run["project"])
         definition = Storage.get_definition(run["project"], "workflow", run["definitionName"])
 
         send_json(conn, 200, %{
           ok: true,
           activation: %{
+            kind: "workflow",
             leaseId: lease_id,
             leaseExpiresAt: lease_expires_at,
             run: %{
@@ -126,6 +127,47 @@ defmodule VilanoKernel.Router do
               path: project["path"]
             },
             definition: definition
+          }
+        })
+
+      %{
+        activation_kind: "service_turn",
+        lease_id: lease_id,
+        lease_expires_at: lease_expires_at,
+        run: run,
+        service: service,
+        envelope: envelope
+      } ->
+        project = Storage.get_project(run["project"])
+        definition = Storage.get_definition(run["project"], "service", run["definitionName"])
+
+        send_json(conn, 200, %{
+          ok: true,
+          activation: %{
+            kind: "service_turn",
+            leaseId: lease_id,
+            leaseExpiresAt: lease_expires_at,
+            run: %{
+              id: run["id"]
+            },
+            project: %{
+              name: project["name"],
+              path: project["path"]
+            },
+            definition: definition,
+            service: %{
+              key: service["serviceKey"],
+              keyInput: service["keyInput"],
+              state: service["state"]
+            },
+            envelope: %{
+              id: envelope["id"],
+              kind: envelope["kind"],
+              name: envelope["name"],
+              payload: envelope["payload"],
+              correlationId: envelope["correlationId"],
+              senderRunId: envelope["senderRunId"]
+            }
           }
         })
     end
@@ -280,6 +322,77 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  post "/v1/leases/:lease_id/services/send" do
+    service_run_id = fetch_required_string(conn.body_params, "serviceRunId")
+    name = fetch_required_string(conn.body_params, "name")
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.resolve_service_send(lease_id, service_run_id, name, key, Map.get(conn.body_params, "payload")) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease or service: #{lease_id}")
+      result -> send_json(conn, 200, %{ok: true, result: result})
+    end
+  end
+
+  post "/v1/leases/:lease_id/services/ask" do
+    service_run_id = fetch_required_string(conn.body_params, "serviceRunId")
+    name = fetch_required_string(conn.body_params, "name")
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.resolve_service_ask(lease_id, service_run_id, name, key, Map.get(conn.body_params, "payload")) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease or service: #{lease_id}")
+      result -> send_json(conn, 200, %{ok: true, result: result})
+    end
+  end
+
+  post "/v1/leases/:lease_id/services/signal" do
+    service_run_id = fetch_required_string(conn.body_params, "serviceRunId")
+    name = fetch_required_string(conn.body_params, "name")
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.resolve_service_signal(lease_id, service_run_id, name, key, Map.get(conn.body_params, "payload")) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease or service: #{lease_id}")
+      result -> send_json(conn, 200, %{ok: true, result: result})
+    end
+  end
+
+  post "/v1/leases/:lease_id/service-turns/:envelope_id/complete" do
+    body = %{
+      "state" => Map.get(conn.body_params, "state"),
+      "reply" => Map.get(conn.body_params, "reply"),
+      "stop" => Map.get(conn.body_params, "stop", false)
+    }
+
+    case Storage.complete_service_turn(lease_id, envelope_id, body) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active service turn: #{lease_id}")
+      run -> send_json(conn, 200, %{ok: true, run: run})
+    end
+  end
+
+  post "/v1/leases/:lease_id/service-turns/:envelope_id/fail" do
+    error_body = Map.get(conn.body_params, "error", %{})
+
+    case Storage.fail_service_turn(lease_id, envelope_id, error_body) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active service turn: #{lease_id}")
+      run -> send_json(conn, 200, %{ok: true, run: run})
+    end
+  end
+
+  post "/v1/services/ensure" do
+    project = fetch_required_string(conn.body_params, "project")
+    service = fetch_required_string(conn.body_params, "service")
+    service_key = fetch_required_string(conn.body_params, "serviceKey")
+
+    with project_record when not is_nil(project_record) <- Storage.get_project(project),
+         definition when not is_nil(definition) <- Storage.get_definition(project, "service", service),
+         run <- Storage.ensure_service_run!(project, definition["name"], service_key, Map.get(conn.body_params, "keyInput", %{})) do
+      _ = project_record
+      send_json(conn, 200, %{ok: true, run: run})
+    else
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown service '#{service}' in project '#{project}'")
+    end
+  end
+
   post "/v1/runs" do
     project = fetch_required_string(conn.body_params, "project")
     workflow = fetch_required_string(conn.body_params, "workflow")
@@ -327,7 +440,8 @@ defmodule VilanoKernel.Router do
           execs: Storage.list_run_execs(id),
           waits: Storage.list_run_waits(id),
           signals: Storage.list_run_signals(id),
-          children: Storage.list_run_children(id)
+          children: Storage.list_run_children(id),
+          envelopes: Storage.list_service_envelopes(id)
         })
     end
   end
