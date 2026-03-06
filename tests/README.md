@@ -10,6 +10,9 @@ Current coverage:
 - active `exec()` cancellation
 - workflow replay after worker loss and lease expiry
 - service turn replay after worker loss and lease expiry
+- durable signal delivery, including buffered signals before first activation
+- exec stdout/stderr/artifact capture on success
+- exec timeout persistence with captured failure artifacts
 
 Run it from the dev shell:
 
@@ -17,6 +20,4 @@ Run it from the dev shell:
 
 Next high-value additions:
 
-- durable signal delivery
-- subprocess timeout and artifact capture
 - worker-managed cancellation preemption for long JS `step()` bodies

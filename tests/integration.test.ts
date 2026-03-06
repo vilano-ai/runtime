@@ -14,6 +14,7 @@ import type {
 const ROOT = path.resolve(import.meta.dir, "..");
 const CLI_ENTRY = path.join(ROOT, "cli", "bin", "vilano.ts");
 const WORKER_ENTRY = path.join(ROOT, "worker", "bun", "src", "cli.ts");
+const BOOTSTRAP_DEMO_TMP = path.join(ROOT, "examples", "bootstrap-demo", "tmp");
 
 class RuntimeHarness {
   private constructor(
@@ -27,6 +28,8 @@ class RuntimeHarness {
       env?: Record<string, string>;
     } = {}
   ): Promise<RuntimeHarness> {
+    await fs.rm(BOOTSTRAP_DEMO_TMP, { recursive: true, force: true });
+
     const runtimeHome = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-test-"));
     const port = await reservePort();
     const harness = new RuntimeHarness(runtimeHome, port, options.env ?? {});
@@ -42,6 +45,7 @@ class RuntimeHarness {
       await this.runCli(["daemon", "stop"], { allowFailure: true });
     } finally {
       await fs.rm(this.runtimeHome, { recursive: true, force: true });
+      await fs.rm(BOOTSTRAP_DEMO_TMP, { recursive: true, force: true });
     }
   }
 
@@ -100,6 +104,17 @@ class RuntimeHarness {
     ]);
   }
 
+  async sendSignal(runId: string, signalName: string, input: unknown): Promise<void> {
+    await this.runCli([
+      "signal",
+      "send",
+      runId,
+      signalName,
+      "--input",
+      JSON.stringify(input),
+    ]);
+  }
+
   async waitForRun(
     runId: string,
     predicate: (inspect: RunInspectResponse) => boolean,
@@ -141,6 +156,10 @@ class RuntimeHarness {
 
   get serverUrl(): string {
     return `http://127.0.0.1:${this.port}`;
+  }
+
+  get homeDir(): string {
+    return this.runtimeHome;
   }
 
   private async runCliJson<T>(args: string[]): Promise<T> {
@@ -469,6 +488,152 @@ test("service turns resume after worker loss and lease expiry", async () => {
     expect((inspect.turns ?? []).map((turn) => turn.attempts)).toContain(2);
     expect((inspect.turns ?? []).map((turn) => turn.lastResumeReason)).toContain("lease_expired");
     expect(inspect.steps.map((step) => step.attempts)).toContain(2);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("signals wake waiting workflows durably after downtime", async () => {
+  const harness = await RuntimeHarness.create({
+    env: {
+      VILANO_MANAGED_WORKERS: "0",
+    },
+  });
+
+  try {
+    const run = await harness.startWorkflow("demo/gate", {});
+    const worker = await harness.spawnWorker({ workerId: "signal-waiter", once: true });
+    await worker.wait();
+
+    await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "waiting" &&
+        inspect.waits.some((wait) => wait.kind === "signal" && wait.status === "waiting")
+    );
+
+    await harness.sendSignal(run.run.id, "approved", { source: "late" });
+
+    const pending = await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "pending" &&
+        inspect.waits.some((wait) => wait.kind === "signal" && wait.status === "completed") &&
+        inspect.signals.some((signal) => signal.name === "approved" && signal.consumedAt !== null)
+    );
+
+    expect(pending.events.map((event) => event.type)).toContain("SignalReceived");
+    expect(pending.events.map((event) => event.type)).toContain("WaitSatisfied");
+
+    const resumeWorker = await harness.spawnWorker({ workerId: "signal-resumer", once: true });
+    const resumeResult = await resumeWorker.wait();
+    expect(resumeResult.exitCode).toBe(0);
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+
+    expect(completed.run.output).toEqual({ approval: { source: "late" } });
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("signals sent before activation are buffered and consumed on first wait", async () => {
+  const harness = await RuntimeHarness.create({
+    env: {
+      VILANO_MANAGED_WORKERS: "0",
+    },
+  });
+
+  try {
+    const run = await harness.startWorkflow("demo/gate", {});
+
+    await harness.sendSignal(run.run.id, "approved", { source: "buffered" });
+
+    const buffered = await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "pending" &&
+        inspect.signals.some((signal) => signal.name === "approved" && signal.consumedAt === null)
+    );
+
+    expect(buffered.events.map((event) => event.type)).toContain("SignalReceived");
+
+    const worker = await harness.spawnWorker({ workerId: "signal-buffered", once: true });
+    const workerResult = await worker.wait();
+    expect(workerResult.exitCode).toBe(0);
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+
+    expect(completed.run.output).toEqual({ approval: { source: "buffered" } });
+    expect(completed.events.map((event) => event.type)).toContain("WaitSatisfied");
+    expect(completed.events.map((event) => event.type)).not.toContain("RunSuspended");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("exec success captures stdout stderr and artifacts", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/planner", { topic: "BEAM" });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed" && inspect.execs.length === 1
+    );
+
+    expect(completed.run.output).toEqual({ summary: "planned: BEAM" });
+    expect(completed.execs).toHaveLength(1);
+
+    const exec = completed.execs[0]!;
+    expect(exec.status).toBe("completed");
+    expect(exec.stdoutRef).toBeTruthy();
+    expect(exec.stderrRef).toBeTruthy();
+    expect(exec.artifacts).toHaveLength(1);
+
+    await fs.access(path.join(harness.homeDir, exec.stdoutRef as string));
+    await fs.access(path.join(harness.homeDir, exec.stderrRef as string));
+    await fs.access(path.join(harness.homeDir, exec.artifacts[0]!.ref));
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("exec timeout persists failure metadata and captured artifacts", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/timedExec", {
+      durationMs: 5_000,
+      timeout: "200ms",
+    });
+
+    const failed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "failed" && inspect.execs.length === 1
+    );
+
+    expect(failed.execs).toHaveLength(1);
+    const exec = failed.execs[0]!;
+    expect(exec.status).toBe("failed");
+    expect(exec.stderrRef).toBeTruthy();
+    expect(exec.artifacts).toHaveLength(1);
+    expect(exec.error && typeof exec.error === "object" ? (exec.error as Record<string, unknown>).timedOut : null).toBe(
+      true
+    );
+
+    await fs.access(path.join(harness.homeDir, exec.stderrRef as string));
+    await fs.access(path.join(harness.homeDir, exec.artifacts[0]!.ref));
+
+    expect(failed.events.map((event) => event.type)).toContain("ProcessFailed");
+    expect(failed.events.map((event) => event.type)).toContain("RunFailed");
   } finally {
     await harness.dispose();
   }
