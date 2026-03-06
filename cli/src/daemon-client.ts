@@ -22,6 +22,7 @@ import type {
   RunInspectResponse,
   RunCancelResponse,
   RunListResponse,
+  RunReplayResponse,
   RunStartResponse,
   SignalSendResponse,
 } from "./types.ts";
@@ -295,6 +296,14 @@ export async function inspectRun(runId: string): Promise<RunInspectResponse> {
   return requestJson<RunInspectResponse>({
     method: "GET",
     pathname: `/v1/runs/${encodeURIComponent(runId)}`,
+    autoStart: true,
+  });
+}
+
+export async function replayRun(runId: string): Promise<RunReplayResponse> {
+  return requestJson<RunReplayResponse>({
+    method: "GET",
+    pathname: `/v1/runs/${encodeURIComponent(runId)}/replay`,
     autoStart: true,
   });
 }

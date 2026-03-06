@@ -72,7 +72,7 @@ That API currently supports:
 - activation lease/heartbeat/complete/fail
 - step/exec/wait/service-turn resolution and completion
 
-`run replay` is currently implemented in the CLI as a projection over `run inspect` data rather than as a kernel-native endpoint.
+`run replay` is served by a dedicated kernel endpoint that returns inspect data plus a durable replay timeline.
 
 ## Important Semantics
 

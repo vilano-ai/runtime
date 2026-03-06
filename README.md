@@ -202,7 +202,7 @@ Current limits worth knowing:
 - `step()` hard-stop escalation is only available for managed workers the kernel supervises.
 - In-process TypeScript code is still cooperative first; the hard-stop path is a fallback, not normal control flow.
 - Retry policies are fixed-count and fixed-backoff only.
-- `run replay` is currently a CLI projection over inspect data, not a dedicated kernel endpoint.
+- `run replay` is served by a dedicated kernel endpoint and rendered by the CLI.
 - Hosted, clustered, and multi-node execution are not built yet.
 
 ## Repo Layout

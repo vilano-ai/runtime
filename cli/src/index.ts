@@ -20,6 +20,7 @@ import {
   listRuns,
   listServiceRuns,
   removeProject,
+  replayRun,
   sendRunSignal,
   sendServiceMessage,
   sendServiceSignal,
@@ -303,7 +304,7 @@ async function handleRun(args: string[], flags: Record<string, string | boolean>
         throw new CliError("Usage: vilano run replay <run-id>");
       }
 
-      const response = decorateRunReplay(decorateRunInspect(await inspectRun(runId)));
+      const response = decorateRunInspect(await replayRun(runId));
       writeOutput(flags, response, (body) => renderRunReplay(body.run, body.timeline));
       return 0;
     }
@@ -1187,15 +1188,6 @@ function decorateRunInspect<T extends {
   };
 }
 
-function decorateRunReplay<T extends { events: RunEventRecord[] }>(
-  body: T
-): T & { timeline: RunReplayEntry[] } {
-  return {
-    ...body,
-    timeline: deriveReplayEntries(body.events),
-  };
-}
-
 function deriveStepViews(steps: RunStepRecord[], events: RunEventRecord[]): RunStepRecord[] {
   const attempts = new Map<string, number>();
   const lastEvent = new Map<string, { type: string; at: string }>();
@@ -1339,16 +1331,6 @@ function deriveServiceTurns(
   return Array.from(turns.values()).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
-function deriveReplayEntries(events: RunEventRecord[]): RunReplayEntry[] {
-  return events.map((event) => ({
-    seq: event.seq,
-    createdAt: event.createdAt,
-    type: event.type,
-    summary: summarizeReplayEvent(event),
-    body: event.body,
-  }));
-}
-
 function renderEventSummary(event: RunEventRecord): string {
   const body = asRecord(event.body);
 
@@ -1415,176 +1397,12 @@ function renderEventSummary(event: RunEventRecord): string {
   }
 }
 
-function summarizeReplayEvent(event: RunEventRecord): string {
-  const body = asRecord(event.body);
-
-  switch (event.type) {
-    case "RunStarted":
-      return formatSummary({
-        input: truncateJson(body.input),
-      });
-    case "RunLeaseGranted":
-      return formatSummary({
-        lease: body.leaseId,
-        worker: body.workerId,
-        expires: body.leaseExpiresAt,
-      });
-    case "RunCompleted":
-      return formatSummary({
-        result: truncateJson(body.result),
-      });
-    case "RunFailed":
-      return formatSummary({
-        error: errorMessage(body.error),
-      });
-    case "RunCancelled":
-    case "ServiceStopped":
-      return formatSummary({
-        reason: body.reason,
-        waits: body.cancelledWaitCount,
-        children: body.cancelledChildRunCount,
-        asks: body.cancelledServiceAskCount,
-      });
-    case "StepStarted":
-      return formatSummary({
-        name: body.name,
-        key: body.key,
-        attempt: body.attempt,
-        timeoutMs: body.timeoutMs,
-        maxAttempts: body.maxAttempts,
-        backoffMs: body.backoffMs,
-      });
-    case "StepCompleted":
-      return formatSummary({
-        name: body.name,
-        key: body.key,
-        output: truncateJson(body.output),
-      });
-    case "StepFailed":
-    case "StepCancelled":
-      return formatSummary({
-        name: body.name,
-        key: body.key,
-        attempt: body.attempt,
-        timedOut: asRecord(body.error).timedOut,
-        error: errorMessage(body.error),
-      });
-    case "ProcessStarted":
-      return formatSummary({
-        name: body.name,
-        key: body.key,
-        attempt: body.attempt,
-        cmd: body.cmd,
-        args: Array.isArray(body.args) ? truncateValue(body.args.join(" ")) : undefined,
-        timeoutMs: body.timeoutMs,
-      });
-    case "ProcessCompleted":
-    case "ProcessFailed":
-    case "ProcessCancelled":
-      return formatSummary({
-        name: body.name,
-        key: body.key,
-        attempt: body.attempt,
-        exitCode: body.exitCode,
-        signal: body.signalCode,
-        stdout: body.stdoutRef,
-        stderr: body.stderrRef,
-        error: event.type === "ProcessCompleted" ? undefined : errorMessage(body.error),
-      });
-    case "WaitRegistered":
-    case "WaitSatisfied":
-      return formatSummary({
-        kind: body.kind,
-        key: body.key,
-        name: body.name ?? body.signal,
-        wakeAt: body.wakeAt,
-        payload: body.payload ? truncateJson(body.payload) : undefined,
-      });
-    case "RunSuspended":
-      return formatSummary({
-        reason: body.reason,
-        key: body.key,
-        operation: body.operationKind,
-        name: body.name,
-        wakeAt: body.wakeAt,
-      });
-    case "RetryScheduled":
-      return formatSummary({
-        kind: body.kind,
-        name: body.name,
-        attempt: body.attempt,
-        nextAttempt: body.nextAttempt,
-        backoffMs: body.backoffMs,
-        wakeAt: body.wakeAt,
-      });
-    case "SignalReceived":
-    case "SignalSent":
-      return formatSummary({
-        signal: body.signal,
-        payload: body.payload ? truncateJson(body.payload) : undefined,
-      });
-    case "ChildRunSpawned":
-      return formatSummary({
-        key: body.key,
-        childRunId: body.childRunId,
-        definition: body.definitionName,
-        status: body.childStatus,
-      });
-    case "InboundEnqueued":
-      return formatSummary({
-        envelope: body.envelopeId,
-        kind: body.kind,
-        name: body.name,
-        correlation: body.correlationId,
-        sender: body.senderRunId,
-      });
-    case "TurnStarted":
-    case "TurnResumed":
-    case "TurnWaiting":
-    case "TurnCompleted":
-    case "TurnFailed":
-      return formatSummary({
-        envelope: body.envelopeId,
-        kind: body.kind,
-        name: body.name ?? body.turnName,
-        attempt: body.attempt,
-        reason: body.reason,
-        wait: body.waitKind,
-        key: body.key,
-        error: event.type === "TurnFailed" ? errorMessage(body.error) : undefined,
-      });
-    case "ServiceInstantiated":
-    case "ServiceInitialized":
-    case "ServiceStateCommitted":
-    case "AskRequested":
-    case "AskReplyCommitted":
-    case "MessageSent":
-    case "TimerFired":
-      return formatSummary(body);
-    default:
-      return formatSummary(body);
-  }
-}
-
 function formatSummary(fields: Record<string, unknown>): string {
   const parts = Object.entries(fields)
     .filter(([, value]) => value !== undefined && value !== null)
     .map(([key, value]) => `${key}=${String(value)}`);
 
   return parts.length > 0 ? `\t${parts.join("\t")}` : "";
-}
-
-function truncateJson(value: unknown, maxLength = 120): string {
-  const serialized = JSON.stringify(value);
-  return truncateValue(serialized ?? "undefined", maxLength);
-}
-
-function truncateValue(value: string, maxLength = 120): string {
-  if (value.length <= maxLength) {
-    return value;
-  }
-
-  return `${value.slice(0, maxLength)}...`;
 }
 
 function errorMessage(value: unknown): string | undefined {

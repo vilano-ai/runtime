@@ -251,6 +251,10 @@ export interface RunReplayEntry {
   body: unknown;
 }
 
+export interface RunReplayResponse extends RunInspectResponse {
+  timeline: RunReplayEntry[];
+}
+
 export interface ServiceEnsureResponse {
   ok: true;
   run: RunRecord;
