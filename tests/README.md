@@ -2,6 +2,11 @@
 
 This directory holds Bun-driven integration coverage for the local runtime.
 
+There are two main test modes:
+
+- `bun run test` for the normal integration suite
+- `bun run test:soak` for the longer mixed-traffic churn run
+
 Current coverage:
 
 - workflow cancellation while waiting on `sleep`
@@ -23,6 +28,7 @@ Current coverage:
 - service state durability across daemon restart
 - repeated daemon restarts across retry waits with capped jittered backoff
 - repeated daemon restarts across service backlogs and lease recovery
+- mixed workflow/service traffic across repeated daemon restarts and managed-worker churn
 - exec stdout/stderr/artifact capture on success
 - exec timeout persistence with captured failure artifacts
 - `run replay` workflow timeline rendering
@@ -41,8 +47,9 @@ Current coverage:
 
 Run it from the dev shell:
 
-- `bun test tests --timeout 30000 --max-concurrency 1`
-- `VILANO_KERNEL_NO_COMPILE=1 bun test tests --timeout 30000 --max-concurrency 1`
+- `bun run test`
+- `VILANO_KERNEL_NO_COMPILE=1 bun test tests/integration.test.ts --timeout 30000 --max-concurrency 1`
+- `bun run test:soak`
 
 Next high-value additions:
 

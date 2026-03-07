@@ -399,64 +399,8 @@ defmodule VilanoKernel.Storage do
   def ensure_service_run!(project_name, definition_name, service_key, key_input) do
     now = now_iso8601()
 
-    Repo.transaction(fn ->
-      case get_service_run(project_name, definition_name, service_key) do
-        nil ->
-          run_id = "run_" <> Ecto.UUID.generate()
-
-          SQL.query!(
-            Repo,
-            """
-            insert into runs (
-              id,
-              project_name,
-              definition_kind,
-              definition_name,
-              status,
-              lease_id,
-              lease_worker_id,
-              lease_expires_at,
-              input_json,
-              output_json,
-              error_json,
-              created_at,
-              updated_at
-            ) values (?, ?, 'service', ?, 'idle', null, null, null, ?, null, null, ?, ?)
-            """,
-            [run_id, project_name, definition_name, Jason.encode!(key_input || %{}), now, now]
-          )
-
-          SQL.query!(
-            Repo,
-            """
-            insert into service_runs (
-              run_id,
-              service_key,
-              key_input_json,
-              state_json,
-              created_at,
-              updated_at
-            ) values (?, ?, ?, null, ?, ?)
-            """,
-            [run_id, service_key, Jason.encode!(key_input || %{}), now, now]
-          )
-
-          append_event!(
-            run_id,
-            "ServiceInstantiated",
-            %{
-              "serviceKey" => service_key,
-              "definitionName" => definition_name,
-              "keyInput" => key_input || %{}
-            },
-            now
-          )
-
-          get_service_run(project_name, definition_name, service_key)
-
-        service_run ->
-          service_run
-      end
+    transaction_with_busy_retry(fn ->
+      ensure_service_run_in_tx!(project_name, definition_name, service_key, key_input, now)
     end)
     |> unwrap_transaction_result()
   end
@@ -468,8 +412,15 @@ defmodule VilanoKernel.Storage do
   def enqueue_service_envelope!(project_name, definition_name, service_key, key_input, kind, name, payload) do
     now = now_iso8601()
 
-    Repo.transaction(fn ->
-      service_run = ensure_service_run!(project_name, definition_name, service_key, key_input || %{})
+    transaction_with_busy_retry(fn ->
+      service_run =
+        ensure_service_run_in_tx!(
+          project_name,
+          definition_name,
+          service_key,
+          key_input || %{},
+          now
+        )
 
       case maybe_insert_service_envelope(service_run, kind, name, payload, nil, nil, now) do
         {:ok, envelope_id} ->
@@ -3254,6 +3205,66 @@ defmodule VilanoKernel.Storage do
     |> List.first()
   end
 
+  defp ensure_service_run_in_tx!(project_name, definition_name, service_key, key_input, now) do
+    case get_service_run(project_name, definition_name, service_key) do
+      nil ->
+        run_id = "run_" <> Ecto.UUID.generate()
+
+        SQL.query!(
+          Repo,
+          """
+          insert into runs (
+            id,
+            project_name,
+            definition_kind,
+            definition_name,
+            status,
+            lease_id,
+            lease_worker_id,
+            lease_expires_at,
+            input_json,
+            output_json,
+            error_json,
+            created_at,
+            updated_at
+          ) values (?, ?, 'service', ?, 'idle', null, null, null, ?, null, null, ?, ?)
+          """,
+          [run_id, project_name, definition_name, Jason.encode!(key_input || %{}), now, now]
+        )
+
+        SQL.query!(
+          Repo,
+          """
+          insert into service_runs (
+            run_id,
+            service_key,
+            key_input_json,
+            state_json,
+            created_at,
+            updated_at
+          ) values (?, ?, ?, null, ?, ?)
+          """,
+          [run_id, service_key, Jason.encode!(key_input || %{}), now, now]
+        )
+
+        append_event!(
+          run_id,
+          "ServiceInstantiated",
+          %{
+            "serviceKey" => service_key,
+            "definitionName" => definition_name,
+            "keyInput" => key_input || %{}
+          },
+          now
+        )
+
+        get_service_run(project_name, definition_name, service_key)
+
+      service_run ->
+        service_run
+    end
+  end
+
   defp get_service_run(project_name, definition_name, service_key) do
     query_service_run(
       """
@@ -5116,6 +5127,54 @@ defmodule VilanoKernel.Storage do
 
   defp unwrap_transaction_result({:ok, value}), do: value
   defp unwrap_transaction_result({:error, reason}), do: raise(reason)
+
+  defp transaction_with_busy_retry(fun, attempts_left \\ 4)
+
+  defp transaction_with_busy_retry(fun, attempts_left) do
+    case Repo.transaction(fun) do
+      {:error, reason} = result ->
+        if attempts_left > 1 and busy_reason?(reason) do
+          Process.sleep(busy_retry_delay_ms(attempts_left))
+          transaction_with_busy_retry(fun, attempts_left - 1)
+        else
+          result
+        end
+
+      result ->
+        result
+    end
+  rescue
+    error ->
+      if attempts_left > 1 and busy_reason?(error) do
+        Process.sleep(busy_retry_delay_ms(attempts_left))
+        transaction_with_busy_retry(fun, attempts_left - 1)
+      else
+        reraise error, __STACKTRACE__
+      end
+  end
+
+  defp busy_reason?(reason) when is_exception(reason) do
+    reason
+    |> Exception.message()
+    |> String.downcase()
+    |> busy_message?()
+  end
+
+  defp busy_reason?(reason) when is_binary(reason) do
+    reason
+    |> String.downcase()
+    |> busy_message?()
+  end
+
+  defp busy_reason?(_reason), do: false
+
+  defp busy_message?(message) do
+    String.contains?(message, "database busy") or
+      String.contains?(message, "database is locked") or
+      String.contains?(message, "busy")
+  end
+
+  defp busy_retry_delay_ms(attempts_left), do: 25 * (5 - attempts_left + 1)
 
   defp now_iso8601 do
     DateTime.utc_now() |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()

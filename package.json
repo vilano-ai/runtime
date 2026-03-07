@@ -11,8 +11,9 @@
     "check": "bun run typecheck && bun run test",
     "build": "bun run typecheck",
     "typecheck": "tsc -p cli/tsconfig.json && tsc -p sdk/typescript/tsconfig.json && tsc -p worker/bun/tsconfig.json && tsc -p tests/tsconfig.json",
-    "test": "bun test tests --timeout 30000 --max-concurrency 1",
+    "test": "bun test tests/integration.test.ts --timeout 30000 --max-concurrency 1",
     "test:integration": "bun run test",
+    "test:soak": "bun test tests/soak.test.ts --timeout 360000 --max-concurrency 1",
     "pack:sdk": "cd sdk/typescript && bun pm pack --dry-run",
     "pack:cli": "cd cli && bun pm pack --dry-run",
     "pack": "bun run pack:sdk && bun run pack:cli"
