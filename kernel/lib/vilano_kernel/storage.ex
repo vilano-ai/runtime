@@ -3,274 +3,55 @@ defmodule VilanoKernel.Storage do
 
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
-  alias VilanoKernel.Storage.{RetryPolicy, ServiceLifecycle}
+  alias VilanoKernel.Storage.{Migrations, RetryPolicy, ServiceLifecycle}
+  alias VilanoKernel.Version
 
   def init! do
-    SQL.query!(Repo, "pragma journal_mode = wal", [])
-    SQL.query!(Repo, "pragma foreign_keys = on", [])
-    SQL.query!(Repo, "pragma busy_timeout = 5000", [])
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists projects (
-        name text primary key,
-        path text not null,
-        last_synced_at text,
-        definitions_manifest_hash text,
-        workflows_json text not null,
-        services_json text not null
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists runs (
-        id text primary key,
-        project_name text not null,
-        definition_kind text not null,
-        definition_name text not null,
-        status text not null,
-        lease_id text,
-        lease_worker_id text,
-        lease_expires_at text,
-        input_json text not null,
-        output_json text,
-        error_json text,
-        created_at text not null,
-        updated_at text not null
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists run_events (
-        id text primary key,
-        run_id text not null,
-        seq integer not null,
-        event_type text not null,
-        body_json text not null,
-        created_at text not null,
-        unique (run_id, seq)
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists run_steps (
-        run_id text not null,
-        op_key text not null,
-        name text not null,
-        status text not null,
-        attempt integer,
-        max_attempts integer,
-        backoff_kind text,
-        backoff_ms integer,
-        backoff_step_ms integer,
-        backoff_factor real,
-        max_backoff_ms integer,
-        backoff_jitter_kind text,
-        backoff_jitter_ratio real,
-        retry_on_json text,
-        timeout_ms integer,
-        output_json text,
-        error_json text,
-        created_at text not null,
-        updated_at text not null,
-        primary key (run_id, op_key)
-      )
-      """,
-      []
-    )
-
-    ensure_column!("run_steps", "attempt", "integer")
-    ensure_column!("run_steps", "max_attempts", "integer")
-    ensure_column!("run_steps", "backoff_kind", "text")
-    ensure_column!("run_steps", "backoff_ms", "integer")
-    ensure_column!("run_steps", "backoff_step_ms", "integer")
-    ensure_column!("run_steps", "backoff_factor", "real")
-    ensure_column!("run_steps", "max_backoff_ms", "integer")
-    ensure_column!("run_steps", "backoff_jitter_kind", "text")
-    ensure_column!("run_steps", "backoff_jitter_ratio", "real")
-    ensure_column!("run_steps", "retry_on_json", "text")
-    ensure_column!("run_steps", "timeout_ms", "integer")
-    ensure_column!("run_steps", "error_json", "text")
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists run_execs (
-        run_id text not null,
-        op_key text not null,
-        name text not null,
-        status text not null,
-        cmd text not null,
-        args_json text not null,
-        cwd text,
-        env_json text,
-        timeout_ms integer,
-        attempt integer not null,
-        exit_code integer,
-        signal_code text,
-        stdout_ref text,
-        stderr_ref text,
-        artifacts_json text,
-        output_json text,
-        error_json text,
-        created_at text not null,
-        updated_at text not null,
-        primary key (run_id, op_key)
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists run_waits (
-        run_id text not null,
-        op_key text not null,
-        wait_kind text not null,
-        wait_name text not null,
-        status text not null,
-        wake_at text,
-        output_json text,
-        created_at text not null,
-        updated_at text not null,
-        primary key (run_id, op_key)
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists run_children (
-        parent_run_id text not null,
-        op_key text not null,
-        child_run_id text not null,
-        definition_name text not null,
-        status text not null,
-        created_at text not null,
-        updated_at text not null,
-        primary key (parent_run_id, op_key),
-        unique (child_run_id)
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists service_runs (
-        run_id text primary key,
-        service_key text not null,
-        key_input_json text not null,
-        state_json text,
-        created_at text not null,
-        updated_at text not null,
-        unique (run_id)
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists service_envelopes (
-        id text primary key,
-        service_run_id text not null,
-        kind text not null,
-        name text not null,
-        attempt integer,
-        payload_json text,
-        correlation_id text,
-        sender_run_id text,
-        status text not null,
-        reply_json text,
-        error_json text,
-        created_at text not null,
-        updated_at text not null
-      )
-      """,
-      []
-    )
-
-    ensure_column!("service_envelopes", "attempt", "integer")
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists run_service_ops (
-        caller_run_id text not null,
-        op_key text not null,
-        service_run_id text not null,
-        op_kind text not null,
-        message_name text not null,
-        correlation_id text,
-        status text not null,
-        payload_json text not null,
-        response_json text,
-        error_json text,
-        created_at text not null,
-        updated_at text not null,
-        primary key (caller_run_id, op_key)
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists run_signals (
-        id text primary key,
-        run_id text not null,
-        signal_name text not null,
-        payload_json text,
-        consumed_at text,
-        created_at text not null
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create index if not exists runs_project_created_at_idx
-      on runs(project_name, created_at desc)
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create index if not exists run_events_run_seq_idx
-      on run_events(run_id, seq)
-      """,
-      []
-    )
+    configure_database!()
+    bootstrap_schema!()
+    Migrations.ensure_tracking_table!()
+    Migrations.run_pending!()
+    sync_runtime_metadata!()
   end
 
   def project_count do
     Repo
     |> SQL.query!("select count(*) from projects", [])
     |> first_integer()
+  end
+
+  def schema_state do
+    %{
+      "version" => Migrations.current_version(),
+      "appliedMigrations" => Migrations.applied_migrations()
+    }
+  end
+
+  def runtime_metadata do
+    Repo
+    |> SQL.query!(
+      """
+      select runtime_version, protocol_version, schema_version, applied_migrations_json, updated_at
+      from runtime_metadata
+      where id = 1
+      """,
+      []
+    )
+    |> rows_to_maps()
+    |> List.first()
+    |> case do
+      nil ->
+        nil
+
+      row ->
+        %{
+          "runtimeVersion" => row["runtime_version"],
+          "protocolVersion" => row["protocol_version"],
+          "schemaVersion" => row["schema_version"],
+          "appliedMigrations" => decode_json_value(row["applied_migrations_json"], []),
+          "updatedAt" => row["updated_at"]
+        }
+    end
   end
 
   def list_projects do
@@ -3009,7 +2790,7 @@ defmodule VilanoKernel.Storage do
   defp maybe_encode_json(nil), do: nil
   defp maybe_encode_json(value), do: Jason.encode!(value)
 
-  defp ensure_column!(table_name, column_name, definition) do
+  def ensure_column!(table_name, column_name, definition) do
     existing_columns =
       Repo
       |> SQL.query!("pragma table_info(#{table_name})", [])
@@ -5175,6 +4956,287 @@ defmodule VilanoKernel.Storage do
   end
 
   defp busy_retry_delay_ms(attempts_left), do: 25 * (5 - attempts_left + 1)
+
+  defp configure_database! do
+    SQL.query!(Repo, "pragma journal_mode = wal", [])
+    SQL.query!(Repo, "pragma foreign_keys = on", [])
+    SQL.query!(Repo, "pragma busy_timeout = 5000", [])
+  end
+
+  defp bootstrap_schema! do
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists projects (
+        name text primary key,
+        path text not null,
+        last_synced_at text,
+        definitions_manifest_hash text,
+        workflows_json text not null,
+        services_json text not null
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists runs (
+        id text primary key,
+        project_name text not null,
+        definition_kind text not null,
+        definition_name text not null,
+        status text not null,
+        lease_id text,
+        lease_worker_id text,
+        lease_expires_at text,
+        input_json text not null,
+        output_json text,
+        error_json text,
+        created_at text not null,
+        updated_at text not null
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists run_events (
+        id text primary key,
+        run_id text not null,
+        seq integer not null,
+        event_type text not null,
+        body_json text not null,
+        created_at text not null,
+        unique (run_id, seq)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists run_steps (
+        run_id text not null,
+        op_key text not null,
+        name text not null,
+        status text not null,
+        attempt integer,
+        max_attempts integer,
+        backoff_kind text,
+        backoff_ms integer,
+        backoff_step_ms integer,
+        backoff_factor real,
+        max_backoff_ms integer,
+        backoff_jitter_kind text,
+        backoff_jitter_ratio real,
+        retry_on_json text,
+        timeout_ms integer,
+        output_json text,
+        error_json text,
+        created_at text not null,
+        updated_at text not null,
+        primary key (run_id, op_key)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists run_execs (
+        run_id text not null,
+        op_key text not null,
+        name text not null,
+        status text not null,
+        cmd text not null,
+        args_json text not null,
+        cwd text,
+        env_json text,
+        timeout_ms integer,
+        attempt integer not null,
+        exit_code integer,
+        signal_code text,
+        stdout_ref text,
+        stderr_ref text,
+        artifacts_json text,
+        output_json text,
+        error_json text,
+        created_at text not null,
+        updated_at text not null,
+        primary key (run_id, op_key)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists run_waits (
+        run_id text not null,
+        op_key text not null,
+        wait_kind text not null,
+        wait_name text not null,
+        status text not null,
+        wake_at text,
+        output_json text,
+        created_at text not null,
+        updated_at text not null,
+        primary key (run_id, op_key)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists run_children (
+        parent_run_id text not null,
+        op_key text not null,
+        child_run_id text not null,
+        definition_name text not null,
+        status text not null,
+        created_at text not null,
+        updated_at text not null,
+        primary key (parent_run_id, op_key),
+        unique (child_run_id)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists service_runs (
+        run_id text primary key,
+        service_key text not null,
+        key_input_json text not null,
+        state_json text,
+        created_at text not null,
+        updated_at text not null,
+        unique (run_id)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists service_envelopes (
+        id text primary key,
+        service_run_id text not null,
+        kind text not null,
+        name text not null,
+        attempt integer,
+        payload_json text,
+        correlation_id text,
+        sender_run_id text,
+        status text not null,
+        reply_json text,
+        error_json text,
+        created_at text not null,
+        updated_at text not null
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists run_service_ops (
+        caller_run_id text not null,
+        op_key text not null,
+        service_run_id text not null,
+        op_kind text not null,
+        message_name text not null,
+        correlation_id text,
+        status text not null,
+        payload_json text not null,
+        response_json text,
+        error_json text,
+        created_at text not null,
+        updated_at text not null,
+        primary key (caller_run_id, op_key)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists run_signals (
+        id text primary key,
+        run_id text not null,
+        signal_name text not null,
+        payload_json text,
+        consumed_at text,
+        created_at text not null
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create index if not exists runs_project_created_at_idx
+      on runs(project_name, created_at desc)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create index if not exists run_events_run_seq_idx
+      on run_events(run_id, seq)
+      """,
+      []
+    )
+  end
+
+  defp sync_runtime_metadata! do
+    applied_migrations = Migrations.applied_migrations()
+    now = now_iso8601()
+
+    SQL.query!(
+      Repo,
+      """
+      insert into runtime_metadata (
+        id,
+        runtime_version,
+        protocol_version,
+        schema_version,
+        applied_migrations_json,
+        updated_at
+      ) values (1, ?, ?, ?, ?, ?)
+      on conflict(id) do update set
+        runtime_version = excluded.runtime_version,
+        protocol_version = excluded.protocol_version,
+        schema_version = excluded.schema_version,
+        applied_migrations_json = excluded.applied_migrations_json,
+        updated_at = excluded.updated_at
+      """,
+      [
+        Version.runtime_version(),
+        Version.protocol_version(),
+        Migrations.current_version(),
+        Jason.encode!(applied_migrations),
+        now
+      ]
+    )
+  end
 
   defp now_iso8601 do
     DateTime.utc_now() |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()

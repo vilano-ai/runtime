@@ -19,12 +19,22 @@ defmodule VilanoKernel.Router do
 
   get "/v1/status" do
     runtime = Application.fetch_env!(:vilano_kernel, :runtime)
+    runtime_metadata = Storage.runtime_metadata()
+    schema_state = Storage.schema_state()
 
     send_json(conn, 200, %{
       ok: true,
+      runtimeVersion: runtime_metadata["runtimeVersion"],
+      protocolVersion: runtime_metadata["protocolVersion"],
+      schemaVersion: runtime_metadata["schemaVersion"],
+      appliedMigrations: schema_state["appliedMigrations"],
       port: runtime.port,
       startedAt: runtime.started_at,
+      homeDir: runtime.home_dir,
+      projectRoot: runtime.project_root,
       runtimeDbPath: runtime.runtime_db_path,
+      managedWorkerCount: runtime.managed_worker_count,
+      leaseDurationSeconds: runtime.lease_duration_seconds,
       projectCount: Storage.project_count()
     })
   end
