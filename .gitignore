@@ -11,3 +11,5 @@ deps/
 .mix/
 .hex/
 .elixir_ls/
+cli/runtime-dist/
+*.tgz

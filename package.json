@@ -14,8 +14,10 @@
     "test": "bun test tests/integration.test.ts --timeout 30000 --max-concurrency 1",
     "test:integration": "bun run test",
     "test:soak": "bun test tests/soak.test.ts --timeout 360000 --max-concurrency 1",
+    "prepare:cli-package": "bun scripts/prepare-cli-runtime-dist.ts",
+    "smoke:install": "bun scripts/smoke-install.ts",
     "pack:sdk": "cd sdk/typescript && bun pm pack --dry-run",
-    "pack:cli": "cd cli && bun pm pack --dry-run",
+    "pack:cli": "bun run prepare:cli-package && cd cli && bun pm pack --dry-run",
     "pack": "bun run pack:sdk && bun run pack:cli"
   },
   "dependencies": {

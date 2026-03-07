@@ -9,6 +9,7 @@
   "files": [
     "bin",
     "src",
+    "runtime-dist",
     "README.md"
   ],
   "types": "./src/index.ts",
@@ -23,7 +24,8 @@
   },
   "scripts": {
     "build": "bun run typecheck",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "prepack": "bun ../scripts/prepare-cli-runtime-dist.ts"
   },
   "repository": {
     "type": "git",

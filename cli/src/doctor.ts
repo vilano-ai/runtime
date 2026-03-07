@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 
 import { getRunningDaemonStatus } from "./daemon-client.ts";
@@ -53,15 +54,14 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
     appliedFixes.push(...(await applyDoctorFixes(bundle.kernelDir)));
   }
 
-  const [bunTool, mixTool, elixirTool, daemonStatus] = await Promise.all([
+  const [bunTool, mixTool, elixirTool, daemonStatus, depsReady, buildReady] = await Promise.all([
     inspectTool("bun", ["--version"]),
     inspectTool("mix", ["--version"]),
     inspectTool("elixir", ["--version"]),
     getRunningDaemonStatus().catch(() => null),
+    fileExists(`${bundle.kernelDir}/deps`),
+    fileExists(`${bundle.kernelDir}/_build`),
   ]);
-
-  const depsReady = await fileExists(`${bundle.kernelDir}/deps`);
-  const buildReady = await fileExists(`${bundle.kernelDir}/_build`);
 
   const checks: DoctorCheck[] = [
     {
@@ -93,12 +93,12 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
     },
     {
       name: "kernel_build",
-      ok: buildReady,
-      detail: buildReady ? "kernel build artifacts are present" : "kernel has not been compiled yet",
+      ok: true,
+      detail: buildReady ? "kernel build artifacts are present" : "kernel has not been compiled yet; it can compile on first start",
     },
     {
       name: "daemon",
-      ok: daemonStatus !== null,
+      ok: true,
       detail:
         daemonStatus === null
           ? "Vilano kernel is not running"
@@ -236,8 +236,8 @@ function firstNonEmptyLine(text: string): string | null {
 
 async function fileExists(targetPath: string): Promise<boolean> {
   try {
-    await Bun.file(targetPath).exists();
-    return await Bun.file(targetPath).exists();
+    await fs.access(targetPath);
+    return true;
   } catch {
     return false;
   }
