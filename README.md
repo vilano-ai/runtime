@@ -15,15 +15,18 @@ Working design notes live under `spec/` and are intentionally ignored by git.
 
 ## Quickstart
 
+### Repo First Run
+
 1. Run `direnv allow`.
 2. Run `bun install`.
-3. Run `cd kernel && mix local.hex --force && mix local.rebar --force`.
-4. Run `cd kernel && mix deps.get`.
+3. Run `./cli/bin/vilano.ts version`.
+4. Run `./cli/bin/vilano.ts doctor --fix`.
 
 Start the local runtime:
 
 ```bash
 ./cli/bin/vilano.ts daemon start
+./cli/bin/vilano.ts daemon status
 ./cli/bin/vilano.ts project add ./examples/bootstrap-demo --name demo
 ./cli/bin/vilano.ts workflow list
 ```
@@ -55,8 +58,20 @@ Packaging and release smoke checks:
 
 ```bash
 bun run check
+bun run prepare:cli-package
 bun run pack
+bun run smoke:install
 ```
+
+### Packaged Install Flow
+
+The CLI package now bundles a local runtime payload under `runtime-dist/` so an installed `vilano` can boot its own kernel and worker without a repo checkout. The current repo-level smoke path is:
+
+```bash
+bun run smoke:install
+```
+
+That script packs `vilano` and `@vilano/runtime`, installs them into a temporary directory, runs `vilano version`, `vilano doctor --fix`, starts the daemon, checks status, and stops it again.
 
 ## Authoring Model
 
@@ -195,6 +210,8 @@ Current retry behavior is durable, kernel-scheduled, and configurable:
 
 Current CLI surfaces:
 
+- `vilano version`
+- `vilano doctor [--fix]`
 - `vilano daemon start|status|stop`
 - `vilano project add|list|inspect|sync|remove`
 - `vilano workflow list|inspect`
@@ -204,6 +221,12 @@ Current CLI surfaces:
 
 Useful commands:
 
+- `vilano version`
+  Shows the CLI version, protocol version, whether the runtime bundle is repo-backed or packaged, and current kernel info when running.
+- `vilano doctor --fix`
+  Checks Bun/Elixir tooling, runtime bundle paths, kernel deps/build state, and optionally runs `mix local.hex`, `mix local.rebar`, `mix deps.get`, and `mix compile`.
+- `vilano daemon status`
+  Shows runtime version, protocol version, schema version, migration count, runtime home, and managed worker state.
 - `vilano run inspect <run-id>`
   Shows current run state, events, waits, turns, steps, execs, child runs, and service envelopes.
 - `vilano run replay <run-id>`
@@ -222,6 +245,15 @@ Current limits worth knowing:
 - Managed local workers materialize a versioned source copy under `.vilano-cache/managed-workers/` so Bun always runs the matching worker implementation.
 - `run replay` is served by a dedicated kernel endpoint and rendered by the CLI.
 - Hosted, clustered, and multi-node execution are not built yet.
+
+## Runtime Lifecycle
+
+The local runtime now has explicit versioning and migration metadata.
+
+- the kernel persists schema state in `schema_migrations`
+- runtime metadata includes runtime version, protocol version, schema version, and applied migrations
+- CLI and worker both fail fast on protocol mismatch instead of attempting partial operation
+- `daemon status`, `version`, and `doctor --json` expose that metadata for tooling
 
 ## Repo Layout
 

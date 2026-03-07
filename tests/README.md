@@ -6,6 +6,7 @@ There are two main test modes:
 
 - `bun run test` for the normal integration suite
 - `bun run test:soak` for the longer mixed-traffic churn run
+- `bun run smoke:install` for package/install verification outside the repo layout
 
 Current coverage:
 

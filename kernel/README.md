@@ -57,6 +57,12 @@ Important tables include:
 
 The event log is the durable timeline. The relational tables act as current-state projections and scheduling indexes.
 
+Schema evolution is now explicit:
+
+- `schema_migrations` tracks ordered storage migrations
+- `runtime_metadata` records runtime version, protocol version, schema version, and applied migrations
+- kernel startup runs pending migrations before serving traffic
+
 ## Current API Surface
 
 The kernel exposes a local HTTP API used by:
@@ -73,6 +79,8 @@ That API currently supports:
 - step/exec/wait/service-turn resolution and completion
 
 `run replay` is served by a dedicated kernel endpoint that returns inspect data plus a durable replay timeline.
+
+`/v1/status` now also exposes runtime, protocol, and schema metadata so CLI and worker processes can reject incompatible versions early.
 
 ## Important Semantics
 

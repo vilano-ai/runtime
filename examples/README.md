@@ -1,12 +1,18 @@
 # Examples
 
-Runnable examples will land here once the workflow and service execution paths exist.
+`bootstrap-demo/` is the current runnable example project.
 
-The first good examples should likely be:
+It serves two purposes:
 
-- a bounded research workflow
-- a reviewer service
-- a subprocess-heavy coding workflow using `exec()`
+- first-run workflow and service examples for the local runtime
+- richer fixture coverage for integration and soak tests
 
-`bootstrap-demo/` is a minimal example project used to exercise the local registry and definition
-scanner during early bootstrap work.
+Use it with the local CLI:
+
+```bash
+./cli/bin/vilano.ts project add ./examples/bootstrap-demo --name demo
+./cli/bin/vilano.ts workflow list
+./cli/bin/vilano.ts service list
+```
+
+The canonical first-run definitions are documented in `examples/bootstrap-demo/README.md`. The rest of the exported definitions are mostly durability and failure fixtures used by the test suite.
