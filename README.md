@@ -51,6 +51,13 @@ Run the integration suite:
 direnv exec . bun test tests --timeout 120000 --max-concurrency 1
 ```
 
+Packaging and release smoke checks:
+
+```bash
+bun run check
+bun run pack
+```
+
 ## Authoring Model
 
 Workflows are bounded runs:
