@@ -29,9 +29,13 @@ import {
   stopDaemon,
   syncProject,
 } from "./daemon-client.ts";
+import { runDoctor } from "./doctor.ts";
 import { buildProjectManifest, findDefinition, resolveProjectForCwd } from "./registry.ts";
+import { resolveRuntimeBundlePaths } from "./runtime-bundle.ts";
+import { CLI_PROTOCOL_VERSION, getCliVersion } from "./runtime-version.ts";
 import type {
   DefinitionRecord,
+  DaemonStatusResponse,
   ProjectRecord,
   RunExecRecord,
   RunChildRecord,
@@ -63,6 +67,8 @@ function renderHelp(): string {
     "Vilano CLI",
     "",
     "Implemented commands:",
+    "  vilano version",
+    "  vilano doctor [--fix]",
     "  vilano daemon start|status|stop",
     "  vilano project add|list|inspect|sync|remove",
     "  vilano workflow list|inspect",
@@ -86,6 +92,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     const [group, ...rest] = parsed.positionals;
 
     switch (group) {
+      case "version":
+        return handleVersion(parsed.flags);
+      case "doctor":
+        return handleDoctor(parsed.flags);
       case "daemon":
         return handleDaemon(rest, parsed.flags);
       case "project":
@@ -151,6 +161,31 @@ async function handleDaemon(args: string[], flags: Record<string, string | boole
     default:
       throw new CliError("Usage: vilano daemon start|status|stop");
   }
+}
+
+async function handleVersion(flags: Record<string, string | boolean>): Promise<number> {
+  const daemonStatus = await getRunningDaemonStatus().catch(() => null);
+  const bundle = resolveRuntimeBundlePaths();
+
+  const body = {
+    ok: true,
+    cliVersion: getCliVersion(),
+    protocolVersion: CLI_PROTOCOL_VERSION,
+    runtimeBundle: {
+      root: bundle.runtimeRoot,
+      bundled: bundle.bundled,
+    },
+    kernel: daemonStatus,
+  };
+
+  writeOutput(flags, body, (payload) => renderVersionInfo(payload));
+  return 0;
+}
+
+async function handleDoctor(flags: Record<string, string | boolean>): Promise<number> {
+  const report = await runDoctor({ fix: Boolean(flags.fix) });
+  writeOutput(flags, report, renderDoctorReport);
+  return report.ok ? 0 : 1;
 }
 
 async function handleProject(args: string[], flags: Record<string, string | boolean>): Promise<number> {
@@ -870,21 +905,84 @@ function writeOutput<T>(
   process.stdout.write(`${String(body)}\n`);
 }
 
-function renderDaemonStatus(body: {
-  pid: number;
-  port: number;
-  startedAt: string;
-  runtimeDbPath: string;
-  projectCount: number;
-}): string {
+function renderDaemonStatus(body: DaemonStatusResponse): string {
   return [
     "Vilano kernel is running",
+    `runtime_version: ${body.runtimeVersion}`,
+    `protocol_version: ${body.protocolVersion}`,
+    `schema_version: ${body.schemaVersion}`,
     `pid: ${body.pid}`,
     `port: ${body.port}`,
     `started_at: ${body.startedAt}`,
+    `home_dir: ${body.homeDir}`,
+    `project_root: ${body.projectRoot}`,
     `runtime_db: ${body.runtimeDbPath}`,
+    `managed_workers: ${body.managedWorkerCount}`,
+    `lease_duration_seconds: ${body.leaseDurationSeconds}`,
+    `applied_migrations: ${body.appliedMigrations.length}`,
     `projects: ${body.projectCount}`,
   ].join("\n");
+}
+
+function renderVersionInfo(body: {
+  cliVersion: string;
+  protocolVersion: number;
+  runtimeBundle: { root: string; bundled: boolean };
+  kernel: DaemonStatusResponse | null;
+}): string {
+  return [
+    `cli_version: ${body.cliVersion}`,
+    `protocol_version: ${body.protocolVersion}`,
+    `runtime_bundle: ${body.runtimeBundle.root}${body.runtimeBundle.bundled ? " (packaged)" : " (repo)"}`,
+    body.kernel
+      ? `kernel: running ${body.kernel.runtimeVersion} schema=${body.kernel.schemaVersion} port=${body.kernel.port}`
+      : "kernel: not running",
+  ].join("\n");
+}
+
+function renderDoctorReport(body: {
+  ok: boolean;
+  cliVersion: string;
+  protocolVersion: number;
+  runtimeHome: string;
+  runtimeBundle: { root: string; bundled: boolean; kernelDir: string; workerDir: string };
+  tools: {
+    bun: { found: boolean; path: string | null; version: string | null };
+    mix: { found: boolean; path: string | null; version: string | null };
+    elixir: { found: boolean; path: string | null; version: string | null };
+  };
+  kernel: { depsReady: boolean; buildReady: boolean; running: boolean; status: DaemonStatusResponse | null };
+  appliedFixes: string[];
+  checks: Array<{ name: string; ok: boolean; detail: string }>;
+}): string {
+  return [
+    `doctor: ${body.ok ? "ok" : "needs attention"}`,
+    `cli_version: ${body.cliVersion}`,
+    `protocol_version: ${body.protocolVersion}`,
+    `runtime_home: ${body.runtimeHome}`,
+    `runtime_bundle: ${body.runtimeBundle.root}${body.runtimeBundle.bundled ? " (packaged)" : " (repo)"}`,
+    `kernel_dir: ${body.runtimeBundle.kernelDir}`,
+    `worker_dir: ${body.runtimeBundle.workerDir}`,
+    `bun: ${renderDoctorTool(body.tools.bun)}`,
+    `mix: ${renderDoctorTool(body.tools.mix)}`,
+    `elixir: ${renderDoctorTool(body.tools.elixir)}`,
+    `kernel_deps_ready: ${body.kernel.depsReady}`,
+    `kernel_build_ready: ${body.kernel.buildReady}`,
+    body.kernel.running && body.kernel.status
+      ? `kernel_status: running runtime=${body.kernel.status.runtimeVersion} protocol=${body.kernel.status.protocolVersion} schema=${body.kernel.status.schemaVersion}`
+      : "kernel_status: not running",
+    ...(body.appliedFixes.length > 0 ? [`applied_fixes: ${body.appliedFixes.join(", ")}`] : []),
+    "checks:",
+    ...body.checks.map((check) => `  [${check.ok ? "ok" : "fail"}] ${check.name}: ${check.detail}`),
+  ].join("\n");
+}
+
+function renderDoctorTool(tool: { found: boolean; path: string | null; version: string | null }): string {
+  if (!tool.found) {
+    return "missing";
+  }
+
+  return `${tool.path ?? "unknown"}${tool.version ? ` (${tool.version})` : ""}`;
 }
 
 function renderProject(project: ProjectRecord): string {

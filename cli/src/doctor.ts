@@ -1,0 +1,244 @@
+import { spawn } from "node:child_process";
+
+import { getRunningDaemonStatus } from "./daemon-client.ts";
+import { getRuntimePaths } from "./runtime-home.ts";
+import { resolveRuntimeBundlePaths } from "./runtime-bundle.ts";
+import { CLI_PROTOCOL_VERSION, getCliVersion } from "./runtime-version.ts";
+
+export interface DoctorCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface DoctorReport {
+  ok: boolean;
+  cliVersion: string;
+  protocolVersion: number;
+  runtimeHome: string;
+  daemonStateFile: string;
+  runtimeBundle: {
+    root: string;
+    kernelDir: string;
+    workerDir: string;
+    bundled: boolean;
+  };
+  tools: {
+    bun: ToolCheck;
+    mix: ToolCheck;
+    elixir: ToolCheck;
+  };
+  kernel: {
+    depsReady: boolean;
+    buildReady: boolean;
+    running: boolean;
+    status: Awaited<ReturnType<typeof getRunningDaemonStatus>>;
+  };
+  appliedFixes: string[];
+  checks: DoctorCheck[];
+}
+
+interface ToolCheck {
+  found: boolean;
+  path: string | null;
+  version: string | null;
+}
+
+export async function runDoctor(options: { fix?: boolean } = {}): Promise<DoctorReport> {
+  const runtimePaths = getRuntimePaths();
+  const bundle = resolveRuntimeBundlePaths();
+  const appliedFixes: string[] = [];
+
+  if (options.fix) {
+    appliedFixes.push(...(await applyDoctorFixes(bundle.kernelDir)));
+  }
+
+  const [bunTool, mixTool, elixirTool, daemonStatus] = await Promise.all([
+    inspectTool("bun", ["--version"]),
+    inspectTool("mix", ["--version"]),
+    inspectTool("elixir", ["--version"]),
+    getRunningDaemonStatus().catch(() => null),
+  ]);
+
+  const depsReady = await fileExists(`${bundle.kernelDir}/deps`);
+  const buildReady = await fileExists(`${bundle.kernelDir}/_build`);
+
+  const checks: DoctorCheck[] = [
+    {
+      name: "runtime_bundle",
+      ok: true,
+      detail: bundle.bundled
+        ? `Using packaged runtime bundle at ${bundle.runtimeRoot}`
+        : `Using repo runtime bundle at ${bundle.runtimeRoot}`,
+    },
+    {
+      name: "bun",
+      ok: bunTool.found,
+      detail: bunTool.found ? `${bunTool.path} (${bunTool.version ?? "unknown"})` : "bun not found on PATH",
+    },
+    {
+      name: "mix",
+      ok: mixTool.found,
+      detail: mixTool.found ? `${mixTool.path} (${mixTool.version ?? "unknown"})` : "mix not found on PATH",
+    },
+    {
+      name: "elixir",
+      ok: elixirTool.found,
+      detail: elixirTool.found ? `${elixirTool.path} (${elixirTool.version ?? "unknown"})` : "elixir not found on PATH",
+    },
+    {
+      name: "kernel_deps",
+      ok: depsReady,
+      detail: depsReady ? "kernel deps directory is present" : "kernel deps are missing; run `vilano doctor --fix` or `mix deps.get`",
+    },
+    {
+      name: "kernel_build",
+      ok: buildReady,
+      detail: buildReady ? "kernel build artifacts are present" : "kernel has not been compiled yet",
+    },
+    {
+      name: "daemon",
+      ok: daemonStatus !== null,
+      detail:
+        daemonStatus === null
+          ? "Vilano kernel is not running"
+          : `running runtime ${daemonStatus.runtimeVersion} protocol ${daemonStatus.protocolVersion} schema ${daemonStatus.schemaVersion}`,
+    },
+  ];
+
+  return {
+    ok: checks.every((check) => check.ok),
+    cliVersion: getCliVersion(),
+    protocolVersion: CLI_PROTOCOL_VERSION,
+    runtimeHome: runtimePaths.homeDir,
+    daemonStateFile: runtimePaths.daemonStateFile,
+    runtimeBundle: {
+      root: bundle.runtimeRoot,
+      kernelDir: bundle.kernelDir,
+      workerDir: bundle.workerDir,
+      bundled: bundle.bundled,
+    },
+    tools: {
+      bun: bunTool,
+      mix: mixTool,
+      elixir: elixirTool,
+    },
+    kernel: {
+      depsReady,
+      buildReady,
+      running: daemonStatus !== null,
+      status: daemonStatus,
+    },
+    appliedFixes,
+    checks,
+  };
+}
+
+async function applyDoctorFixes(kernelDir: string): Promise<string[]> {
+  const fixes: string[] = [];
+
+  await runCommand("mix", ["local.hex", "--force"], kernelDir);
+  fixes.push("mix local.hex --force");
+
+  await runCommand("mix", ["local.rebar", "--force"], kernelDir);
+  fixes.push("mix local.rebar --force");
+
+  await runCommand("mix", ["deps.get"], kernelDir);
+  fixes.push("mix deps.get");
+
+  await runCommand("mix", ["compile"], kernelDir);
+  fixes.push("mix compile");
+
+  return fixes;
+}
+
+async function inspectTool(command: string, args: string[]): Promise<ToolCheck> {
+  const executable = Bun.which(command);
+  if (!executable) {
+    return {
+      found: false,
+      path: null,
+      version: null,
+    };
+  }
+
+  try {
+    const result = await runCommand(command, args);
+    return {
+      found: true,
+      path: executable,
+      version: firstNonEmptyLine(`${result.stdout}\n${result.stderr}`),
+    };
+  } catch {
+    return {
+      found: true,
+      path: executable,
+      version: null,
+    };
+  }
+}
+
+async function runCommand(
+  command: string,
+  args: string[],
+  cwd?: string
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const child = spawn(command, args, {
+    cwd,
+    env: process.env,
+    stdio: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    streamToString(child.stdout),
+    streamToString(child.stderr),
+    new Promise<number>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code) => resolve(code ?? 0));
+    }),
+  ]);
+
+  if (exitCode !== 0) {
+    throw new Error(
+      [
+        `Command failed: ${command} ${args.join(" ")}`,
+        stdout ? `stdout:\n${stdout}` : "",
+        stderr ? `stderr:\n${stderr}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+  }
+
+  return { stdout, stderr, exitCode };
+}
+
+async function streamToString(stream: NodeJS.ReadableStream | null): Promise<string> {
+  if (!stream) {
+    return "";
+  }
+
+  let data = "";
+  for await (const chunk of stream) {
+    data += chunk.toString();
+  }
+  return data;
+}
+
+function firstNonEmptyLine(text: string): string | null {
+  return (
+    text
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? null
+  );
+}
+
+async function fileExists(targetPath: string): Promise<boolean> {
+  try {
+    await Bun.file(targetPath).exists();
+    return await Bun.file(targetPath).exists();
+  } catch {
+    return false;
+  }
+}

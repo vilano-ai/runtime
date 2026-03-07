@@ -4,6 +4,8 @@ import path from "node:path";
 import process from "node:process";
 
 import { ensureDir, readJsonFile, writeJsonFileAtomic } from "./json-file.ts";
+import { resolveRuntimeBundlePaths } from "./runtime-bundle.ts";
+import { CLI_PROTOCOL_VERSION } from "./runtime-version.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
 import type {
   DaemonState,
@@ -36,9 +38,17 @@ interface RequestOptions {
 
 interface KernelStatusBody {
   ok: true;
+  runtimeVersion: string;
+  protocolVersion: number;
+  schemaVersion: number;
+  appliedMigrations: Array<{ version: number; name: string; applied_at: string }>;
   port: number;
   startedAt: string;
+  homeDir: string;
+  projectRoot: string;
   runtimeDbPath: string;
+  managedWorkerCount: number;
+  leaseDurationSeconds: number;
   projectCount: number;
 }
 
@@ -53,8 +63,9 @@ export async function ensureDaemonStarted(
   const runtimePaths = getRuntimePaths();
   await ensureDir(runtimePaths.homeDir);
 
-  const kernelDir = path.resolve(import.meta.dir, "..", "..", "kernel");
-  const projectRoot = path.resolve(import.meta.dir, "..", "..");
+  const bundle = resolveRuntimeBundlePaths();
+  const kernelDir = bundle.kernelDir;
+  const projectRoot = bundle.runtimeRoot;
   const mixArgs =
     process.env.VILANO_KERNEL_NO_COMPILE === "1"
       ? ["run", "--no-compile", "--no-halt"]
@@ -101,11 +112,16 @@ export async function ensureDaemonStarted(
         port,
         startedAt: kernelStatus.startedAt,
         runtimeDbPath: kernelStatus.runtimeDbPath,
+        runtimeVersion: kernelStatus.runtimeVersion,
+        protocolVersion: kernelStatus.protocolVersion,
+        schemaVersion: kernelStatus.schemaVersion,
       };
 
       await writeJsonFileAtomic(runtimePaths.daemonStateFile, daemonState);
       child.unref();
-      return toDaemonStatus(daemonState, kernelStatus);
+      const status = toDaemonStatus(daemonState, kernelStatus);
+      assertCompatibleKernelStatus(status);
+      return status;
     }
 
     if (childExit !== null) {
@@ -163,17 +179,25 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     const running = await pingKernelStatus(daemonState.port);
-    if (!running) {
-      await fs.rm(runtimePaths.daemonStateFile, { force: true });
-      return {
-        ok: true,
-        pid: daemonState.pid,
-        port: daemonState.port,
-        startedAt: daemonState.startedAt,
-        runtimeDbPath: daemonState.runtimeDbPath,
-        projectCount: 0,
-      };
-    }
+      if (!running) {
+        await fs.rm(runtimePaths.daemonStateFile, { force: true });
+        return {
+          ok: true,
+          pid: daemonState.pid,
+          port: daemonState.port,
+          startedAt: daemonState.startedAt,
+          runtimeDbPath: daemonState.runtimeDbPath,
+          runtimeVersion: daemonState.runtimeVersion ?? "unknown",
+          protocolVersion: daemonState.protocolVersion ?? CLI_PROTOCOL_VERSION,
+          schemaVersion: daemonState.schemaVersion ?? 0,
+          appliedMigrations: [],
+          homeDir: runtimePaths.homeDir,
+          projectRoot: "",
+          managedWorkerCount: 0,
+          leaseDurationSeconds: 0,
+          projectCount: 0,
+        };
+      }
 
     await sleep(150);
   }
@@ -198,6 +222,14 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
         port: daemonState.port,
         startedAt: daemonState.startedAt,
         runtimeDbPath: daemonState.runtimeDbPath,
+        runtimeVersion: daemonState.runtimeVersion ?? "unknown",
+        protocolVersion: daemonState.protocolVersion ?? CLI_PROTOCOL_VERSION,
+        schemaVersion: daemonState.schemaVersion ?? 0,
+        appliedMigrations: [],
+        homeDir: runtimePaths.homeDir,
+        projectRoot: "",
+        managedWorkerCount: 0,
+        leaseDurationSeconds: 0,
         projectCount: 0,
       };
     }
@@ -223,8 +255,14 @@ export async function getRunningDaemonStatus(): Promise<DaemonStatusResponse | n
       autoStart: false,
     });
 
-    return toDaemonStatus(daemonState, kernelStatus);
-  } catch {
+    const status = toDaemonStatus(daemonState, kernelStatus);
+    assertCompatibleKernelStatus(status);
+    return status;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("protocol version")) {
+      throw error;
+    }
+
     await fs.rm(runtimePaths.daemonStateFile, { force: true });
     return null;
   }
@@ -512,6 +550,7 @@ async function requestJson<T>({
     throw new Error("Vilano kernel is not running");
   }
 
+  assertCompatibleKernelStatus(status);
   return requestJsonWithState<T>(status, { method, pathname, body, autoStart });
 }
 
@@ -566,8 +605,24 @@ function toDaemonStatus(state: DaemonState, body: KernelStatusBody): DaemonStatu
     port: state.port,
     startedAt: body.startedAt,
     runtimeDbPath: body.runtimeDbPath,
+    runtimeVersion: body.runtimeVersion,
+    protocolVersion: body.protocolVersion,
+    schemaVersion: body.schemaVersion,
+    appliedMigrations: body.appliedMigrations,
+    homeDir: body.homeDir,
+    projectRoot: body.projectRoot,
+    managedWorkerCount: body.managedWorkerCount,
+    leaseDurationSeconds: body.leaseDurationSeconds,
     projectCount: body.projectCount,
   };
+}
+
+function assertCompatibleKernelStatus(status: Pick<DaemonStatusResponse, "protocolVersion" | "runtimeVersion">): void {
+  if (typeof status.protocolVersion !== "number" || status.protocolVersion !== CLI_PROTOCOL_VERSION) {
+    throw new Error(
+      `Vilano CLI protocol version ${CLI_PROTOCOL_VERSION} is incompatible with kernel runtime ${status.runtimeVersion} (protocol ${status.protocolVersion})`
+    );
+  }
 }
 
 async function sleep(durationMs: number): Promise<void> {

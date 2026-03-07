@@ -35,6 +35,7 @@ import {
   type ServiceTurnActivation,
   type WorkflowActivation,
 } from "./client.ts";
+import { WORKER_PROTOCOL_VERSION } from "./runtime-version.ts";
 
 type Activation = WorkflowActivation | ServiceTurnActivation;
 type ServiceMethodKind = "message" | "ask" | "signal";
@@ -53,6 +54,7 @@ export async function startWorker(options: WorkerOptions = {}): Promise<void> {
   const pollIntervalMs = options.pollIntervalMs ?? 1000;
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? 5000;
   const client = new WorkerClient(serverUrl, workerId);
+  await client.assertCompatible(WORKER_PROTOCOL_VERSION);
 
   while (true) {
     let activation: WorkflowActivation | ServiceTurnActivation | null;

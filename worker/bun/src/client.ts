@@ -52,6 +52,13 @@ interface ActivationLeaseResponse {
   activation: WorkflowActivation | ServiceTurnActivation | null;
 }
 
+interface KernelStatusResponse {
+  ok: true;
+  runtimeVersion: string;
+  protocolVersion: number;
+  schemaVersion: number;
+}
+
 interface StepResolveResponse {
   ok: true;
   step:
@@ -166,10 +173,31 @@ interface ServiceTurnFailResponse {
 }
 
 export class WorkerClient {
+  private compatibilityChecked = false;
+
   constructor(
     private readonly serverUrl: string,
     private readonly workerId: string
   ) {}
+
+  async getStatus(): Promise<KernelStatusResponse> {
+    return await this.request<KernelStatusResponse>("GET", "/v1/status");
+  }
+
+  async assertCompatible(expectedProtocolVersion: number): Promise<void> {
+    if (this.compatibilityChecked) {
+      return;
+    }
+
+    const status = await this.getStatus();
+    if (status.protocolVersion !== expectedProtocolVersion) {
+      throw new Error(
+        `Vilano worker protocol version ${expectedProtocolVersion} is incompatible with kernel runtime ${status.runtimeVersion} (protocol ${status.protocolVersion})`
+      );
+    }
+
+    this.compatibilityChecked = true;
+  }
 
   async leaseActivation(): Promise<WorkflowActivation | ServiceTurnActivation | null> {
     const response = await this.request<ActivationLeaseResponse>("POST", "/v1/activations/lease", {

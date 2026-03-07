@@ -36,6 +36,9 @@ export interface DaemonState {
   port: number;
   startedAt: string;
   runtimeDbPath: string;
+  runtimeVersion?: string;
+  protocolVersion?: number;
+  schemaVersion?: number;
 }
 
 export interface DaemonStatusResponse {
@@ -44,6 +47,14 @@ export interface DaemonStatusResponse {
   port: number;
   startedAt: string;
   runtimeDbPath: string;
+  runtimeVersion: string;
+  protocolVersion: number;
+  schemaVersion: number;
+  appliedMigrations: Array<{ version: number; name: string; applied_at: string }>;
+  homeDir: string;
+  projectRoot: string;
+  managedWorkerCount: number;
+  leaseDurationSeconds: number;
   projectCount: number;
 }
 
