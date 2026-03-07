@@ -34,6 +34,8 @@ Current coverage:
 - kernel-enforced timeout for non-cooperative blocking service turns
 - managed-worker kill/restart on cancellation of non-cooperative blocking steps
 - unmanaged-worker fallback for non-cooperative blocking service turns
+- service FIFO processing across mixed `ask` / `send` backlogs
+- `service stop` failing queued backlog behind an active turn
 
 Run it from the dev shell:
 

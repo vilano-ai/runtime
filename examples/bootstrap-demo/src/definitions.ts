@@ -493,6 +493,60 @@ export const retryingResponder = service({
   },
 });
 
+export const mailboxProbe = service({
+  name: "mailboxProbe",
+  key: (input: { sessionId: string }) => input.sessionId,
+  init: async (input: { sessionId: string }) => ({
+    sessionId: input.sessionId,
+    history: [] as string[],
+  }),
+  onSend: {
+    record: async (payload: { id: string }, state) => ({
+      state: {
+        ...state,
+        history: [...state.history, `send:${payload.id}`],
+      },
+    }),
+  },
+  onAsk: {
+    delay: async (payload: { id: string; delayMs?: number }, state, ctx) => {
+      if ((payload.delayMs ?? 0) > 0) {
+        await ctx.step(
+          "mailbox-delay",
+          async () => {
+            await new Promise((resolve) => {
+              setTimeout(resolve, payload.delayMs ?? 0);
+            });
+
+            return null;
+          },
+          {
+            key: `mailbox-delay:${payload.id}:${payload.delayMs ?? 0}`,
+          }
+        );
+      }
+
+      const history = [...state.history, `ask:${payload.id}`];
+
+      return {
+        state: {
+          ...state,
+          history,
+        },
+        reply: {
+          id: payload.id,
+          history,
+        },
+      };
+    },
+    history: async (_payload: Record<string, never>, state) => ({
+      reply: {
+        history: state.history,
+      },
+    }),
+  },
+});
+
 export const timeoutOnlyResponder = service({
   name: "timeoutOnlyResponder",
   retry: {

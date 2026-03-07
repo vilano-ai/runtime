@@ -3,6 +3,7 @@ defmodule VilanoKernel.Storage do
 
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
+  alias VilanoKernel.Storage.{RetryPolicy, ServiceLifecycle}
 
   def init! do
     SQL.query!(Repo, "pragma journal_mode = wal", [])
@@ -1324,7 +1325,7 @@ defmodule VilanoKernel.Storage do
                 "kind" => candidate["kind"],
                 "name" => candidate["name"],
                 "correlationId" => candidate["correlation_id"],
-                "reason" => service_turn_resume_reason(candidate),
+                "reason" => ServiceLifecycle.resume_reason(candidate),
                 "attempt" => attempt
               },
               now
@@ -1560,19 +1561,19 @@ defmodule VilanoKernel.Storage do
                       existing["max_attempts"]
 
                     true ->
-                      1
+                      RetryPolicy.normalize_max_attempts(nil)
                   end
 
                 persisted_backoff_kind =
                   cond do
                     is_binary(Map.get(retry_policy, "backoffKind")) ->
-                      normalize_backoff_kind(Map.get(retry_policy, "backoffKind"))
+                      RetryPolicy.normalize_backoff_kind(Map.get(retry_policy, "backoffKind"))
 
                     existing && is_binary(existing["backoff_kind"]) ->
-                      normalize_backoff_kind(existing["backoff_kind"])
+                      RetryPolicy.normalize_backoff_kind(existing["backoff_kind"])
 
                     true ->
-                      "fixed"
+                      RetryPolicy.normalize_backoff_kind(nil)
                   end
 
                 persisted_backoff_ms =
@@ -1584,7 +1585,7 @@ defmodule VilanoKernel.Storage do
                       existing["backoff_ms"]
 
                     true ->
-                      0
+                      RetryPolicy.normalize_backoff_ms(nil)
                   end
 
                 persisted_backoff_step_ms =
@@ -1627,10 +1628,12 @@ defmodule VilanoKernel.Storage do
                 persisted_backoff_jitter_kind =
                   cond do
                     is_binary(Map.get(retry_policy, "backoffJitterKind")) ->
-                      normalize_backoff_jitter_kind(Map.get(retry_policy, "backoffJitterKind"))
+                      RetryPolicy.normalize_backoff_jitter_kind(
+                        Map.get(retry_policy, "backoffJitterKind")
+                      )
 
                     existing && is_binary(existing["backoff_jitter_kind"]) ->
-                      normalize_backoff_jitter_kind(existing["backoff_jitter_kind"])
+                      RetryPolicy.normalize_backoff_jitter_kind(existing["backoff_jitter_kind"])
 
                     true ->
                       nil
@@ -1639,25 +1642,25 @@ defmodule VilanoKernel.Storage do
                 persisted_backoff_jitter_ratio =
                   cond do
                     is_number(Map.get(retry_policy, "backoffJitterRatio")) ->
-                      normalize_backoff_jitter_ratio(
+                      RetryPolicy.normalize_backoff_jitter_ratio(
                         Map.get(retry_policy, "backoffJitterRatio"),
                         persisted_backoff_jitter_kind
                       )
 
                     existing && is_number(existing["backoff_jitter_ratio"]) ->
-                      normalize_backoff_jitter_ratio(
+                      RetryPolicy.normalize_backoff_jitter_ratio(
                         existing["backoff_jitter_ratio"],
                         persisted_backoff_jitter_kind
                       )
 
                     true ->
-                      normalize_backoff_jitter_ratio(nil, persisted_backoff_jitter_kind)
+                      RetryPolicy.normalize_backoff_jitter_ratio(nil, persisted_backoff_jitter_kind)
                   end
 
                 persisted_retry_on =
                   cond do
                     is_list(Map.get(retry_policy, "retryOn")) ->
-                      normalize_retry_on(Map.get(retry_policy, "retryOn"))
+                      RetryPolicy.normalize_retry_on(Map.get(retry_policy, "retryOn"))
 
                     existing ->
                       decode_json_list(existing["retry_on_json"])
@@ -3746,7 +3749,7 @@ defmodule VilanoKernel.Storage do
   defp fail_step_attempt!(run, step, name, error_body, now) do
     encoded_error = Jason.encode!(error_body)
     attempt = step_attempt(step)
-    max_attempts = normalize_max_attempts(step["max_attempts"])
+    max_attempts = RetryPolicy.normalize_max_attempts(step["max_attempts"])
     retry_on = decode_json_list(step["retry_on_json"])
     backoff = compute_backoff_details(%{
       "backoffKind" => step["backoff_kind"],
@@ -3867,8 +3870,8 @@ defmodule VilanoKernel.Storage do
     error_body = Map.get(body, "error", %{})
     encoded_error = Jason.encode!(error_body)
     attempt = exec["attempt"] || 1
-    max_attempts = normalize_max_attempts(Map.get(body, "maxAttempts"))
-    retry_on = normalize_retry_on(Map.get(body, "retryOn"))
+    max_attempts = RetryPolicy.normalize_max_attempts(Map.get(body, "maxAttempts"))
+    retry_on = RetryPolicy.normalize_retry_on(Map.get(body, "retryOn"))
     backoff = compute_backoff_details(body, attempt, {"exec", run["id"], op_key})
     backoff_kind = backoff["backoffKind"]
     backoff_ms = backoff["backoffMs"]
@@ -4016,9 +4019,9 @@ defmodule VilanoKernel.Storage do
   end
 
   defp fail_service_turn_attempt!(service_run, envelope, error_body, retry_options, now) do
-    max_attempts = normalize_max_attempts(Map.get(retry_options, "maxAttempts"))
+    max_attempts = RetryPolicy.normalize_max_attempts(Map.get(retry_options, "maxAttempts"))
     attempt = envelope["attempt"] || 1
-    retry_on = normalize_retry_on(Map.get(retry_options, "retryOn"))
+    retry_on = RetryPolicy.normalize_retry_on(Map.get(retry_options, "retryOn"))
     backoff = compute_backoff_details(retry_options, attempt, {"service_turn", service_run["id"], envelope["id"]})
     backoff_kind = backoff["backoffKind"]
     backoff_ms = backoff["backoffMs"]
@@ -4276,171 +4279,11 @@ defmodule VilanoKernel.Storage do
 
   defp retry_wait_key(kind, op_key), do: "retry:" <> kind <> ":" <> op_key
 
-  defp retryable_failure?(error_body, retry_on)
+  defp retry_decision(error_body, attempt, max_attempts, retry_on),
+    do: RetryPolicy.retry_decision(error_body, attempt, max_attempts, retry_on)
 
-  defp retryable_failure?(error_body, retry_on) when is_map(error_body) do
-    retryable = Map.get(error_body, "retryable", true) != false
-    family = normalize_retry_family(Map.get(error_body, "family"))
-    retryable and retry_family_allowed?(family, retry_on)
-  end
-
-  defp retryable_failure?(_error_body, retry_on) do
-    retry_family_allowed?("application", retry_on)
-  end
-
-  defp retry_decision(error_body, attempt, max_attempts, retry_on) do
-    family = normalize_retry_family(Map.get(error_body, "family"))
-    explicit_retryable = Map.get(error_body, "retryable", true) != false
-    family_allowed = retry_family_allowed?(family, retry_on)
-    retryable = retryable_failure?(error_body, retry_on)
-    will_retry = retryable and attempt < max_attempts
-
-    decision =
-      cond do
-        will_retry -> "scheduled"
-        not explicit_retryable -> "non_retryable"
-        not family_allowed -> "family_not_selected"
-        max_attempts <= 1 -> "retries_disabled"
-        true -> "attempts_exhausted"
-      end
-
-    %{
-      "retryFamily" => family,
-      "retryable" => retryable,
-      "willRetry" => will_retry,
-      "retryDecision" => decision
-    }
-  end
-
-  defp retry_family_allowed?(_family, []), do: true
-
-  defp retry_family_allowed?(family, retry_on) when is_list(retry_on) do
-    normalized = normalize_retry_on(retry_on)
-    normalized == [] or "always" in normalized or family in normalized
-  end
-
-  defp retry_family_allowed?(_family, _retry_on), do: true
-
-  defp compute_backoff_details(policy, attempt, seed) do
-    kind = normalize_backoff_kind(Map.get(policy, "backoffKind"))
-    base_ms = normalize_backoff_ms(Map.get(policy, "backoffMs"))
-    max_ms = normalize_optional_backoff_ms(Map.get(policy, "maxBackoffMs"))
-    jitter_kind = normalize_backoff_jitter_kind(Map.get(policy, "backoffJitterKind"))
-    jitter_ratio = normalize_backoff_jitter_ratio(Map.get(policy, "backoffJitterRatio"), jitter_kind)
-
-    base_delay_ms =
-      case kind do
-        "linear" ->
-          step_ms = normalize_optional_backoff_ms(Map.get(policy, "backoffStepMs")) || base_ms
-          base_ms + max(attempt - 1, 0) * step_ms
-
-        "exponential" ->
-          factor = normalize_backoff_factor(Map.get(policy, "backoffFactor"))
-          round(base_ms * :math.pow(factor, max(attempt - 1, 0)))
-
-        _ ->
-          base_ms
-      end
-
-    capped_ms =
-      case max_ms do
-        nil -> base_delay_ms
-        value -> min(base_delay_ms, value)
-      end
-
-    jitter_bound_ms =
-      cond do
-        capped_ms <= 0 -> 0
-        is_nil(jitter_kind) -> 0
-        true -> round(capped_ms * jitter_ratio)
-      end
-
-    jitter_ms = deterministic_jitter_ms(seed, jitter_bound_ms)
-    applied_ms = max(capped_ms - jitter_ms, 0)
-
-    %{
-      "backoffKind" => kind,
-      "backoffMs" => applied_ms,
-      "backoffBaseMs" => base_delay_ms,
-      "backoffCappedMs" => capped_ms,
-      "backoffCapMs" => max_ms,
-      "backoffJitterKind" => jitter_kind,
-      "backoffJitterRatio" => if(is_nil(jitter_kind), do: nil, else: jitter_ratio),
-      "backoffJitterMs" => if(is_nil(jitter_kind), do: nil, else: jitter_ms)
-    }
-  end
-
-  defp normalize_max_attempts(value) when is_integer(value) and value > 0, do: value
-  defp normalize_max_attempts(_value), do: 1
-
-  defp normalize_backoff_kind("linear"), do: "linear"
-  defp normalize_backoff_kind("exponential"), do: "exponential"
-  defp normalize_backoff_kind(_value), do: "fixed"
-
-  defp normalize_backoff_ms(value) when is_integer(value) and value >= 0, do: value
-  defp normalize_backoff_ms(_value), do: 0
-
-  defp normalize_optional_backoff_ms(value) when is_integer(value) and value >= 0, do: value
-  defp normalize_optional_backoff_ms(_value), do: nil
-
-  defp normalize_backoff_factor(value) when is_number(value) and value > 0, do: value
-  defp normalize_backoff_factor(_value), do: 2.0
-
-  defp normalize_backoff_jitter_kind("full"), do: "full"
-  defp normalize_backoff_jitter_kind("half"), do: "half"
-  defp normalize_backoff_jitter_kind("ratio"), do: "ratio"
-  defp normalize_backoff_jitter_kind(_value), do: nil
-
-  defp normalize_backoff_jitter_ratio(value, "full") when is_number(value) do
-    min(max(value * 1.0, 0.0), 1.0)
-  end
-
-  defp normalize_backoff_jitter_ratio(_value, "full"), do: 1.0
-
-  defp normalize_backoff_jitter_ratio(value, "half") when is_number(value) do
-    min(max(value * 1.0, 0.0), 0.5)
-  end
-
-  defp normalize_backoff_jitter_ratio(_value, "half"), do: 0.5
-
-  defp normalize_backoff_jitter_ratio(value, "ratio") when is_number(value) do
-    min(max(value * 1.0, 0.0), 1.0)
-  end
-
-  defp normalize_backoff_jitter_ratio(_value, "ratio"), do: 0.0
-
-  defp normalize_backoff_jitter_ratio(_value, _kind), do: nil
-
-  defp deterministic_jitter_ms(_seed, max_jitter_ms) when not is_integer(max_jitter_ms) or max_jitter_ms <= 0,
-    do: 0
-
-  defp deterministic_jitter_ms(seed, max_jitter_ms),
-    do: :erlang.phash2(seed, max_jitter_ms + 1)
-
-  defp normalize_retry_family("timeout"), do: "timeout"
-  defp normalize_retry_family("process_exit"), do: "process_exit"
-  defp normalize_retry_family("process_spawn"), do: "process_spawn"
-  defp normalize_retry_family("application"), do: "application"
-  defp normalize_retry_family(_value), do: "application"
-
-  defp normalize_retry_on(values) when is_list(values) do
-    normalized =
-      values
-      |> Enum.filter(&is_binary/1)
-      |> Enum.map(fn
-        "always" -> "always"
-        value -> normalize_retry_family(value)
-      end)
-      |> Enum.uniq()
-
-    if Enum.member?(normalized, "always") do
-      ["always"]
-    else
-      normalized
-    end
-  end
-
-  defp normalize_retry_on(_values), do: []
+  defp compute_backoff_details(policy, attempt, seed),
+    do: RetryPolicy.compute_backoff_details(policy, attempt, seed)
 
 
   defp cancel_waiting_waits!(run_id, error_body, now) do
@@ -4968,6 +4811,8 @@ defmodule VilanoKernel.Storage do
 
   defp insert_service_envelope!(service_run_id, kind, name, payload, correlation_id, sender_run_id, now) do
     envelope_id = "env_" <> Ecto.UUID.generate()
+    current_run = get_run(service_run_id)
+    next_status = ServiceLifecycle.enqueue_status(current_run["status"], current_run["leaseExpiresAt"], now)
 
     SQL.query!(
       Repo,
@@ -5006,11 +4851,11 @@ defmodule VilanoKernel.Storage do
       """
       update runs
       set
-        status = case when status = 'stopped' then status else 'pending' end,
+        status = ?,
         updated_at = ?
       where id = ?
       """,
-      [now, service_run_id]
+      [next_status, now, service_run_id]
     )
 
     append_event!(
@@ -5175,17 +5020,7 @@ defmodule VilanoKernel.Storage do
 
   defp service_next_status(service_run_id, stop?) do
     current_run = get_run(service_run_id)
-
-    cond do
-      stop? or (current_run && current_run["status"] == "stopped") ->
-        "stopped"
-
-      service_has_queued_envelopes?(service_run_id) ->
-        "pending"
-
-      true ->
-        "idle"
-    end
+    ServiceLifecycle.next_status(current_run["status"], service_has_queued_envelopes?(service_run_id), stop?)
   end
 
   defp service_has_queued_envelopes?(service_run_id) do
@@ -5200,19 +5035,6 @@ defmodule VilanoKernel.Storage do
     )
     |> first_integer()
     |> Kernel.>(0)
-  end
-
-  defp service_turn_resume_reason(candidate) do
-    cond do
-      candidate["run_status"] == "pending" ->
-        "wait_satisfied"
-
-      candidate["run_status"] == "active" and not is_nil(candidate["run_lease_expires_at"]) ->
-        "lease_expired"
-
-      true ->
-        "retry"
-    end
   end
 
   defp wake_waiting_parents_for_child!(child_run_id, child_status, payload, now) do

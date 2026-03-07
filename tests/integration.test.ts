@@ -10,6 +10,7 @@ import type {
   RunInspectResponse,
   RunReplayEntry,
   RunStartResponse,
+  ServiceStopResponse,
 } from "../cli/src/types.ts";
 
 const ROOT = path.resolve(import.meta.dir, "..");
@@ -137,6 +138,16 @@ class RuntimeHarness {
     await this.runCli([
       "service",
       "ensure",
+      reference,
+      "--key-json",
+      JSON.stringify(keyInput),
+    ]);
+  }
+
+  async stopService(reference: string, keyInput: unknown): Promise<ServiceStopResponse> {
+    return await this.runCliJson<ServiceStopResponse>([
+      "service",
+      "stop",
       reference,
       "--key-json",
       JSON.stringify(keyInput),
@@ -1091,6 +1102,215 @@ test("service turns retry durably after handler failures", async () => {
     expect(
       inspect.waits.some((wait) => wait.kind === "retry_backoff" && wait.status === "completed")
     ).toBe(true);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("services process mixed ask and send backlogs in FIFO order", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { sessionId: "mailbox-fifo" };
+
+  try {
+    await harness.ensureService("demo/mailboxProbe", keyInput);
+
+    const firstAsk = harness.spawnCliCommand([
+      "service",
+      "ask",
+      "demo/mailboxProbe",
+      "delay",
+      "--key-json",
+      JSON.stringify(keyInput),
+      "--input",
+      JSON.stringify({ id: "first", delayMs: 400 }),
+      "--timeout",
+      "60s",
+      "--json",
+    ]);
+
+    await harness.waitForService(
+      "demo/mailboxProbe",
+      keyInput,
+      (inspect) =>
+        inspect.run.status === "active" &&
+        inspect.envelopes.some((envelope) => envelope.name === "delay" && envelope.status === "processing"),
+      30_000
+    );
+
+    await harness.sendService("demo/mailboxProbe", "record", keyInput, { id: "second" });
+
+    const historyAsk = harness.spawnCliCommand([
+      "service",
+      "ask",
+      "demo/mailboxProbe",
+      "history",
+      "--key-json",
+      JSON.stringify(keyInput),
+      "--input",
+      JSON.stringify({}),
+      "--timeout",
+      "60s",
+      "--json",
+    ]);
+
+    const queued = await harness.waitForService(
+      "demo/mailboxProbe",
+      keyInput,
+      (inspect) =>
+        inspect.envelopes.length >= 3 &&
+        inspect.envelopes.some((envelope) => envelope.name === "delay" && envelope.status === "processing") &&
+        inspect.envelopes.filter((envelope) => envelope.status === "queued").length >= 2,
+      30_000
+    );
+
+    expect(queued.envelopes.slice(0, 3).map((envelope) => envelope.name)).toEqual([
+      "delay",
+      "record",
+      "history",
+    ]);
+
+    const [firstAskResult, historyAskResult] = await Promise.all([firstAsk.wait(), historyAsk.wait()]);
+    if (firstAskResult.exitCode !== 0) {
+      throw new Error(
+        [
+          "first queued ask failed",
+          firstAskResult.stdout ? `stdout:\n${firstAskResult.stdout}` : "",
+          firstAskResult.stderr ? `stderr:\n${firstAskResult.stderr}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      );
+    }
+    if (historyAskResult.exitCode !== 0) {
+      throw new Error(
+        [
+          "history ask failed",
+          historyAskResult.stdout ? `stdout:\n${historyAskResult.stdout}` : "",
+          historyAskResult.stderr ? `stderr:\n${historyAskResult.stderr}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      );
+    }
+    expect(firstAskResult.exitCode).toBe(0);
+    expect(historyAskResult.exitCode).toBe(0);
+
+    const firstReply = JSON.parse(firstAskResult.stdout) as {
+      ok: true;
+      reply: { id: string; history: string[] };
+    };
+    const historyReply = JSON.parse(historyAskResult.stdout) as {
+      ok: true;
+      reply: { history: string[] };
+    };
+
+    expect(firstReply.reply.history).toEqual(["ask:first"]);
+    expect(historyReply.reply.history).toEqual(["ask:first", "send:second"]);
+
+    const completed = await harness.waitForService(
+      "demo/mailboxProbe",
+      keyInput,
+      (inspect) =>
+        inspect.envelopes.slice(0, 3).every((envelope) => envelope.status === "completed") &&
+        inspect.run.state !== null &&
+        typeof inspect.run.state === "object" &&
+        Array.isArray((inspect.run.state as { history?: unknown[] }).history) &&
+        ((inspect.run.state as { history: unknown[] }).history.join("|") === "ask:first|send:second"),
+      30_000
+    );
+
+    expect(completed.run.state).toEqual({
+      sessionId: "mailbox-fifo",
+      history: ["ask:first", "send:second"],
+    });
+    expect(completed.envelopes.slice(0, 3).map((envelope) => envelope.name)).toEqual([
+      "delay",
+      "record",
+      "history",
+    ]);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("service stop fails queued backlog behind an active turn", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { sessionId: "mailbox-stop" };
+
+  try {
+    await harness.ensureService("demo/mailboxProbe", keyInput);
+
+    const firstAsk = harness.spawnCliCommand([
+      "service",
+      "ask",
+      "demo/mailboxProbe",
+      "delay",
+      "--key-json",
+      JSON.stringify(keyInput),
+      "--input",
+      JSON.stringify({ id: "first", delayMs: 2500 }),
+      "--timeout",
+      "60s",
+      "--json",
+    ]);
+
+    await harness.waitForService(
+      "demo/mailboxProbe",
+      keyInput,
+      (inspect) =>
+        inspect.run.status === "active" &&
+        inspect.envelopes.some((envelope) => envelope.name === "delay" && envelope.status === "processing"),
+      30_000
+    );
+
+    await harness.sendService("demo/mailboxProbe", "record", keyInput, { id: "second" });
+
+    const historyAsk = harness.spawnCliCommand([
+      "service",
+      "ask",
+      "demo/mailboxProbe",
+      "history",
+      "--key-json",
+      JSON.stringify(keyInput),
+      "--input",
+      JSON.stringify({}),
+      "--timeout",
+      "60s",
+      "--json",
+    ]);
+
+    await harness.waitForService(
+      "demo/mailboxProbe",
+      keyInput,
+      (inspect) =>
+        inspect.envelopes.length >= 3 &&
+        inspect.envelopes.some((envelope) => envelope.name === "delay" && envelope.status === "processing") &&
+        inspect.envelopes.filter((envelope) => envelope.status === "queued").length >= 2,
+      30_000
+    );
+
+    const stopped = await harness.stopService("demo/mailboxProbe", keyInput);
+    expect(stopped.run.status).toBe("stopped");
+    expect(stopped.hadInFlightTurn).toBe(true);
+    expect(stopped.stoppedEnvelopeCount).toBe(3);
+
+    const [firstAskResult, historyAskResult] = await Promise.all([firstAsk.wait(), historyAsk.wait()]);
+    expect(firstAskResult.exitCode).not.toBe(0);
+    expect(historyAskResult.exitCode).not.toBe(0);
+
+    const stoppedInspect = await harness.inspectService("demo/mailboxProbe", keyInput);
+    expect(stoppedInspect.run.status).toBe("stopped");
+    expect(stoppedInspect.run.state).toBeNull();
+    expect(stoppedInspect.envelopes.slice(0, 3).map((envelope) => envelope.status)).toEqual([
+      "failed",
+      "failed",
+      "failed",
+    ]);
+    expect(stoppedInspect.envelopes.slice(0, 3).map((envelope) => envelope.name)).toEqual([
+      "delay",
+      "record",
+      "history",
+    ]);
   } finally {
     await harness.dispose();
   }
