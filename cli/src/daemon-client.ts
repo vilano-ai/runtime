@@ -42,7 +42,9 @@ interface KernelStatusBody {
   projectCount: number;
 }
 
-export async function ensureDaemonStarted(port = 4141): Promise<DaemonStatusResponse> {
+export async function ensureDaemonStarted(
+  port = resolveDefaultKernelPort()
+): Promise<DaemonStatusResponse> {
   const status = await getRunningDaemonStatus();
   if (status) {
     return status;
@@ -403,7 +405,7 @@ export async function inspectServiceEnvelope(
   return requestJson<ServiceEnvelopeResponse>({
     method: "GET",
     pathname: `/v1/service-envelopes/${encodeURIComponent(envelopeId)}`,
-    autoStart: true,
+    autoStart: false,
   });
 }
 
@@ -572,4 +574,18 @@ async function sleep(durationMs: number): Promise<void> {
   await new Promise((resolve) => {
     setTimeout(resolve, durationMs);
   });
+}
+
+function resolveDefaultKernelPort(): number {
+  const raw = process.env.VILANO_KERNEL_PORT;
+  if (!raw) {
+    return 4141;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 4141;
+  }
+
+  return parsed;
 }

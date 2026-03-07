@@ -824,14 +824,23 @@ function parseDurationFlag(
 
 async function waitForServiceEnvelope(envelopeId: string, timeoutMs: number): Promise<RunEnvelopeRecord> {
   const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
 
   while (Date.now() <= deadline) {
-    const response = await inspectServiceEnvelope(envelopeId);
-    if (response.envelope.status === "completed" || response.envelope.status === "failed") {
-      return response.envelope;
+    try {
+      const response = await inspectServiceEnvelope(envelopeId);
+      if (response.envelope.status === "completed" || response.envelope.status === "failed") {
+        return response.envelope;
+      }
+    } catch (error) {
+      lastError = error;
     }
 
     await sleep(150);
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError;
   }
 
   throw new CliError(`Timed out waiting for service envelope ${envelopeId}`);

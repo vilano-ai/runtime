@@ -21,6 +21,8 @@ Current coverage:
 - sleep wait durability across daemon restart
 - signal wait durability across daemon restart
 - service state durability across daemon restart
+- repeated daemon restarts across retry waits with capped jittered backoff
+- repeated daemon restarts across service backlogs and lease recovery
 - exec stdout/stderr/artifact capture on success
 - exec timeout persistence with captured failure artifacts
 - `run replay` workflow timeline rendering
@@ -44,6 +46,6 @@ Run it from the dev shell:
 
 Next high-value additions:
 
-- longer-running soak coverage across repeated daemon restarts
-- restart coverage for richer retry-policy combinations
+- longer-running multi-minute soak coverage with repeated worker churn
 - higher-volume service mailbox / turn sequencing coverage
+- restart coverage for broader mixed workflow/service traffic
