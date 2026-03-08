@@ -36,6 +36,7 @@ export interface DaemonState {
   port: number;
   startedAt: string;
   runtimeDbPath: string;
+  authToken?: string;
   runtimeVersion?: string;
   protocolVersion?: number;
   schemaVersion?: number;

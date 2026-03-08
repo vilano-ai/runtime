@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
@@ -52,6 +53,17 @@ interface KernelStatusBody {
   projectCount: number;
 }
 
+class KernelRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string
+  ) {
+    super(message);
+    this.name = "KernelRequestError";
+  }
+}
+
 export async function ensureDaemonStarted(
   port = resolveDefaultKernelPort()
 ): Promise<DaemonStatusResponse> {
@@ -66,6 +78,7 @@ export async function ensureDaemonStarted(
   const bundle = resolveRuntimeBundlePaths();
   const kernelDir = bundle.kernelDir;
   const projectRoot = bundle.runtimeRoot;
+  const authToken = generateDaemonAuthToken();
   const mixArgs =
     process.env.VILANO_KERNEL_NO_COMPILE === "1"
       ? ["run", "--no-compile", "--no-halt"]
@@ -80,6 +93,7 @@ export async function ensureDaemonStarted(
       VILANO_HOME: runtimePaths.homeDir,
       VILANO_KERNEL_PORT: String(port),
       VILANO_ROOT: projectRoot,
+      VILANO_DAEMON_TOKEN: authToken,
     },
   });
 
@@ -104,7 +118,7 @@ export async function ensureDaemonStarted(
 
   const deadline = Date.now() + 40_000;
   while (Date.now() < deadline) {
-    const kernelStatus = await pingKernelStatus(port);
+    const kernelStatus = await pingKernelStatus(port, authToken);
     if (kernelStatus) {
       const daemonState: DaemonState = {
         version: 1,
@@ -112,6 +126,7 @@ export async function ensureDaemonStarted(
         port,
         startedAt: kernelStatus.startedAt,
         runtimeDbPath: kernelStatus.runtimeDbPath,
+        authToken,
         runtimeVersion: kernelStatus.runtimeVersion,
         protocolVersion: kernelStatus.protocolVersion,
         schemaVersion: kernelStatus.schemaVersion,
@@ -165,8 +180,12 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
       pathname: "/v1/admin/shutdown",
       autoStart: false,
     });
-  } catch {
-    const running = await pingKernelStatus(daemonState.port);
+  } catch (error) {
+    if (error instanceof KernelRequestError && error.code === "unauthorized") {
+      throw error;
+    }
+
+    const running = await pingKernelStatus(daemonState.port, daemonState.authToken);
     if (!running) {
       await fs.rm(runtimePaths.daemonStateFile, { force: true });
       return null;
@@ -177,7 +196,7 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
 
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
-    const running = await pingKernelStatus(daemonState.port);
+    const running = await pingKernelStatus(daemonState.port, daemonState.authToken);
       if (!running) {
         await fs.rm(runtimePaths.daemonStateFile, { force: true });
         return {
@@ -224,6 +243,15 @@ export async function getRunningDaemonStatus(): Promise<DaemonStatusResponse | n
   } catch (error) {
     if (error instanceof Error && error.message.includes("protocol version")) {
       throw error;
+    }
+
+    if (error instanceof KernelRequestError && error.code === "unauthorized") {
+      if (daemonState.authToken) {
+        throw error;
+      }
+
+      await fs.rm(runtimePaths.daemonStateFile, { force: true });
+      return null;
     }
 
     await fs.rm(runtimePaths.daemonStateFile, { force: true });
@@ -504,27 +532,39 @@ async function requestJson<T>({
   body,
   autoStart = true,
 }: RequestOptions): Promise<T> {
+  const runtimePaths = getRuntimePaths();
+  let daemonState = await readJsonFile<DaemonState | null>(runtimePaths.daemonStateFile, null);
   let status = await getRunningDaemonStatus();
   if (!status && autoStart) {
     status = await ensureDaemonStarted();
+    daemonState = await readJsonFile<DaemonState | null>(runtimePaths.daemonStateFile, null);
   }
 
   if (!status) {
     throw new Error("Vilano kernel is not running");
   }
 
+  if (!daemonState) {
+    daemonState = await readJsonFile<DaemonState | null>(runtimePaths.daemonStateFile, null);
+  }
+
+  if (!daemonState) {
+    throw new Error("Vilano kernel state is missing from VILANO_HOME");
+  }
+
   assertCompatibleKernelStatus(status);
-  return requestJsonWithState<T>(status, { method, pathname, body, autoStart });
+  return requestJsonWithState<T>(daemonState, { method, pathname, body, autoStart });
 }
 
 async function requestJsonWithState<T>(
-  status: Pick<DaemonStatusResponse, "port">,
+  status: Pick<DaemonState, "port" | "authToken">,
   { method, pathname, body }: RequestOptions
 ): Promise<T> {
   const response = await fetch(`http://127.0.0.1:${status.port}${pathname}`, {
     method,
     headers: {
       "content-type": "application/json; charset=utf-8",
+      ...(status.authToken ? { "x-vilano-token": status.authToken } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -533,24 +573,41 @@ async function requestJsonWithState<T>(
   const parsed = raw ? (JSON.parse(raw) as T | ErrorResponse) : ({} as T);
 
   if (!response.ok) {
+    const errorCode =
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "error" in parsed &&
+      parsed.error &&
+      typeof parsed.error === "object" &&
+      parsed.error !== null &&
+      "code" in parsed.error &&
+      typeof parsed.error.code === "string"
+        ? parsed.error.code
+        : undefined;
+
     const message =
       typeof parsed === "object" &&
       parsed !== null &&
       "error" in parsed &&
       parsed.error &&
+      typeof parsed.error === "object" &&
+      parsed.error !== null &&
+      "message" in parsed.error &&
       typeof parsed.error.message === "string"
         ? parsed.error.message
         : `Kernel request failed with status ${response.status}`;
 
-    throw new Error(message);
+    throw new KernelRequestError(message, response.status, errorCode);
   }
 
   return parsed as T;
 }
 
-async function pingKernelStatus(port: number): Promise<KernelStatusBody | null> {
+async function pingKernelStatus(port: number, authToken?: string): Promise<KernelStatusBody | null> {
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/v1/status`);
+    const response = await fetch(`http://127.0.0.1:${port}/v1/status`, {
+      headers: authToken ? { "x-vilano-token": authToken } : undefined,
+    });
     if (!response.ok) {
       return null;
     }
@@ -586,6 +643,10 @@ function assertCompatibleKernelStatus(status: Pick<DaemonStatusResponse, "protoc
       `Vilano CLI protocol version ${CLI_PROTOCOL_VERSION} is incompatible with kernel runtime ${status.runtimeVersion} (protocol ${status.protocolVersion})`
     );
   }
+}
+
+function generateDaemonAuthToken(): string {
+  return crypto.randomBytes(32).toString("hex");
 }
 
 async function sleep(durationMs: number): Promise<void> {

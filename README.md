@@ -11,6 +11,8 @@ Today, this repo already has a working local runtime with:
 - project registry, `run inspect`, and `run replay`
 - integration coverage for cancellation, replay, retries, signals, and hard-stop fallback paths
 
+The local daemon listens on loopback only and now requires a per-runtime access token stored under `VILANO_HOME`. That is meant to block blind localhost access by unrelated local processes; it is not a strong isolation boundary against fully trusted code already running as the same user.
+
 Working design notes live under `spec/` and are intentionally ignored by git.
 
 ## Quickstart

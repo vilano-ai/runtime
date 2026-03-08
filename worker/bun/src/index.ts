@@ -43,6 +43,7 @@ type ServiceMethodKind = "message" | "ask" | "signal";
 export interface WorkerOptions {
   workerId?: string;
   serverUrl?: string;
+  authToken?: string;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
   once?: boolean;
@@ -51,9 +52,10 @@ export interface WorkerOptions {
 export async function startWorker(options: WorkerOptions = {}): Promise<void> {
   const workerId = options.workerId ?? `worker-${crypto.randomUUID()}`;
   const serverUrl = options.serverUrl ?? "http://127.0.0.1:4141";
+  const authToken = options.authToken ?? process.env.VILANO_DAEMON_TOKEN;
   const pollIntervalMs = options.pollIntervalMs ?? 1000;
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? 5000;
-  const client = new WorkerClient(serverUrl, workerId);
+  const client = new WorkerClient(serverUrl, workerId, authToken);
   await client.assertCompatible(WORKER_PROTOCOL_VERSION);
 
   while (true) {

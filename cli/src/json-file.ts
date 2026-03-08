@@ -26,5 +26,6 @@ export async function writeJsonFileAtomic(filePath: string, value: unknown): Pro
   const body = `${JSON.stringify(value, null, 2)}\n`;
 
   await fs.writeFile(tempPath, body, "utf8");
+  await fs.chmod(tempPath, 0o600);
   await fs.rename(tempPath, filePath);
 }

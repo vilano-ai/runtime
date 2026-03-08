@@ -7,6 +7,7 @@ defmodule VilanoKernel.Runtime do
     :port,
     :started_at,
     :project_root,
+    :auth_token,
     :managed_worker_count,
     :lease_duration_seconds
   ]
@@ -46,6 +47,7 @@ defmodule VilanoKernel.Runtime do
       port: port,
       started_at: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
       project_root: project_root,
+      auth_token: System.get_env("VILANO_DAEMON_TOKEN"),
       managed_worker_count: managed_worker_count,
       lease_duration_seconds: lease_duration_seconds
     }

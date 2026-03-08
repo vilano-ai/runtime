@@ -117,6 +117,7 @@ defmodule VilanoKernel.ManagedWorker do
         :exit_status,
         :hide,
         {:cd, String.to_charlist(runtime.project_root)},
+        {:env, worker_env(runtime)},
         {:args,
          Enum.map(
            [worker_entry, "--server", server_url, "--worker-id", worker_id],
@@ -124,6 +125,21 @@ defmodule VilanoKernel.ManagedWorker do
          )}
       ]
     )
+  end
+
+  defp worker_env(runtime) do
+    base_env = [
+      {~c"VILANO_HOME", String.to_charlist(runtime.home_dir)},
+      {~c"VILANO_KERNEL_PORT", String.to_charlist(Integer.to_string(runtime.port))}
+    ]
+
+    case runtime.auth_token do
+      token when is_binary(token) and token != "" ->
+        [{~c"VILANO_DAEMON_TOKEN", String.to_charlist(token)} | base_env]
+
+      _ ->
+        base_env
+    end
   end
 
   defp materialize_worker_entry!(project_root, worker_source_dir) do

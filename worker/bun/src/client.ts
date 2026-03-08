@@ -177,7 +177,8 @@ export class WorkerClient {
 
   constructor(
     private readonly serverUrl: string,
-    private readonly workerId: string
+    private readonly workerId: string,
+    private readonly authToken?: string
   ) {}
 
   async getStatus(): Promise<KernelStatusResponse> {
@@ -530,6 +531,7 @@ export class WorkerClient {
       method,
       headers: {
         "content-type": "application/json; charset=utf-8",
+        ...(this.authToken ? { "x-vilano-token": this.authToken } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });

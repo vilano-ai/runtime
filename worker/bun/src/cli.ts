@@ -35,6 +35,7 @@ if (import.meta.main) {
   await startWorker({
     serverUrl: typeof parsed.flags.server === "string" ? parsed.flags.server : undefined,
     workerId: typeof parsed.flags["worker-id"] === "string" ? parsed.flags["worker-id"] : undefined,
+    authToken: typeof parsed.flags.token === "string" ? parsed.flags.token : undefined,
     once: Boolean(parsed.flags.once),
   });
 }

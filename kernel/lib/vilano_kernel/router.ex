@@ -15,6 +15,7 @@ defmodule VilanoKernel.Router do
     pass: ["application/json"],
     json_decoder: Jason
 
+  plug :authenticate_request
   plug :dispatch
 
   get "/v1/status" do
@@ -38,6 +39,36 @@ defmodule VilanoKernel.Router do
       projectCount: Storage.project_count()
     })
   end
+
+  defp authenticate_request(conn, _opts) do
+    runtime = Application.fetch_env!(:vilano_kernel, :runtime)
+
+    case runtime.auth_token do
+      token when is_binary(token) and token != "" ->
+        provided =
+          conn
+          |> Conn.get_req_header("x-vilano-token")
+          |> List.first()
+
+        if valid_auth_token?(provided, token) do
+          conn
+        else
+          conn
+          |> send_error(401, "unauthorized", "Vilano kernel access token is missing or invalid")
+          |> Conn.halt()
+        end
+
+      _ ->
+        conn
+    end
+  end
+
+  defp valid_auth_token?(provided, expected)
+       when is_binary(provided) and is_binary(expected) and byte_size(provided) == byte_size(expected) do
+    Plug.Crypto.secure_compare(provided, expected)
+  end
+
+  defp valid_auth_token?(_provided, _expected), do: false
 
   post "/v1/admin/shutdown" do
     send_json(conn, 200, %{ok: true, shuttingDown: true})

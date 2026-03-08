@@ -29,12 +29,15 @@ import {
   stopDaemon,
   syncProject,
 } from "./daemon-client.ts";
+import { readJsonFile } from "./json-file.ts";
 import { runDoctor } from "./doctor.ts";
 import { buildProjectManifest, findDefinition, resolveProjectForCwd } from "./registry.ts";
+import { getRuntimePaths } from "./runtime-home.ts";
 import { resolveRuntimeBundlePaths } from "./runtime-bundle.ts";
 import { CLI_PROTOCOL_VERSION, getCliVersion } from "./runtime-version.ts";
 import type {
   DefinitionRecord,
+  DaemonState,
   DaemonStatusResponse,
   ProjectRecord,
   RunExecRecord,
@@ -613,9 +616,14 @@ async function handleWorker(args: string[], flags: Record<string, string | boole
         childArgs.push("--once");
       }
 
+      const workerAuthEnv = await resolveWorkerAuthEnv(serverUrl);
       const exitCode = await new Promise<number>((resolve, reject) => {
         const child = spawn(process.execPath, childArgs, {
           stdio: "inherit",
+          env: {
+            ...process.env,
+            ...workerAuthEnv,
+          },
         });
 
         child.once("error", reject);
@@ -627,6 +635,29 @@ async function handleWorker(args: string[], flags: Record<string, string | boole
     default:
       throw new CliError("Usage: vilano worker start [--once] [--worker-id <id>] [--server <url>]");
   }
+}
+
+async function resolveWorkerAuthEnv(serverUrl: string): Promise<Record<string, string>> {
+  const daemonState = await readJsonFile<DaemonState | null>(getRuntimePaths().daemonStateFile, null);
+  if (!daemonState?.authToken) {
+    return {};
+  }
+
+  try {
+    const parsed = new URL(serverUrl);
+    const port = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
+    const isLoopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
+
+    if (isLoopback && port === daemonState.port) {
+      return {
+        VILANO_DAEMON_TOKEN: daemonState.authToken,
+      };
+    }
+  } catch {
+    return {};
+  }
+
+  return {};
 }
 
 async function handleSignal(args: string[], flags: Record<string, string | boolean>): Promise<number> {
