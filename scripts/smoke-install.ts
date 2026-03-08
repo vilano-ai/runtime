@@ -29,7 +29,8 @@ try {
     )
   );
 
-  await run("bun", ["add", sdkTarball, cliTarball], installDir);
+  await run("bun", ["add", sdkTarball], installDir);
+  await run("bun", ["add", cliTarball], installDir);
 
   const cliEntry = path.join(installDir, "node_modules", "vilano", "bin", "vilano.ts");
   const baseEnv = {
@@ -83,10 +84,11 @@ try {
 }
 
 async function packWorkspace(workspaceDir: string): Promise<string> {
-  const before = new Set((await fs.readdir(workspaceDir)).filter((entry) => entry.endsWith(".tgz")));
+  const existingTarballs = (await fs.readdir(workspaceDir)).filter((entry) => entry.endsWith(".tgz"));
+  await Promise.all(existingTarballs.map((entry) => fs.rm(path.join(workspaceDir, entry), { force: true })));
   await run("bun", ["pm", "pack"], workspaceDir);
   const after = (await fs.readdir(workspaceDir)).filter((entry) => entry.endsWith(".tgz"));
-  const created = after.find((entry) => !before.has(entry));
+  const created = after[0];
 
   if (!created) {
     throw new Error(`Failed to locate tarball after packing ${workspaceDir}`);

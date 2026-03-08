@@ -166,14 +166,13 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
       autoStart: false,
     });
   } catch {
-    try {
-      process.kill(daemonState.pid, "SIGTERM");
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "ESRCH") {
-        throw error;
-      }
+    const running = await pingKernelStatus(daemonState.port);
+    if (!running) {
+      await fs.rm(runtimePaths.daemonStateFile, { force: true });
+      return null;
     }
+
+    throw new Error("Vilano kernel is running but refused the shutdown request");
   }
 
   const deadline = Date.now() + 5000;
@@ -201,42 +200,6 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
 
     await sleep(150);
   }
-
-  try {
-    process.kill(daemonState.pid, "SIGKILL");
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ESRCH") {
-      throw error;
-    }
-  }
-
-  const killDeadline = Date.now() + 2000;
-  while (Date.now() < killDeadline) {
-    const running = await pingKernelStatus(daemonState.port);
-    if (!running) {
-      await fs.rm(runtimePaths.daemonStateFile, { force: true });
-      return {
-        ok: true,
-        pid: daemonState.pid,
-        port: daemonState.port,
-        startedAt: daemonState.startedAt,
-        runtimeDbPath: daemonState.runtimeDbPath,
-        runtimeVersion: daemonState.runtimeVersion ?? "unknown",
-        protocolVersion: daemonState.protocolVersion ?? CLI_PROTOCOL_VERSION,
-        schemaVersion: daemonState.schemaVersion ?? 0,
-        appliedMigrations: [],
-        homeDir: runtimePaths.homeDir,
-        projectRoot: "",
-        managedWorkerCount: 0,
-        leaseDurationSeconds: 0,
-        projectCount: 0,
-      };
-    }
-
-    await sleep(100);
-  }
-
   throw new Error("Timed out waiting for the Vilano kernel to stop");
 }
 

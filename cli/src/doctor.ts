@@ -34,6 +34,7 @@ export interface DoctorReport {
     buildReady: boolean;
     running: boolean;
     status: Awaited<ReturnType<typeof getRunningDaemonStatus>>;
+    error: string | null;
   };
   appliedFixes: string[];
   checks: DoctorCheck[];
@@ -54,14 +55,17 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
     appliedFixes.push(...(await applyDoctorFixes(bundle.kernelDir)));
   }
 
-  const [bunTool, mixTool, elixirTool, daemonStatus, depsReady, buildReady] = await Promise.all([
+  const [bunTool, mixTool, elixirTool, daemonState, depsReady, buildReady] = await Promise.all([
     inspectTool("bun", ["--version"]),
     inspectTool("mix", ["--version"]),
     inspectTool("elixir", ["--version"]),
-    getRunningDaemonStatus().catch(() => null),
+    getDaemonStatusReport(),
     fileExists(`${bundle.kernelDir}/deps`),
     fileExists(`${bundle.kernelDir}/_build`),
   ]);
+
+  const daemonStatus = daemonState.status;
+  const daemonError = daemonState.error;
 
   const checks: DoctorCheck[] = [
     {
@@ -98,9 +102,11 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
     },
     {
       name: "daemon",
-      ok: true,
+      ok: daemonError === null,
       detail:
-        daemonStatus === null
+        daemonError !== null
+          ? daemonError
+          : daemonStatus === null
           ? "Vilano kernel is not running"
           : `running runtime ${daemonStatus.runtimeVersion} protocol ${daemonStatus.protocolVersion} schema ${daemonStatus.schemaVersion}`,
     },
@@ -128,6 +134,7 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
       buildReady,
       running: daemonStatus !== null,
       status: daemonStatus,
+      error: daemonError,
     },
     appliedFixes,
     checks,
@@ -150,6 +157,23 @@ async function applyDoctorFixes(kernelDir: string): Promise<string[]> {
   fixes.push("mix compile");
 
   return fixes;
+}
+
+async function getDaemonStatusReport(): Promise<{
+  status: Awaited<ReturnType<typeof getRunningDaemonStatus>>;
+  error: string | null;
+}> {
+  try {
+    return {
+      status: await getRunningDaemonStatus(),
+      error: null,
+    };
+  } catch (error) {
+    return {
+      status: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 async function inspectTool(command: string, args: string[]): Promise<ToolCheck> {

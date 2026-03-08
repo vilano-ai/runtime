@@ -21,11 +21,17 @@ defmodule VilanoKernel.WaitManager do
 
   @impl true
   def handle_info(:bootstrap, state) do
-    next_state =
-      Storage.list_waiting_timed_waits()
-      |> Enum.reduce(state, fn wait, acc -> schedule_timer(wait, acc) end)
+    try do
+      next_state =
+        Storage.list_waiting_timed_waits()
+        |> Enum.reduce(state, fn wait, acc -> schedule_timer(wait, acc) end)
 
-    {:noreply, next_state}
+      {:noreply, next_state}
+    rescue
+      _error ->
+        Process.send_after(self(), :bootstrap, 100)
+        {:noreply, state}
+    end
   end
 
   def handle_info({:fire_timed_wait, run_id, op_key}, state) do

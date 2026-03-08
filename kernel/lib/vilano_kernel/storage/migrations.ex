@@ -30,6 +30,7 @@ defmodule VilanoKernel.Storage.Migrations do
   end
 
   def run_pending! do
+    reject_future_schema!()
     applied_versions = applied_versions() |> MapSet.new()
 
     Enum.each(@migrations, fn migration ->
@@ -46,6 +47,12 @@ defmodule VilanoKernel.Storage.Migrations do
       nil -> 0
       version -> version
     end
+  end
+
+  def latest_version do
+    @migrations
+    |> Enum.map(& &1.version())
+    |> Enum.max(fn -> 0 end)
   end
 
   def applied_migrations do
@@ -86,6 +93,19 @@ defmodule VilanoKernel.Storage.Migrations do
 
       {:error, reason} ->
         raise(reason)
+    end
+  end
+
+  defp reject_future_schema! do
+    current_max =
+      applied_versions()
+      |> Enum.max(fn -> 0 end)
+
+    if current_max > latest_version() do
+      raise """
+      Vilano kernel schema version #{current_max} is newer than this runtime supports (latest #{latest_version()}).
+      Refusing to start against a newer database schema.
+      """
     end
   end
 

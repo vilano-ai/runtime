@@ -157,6 +157,7 @@ export interface RunExecRecord {
   args: string[];
   cwd: string | null;
   env: Record<string, string> | null;
+  envKeys?: string[];
   timeoutMs: number | null;
   attempt: number;
   exitCode: number | null;

@@ -637,7 +637,6 @@ defmodule VilanoKernel.Storage do
 
   def resolve_service_ask(lease_id, service_run_id, name, op_key, payload) do
     now = now_iso8601()
-    correlation_id = "ask:" <> op_key
 
     Repo.transaction(fn ->
       case {get_run_by_lease(lease_id), get_service_run_by_id(service_run_id)} do
@@ -648,6 +647,8 @@ defmodule VilanoKernel.Storage do
           nil
 
         {caller_run, service_run} ->
+          correlation_id = "ask:" <> caller_run["id"] <> ":" <> op_key
+
           case get_run_service_op(caller_run["id"], op_key) do
             existing when not is_nil(existing) ->
               case existing["status"] do
@@ -890,22 +891,32 @@ defmodule VilanoKernel.Storage do
               now
             )
 
-            next_status = service_next_status(service_run["id"], Map.get(body, "stop") == true)
+            if Map.get(body, "stop") == true do
+              _ =
+                stop_service_run_instance!(
+                  get_service_run_by_id(service_run["id"]),
+                  cancellation_error("Service stopped", "handler_stop"),
+                  "handler_stop",
+                  now
+                )
+            else
+              next_status = service_next_status(service_run["id"], false)
 
-            SQL.query!(
-              Repo,
-              """
-              update runs
-              set
-                status = ?,
-                lease_id = null,
-                lease_worker_id = null,
-                lease_expires_at = null,
-                updated_at = ?
-              where id = ?
-              """,
-              [next_status, now, service_run["id"]]
-            )
+              SQL.query!(
+                Repo,
+                """
+                update runs
+                set
+                  status = ?,
+                  lease_id = null,
+                  lease_worker_id = null,
+                  lease_expires_at = null,
+                  updated_at = ?
+                where id = ?
+                """,
+                [next_status, now, service_run["id"]]
+              )
+            end
 
             get_run(service_run["id"])
           else
@@ -2692,7 +2703,8 @@ defmodule VilanoKernel.Storage do
       "cmd" => row["cmd"],
       "args" => decode_json_list(row["args_json"]),
       "cwd" => row["cwd"],
-      "env" => decode_json_value(row["env_json"], nil),
+      "env" => nil,
+      "envKeys" => decode_json_map_keys(row["env_json"]),
       "timeoutMs" => row["timeout_ms"],
       "attempt" => row["attempt"],
       "exitCode" => row["exit_code"],
@@ -2784,6 +2796,19 @@ defmodule VilanoKernel.Storage do
   defp decode_json_list(nil), do: []
   defp decode_json_list(value) when is_binary(value), do: Jason.decode!(value)
 
+  defp decode_json_map_keys(nil), do: []
+  defp decode_json_map_keys(value) when is_binary(value) do
+    case Jason.decode!(value) do
+      decoded when is_map(decoded) ->
+        decoded
+        |> Map.keys()
+        |> Enum.sort()
+
+      _ ->
+        []
+    end
+  end
+
   defp decode_json_value(nil, fallback), do: fallback
   defp decode_json_value(value, _fallback) when is_binary(value), do: Jason.decode!(value)
 
@@ -2803,6 +2828,8 @@ defmodule VilanoKernel.Storage do
   end
 
   defp get_run_by_lease(lease_id) do
+    now = now_iso8601()
+
     Repo
     |> SQL.query!(
       """
@@ -2821,9 +2848,13 @@ defmodule VilanoKernel.Storage do
         created_at,
         updated_at
       from runs
-      where lease_id = ?
+      where
+        lease_id = ?
+        and status in ('running', 'active')
+        and lease_expires_at is not null
+        and lease_expires_at >= ?
       """,
-      [lease_id]
+      [lease_id, now]
     )
     |> rows_to_maps()
     |> List.first()

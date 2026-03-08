@@ -260,6 +260,7 @@ function isDefinitionLike(
 }
 
 function createTurnContext(client: WorkerClient, activation: Activation): WorkflowContext {
+  const implicitActivationOpCounters = new Map<string, number>();
   const implicitServiceOpCounters = new Map<string, number>();
 
   return {
@@ -268,7 +269,12 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
       input: TInput,
       options: SpawnOptions = {}
     ): WorkflowHandle<TOutput> {
-      const key = options.key ?? definition.name;
+      const key = nextImplicitActivationOpKey(
+        implicitActivationOpCounters,
+        "spawn",
+        definition.name,
+        options.key
+      );
       const childRunId = deterministicChildRunId(activation.run.id, key);
       const spawnPromise = client.resolveSpawn(activation.leaseId, {
         name: definition.name,
@@ -340,7 +346,12 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
       fn: (step: StepContext) => Promise<TOutput> | TOutput,
       options: StepOptions = {}
     ) {
-      const key = options.key ?? name;
+      const key = nextImplicitActivationOpKey(
+        implicitActivationOpCounters,
+        "step",
+        name,
+        options.key
+      );
       const timeoutMs = parseDurationToMs(options.timeout);
       const retryPolicy = toRetryPolicy(options.retry, {
         retries: options.retries,
@@ -423,7 +434,12 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
       }
     },
     async exec<TOutput = ExecResult>(spec: ExecSpec<TOutput>) {
-      const key = spec.key ?? spec.name;
+      const key = nextImplicitActivationOpKey(
+        implicitActivationOpCounters,
+        "exec",
+        spec.name,
+        spec.key
+      );
       const cwd = resolveExecCwd(activation.project.path, spec.cwd);
       const timeoutMs = parseDurationToMs(spec.timeout);
       const retryPolicy = toRetryPolicy(spec.retry, {
@@ -497,7 +513,12 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
         throw new Error("ctx.sleep() requires a duration");
       }
 
-      const key = options?.key ?? `sleep:${duration}`;
+      const key = nextImplicitActivationOpKey(
+        implicitActivationOpCounters,
+        "sleep",
+        duration,
+        options?.key
+      );
       const resolved = await client.resolveSleepWait(activation.leaseId, { key, durationMs });
       if (resolved.status === "completed") {
         return;
@@ -506,7 +527,12 @@ function createTurnContext(client: WorkerClient, activation: Activation): Workfl
       throw new RunSuspendedError("sleep", key);
     },
     async waitForSignal(name: string, options?: { key?: string }) {
-      const key = options?.key ?? name;
+      const key = nextImplicitActivationOpKey(
+        implicitActivationOpCounters,
+        "wait_for_signal",
+        name,
+        options?.key
+      );
       const resolved = await client.resolveSignalWait(activation.leaseId, { name, key });
       if (resolved.status === "completed") {
         return resolved.output;
@@ -736,6 +762,22 @@ function nextImplicitServiceOpKey(
   const nextCount = (counters.get(counterKey) ?? 0) + 1;
   counters.set(counterKey, nextCount);
   return `${opKind}:${serviceRunId}:${messageName}:${nextCount}`;
+}
+
+function nextImplicitActivationOpKey(
+  counters: Map<string, number>,
+  opKind: "spawn" | "step" | "exec" | "sleep" | "wait_for_signal",
+  name: string,
+  explicitKey?: string
+): string {
+  if (explicitKey) {
+    return explicitKey;
+  }
+
+  const counterKey = `${opKind}:${name}`;
+  const nextCount = (counters.get(counterKey) ?? 0) + 1;
+  counters.set(counterKey, nextCount);
+  return `${opKind}:${name}:${nextCount}`;
 }
 
 function createStepController(

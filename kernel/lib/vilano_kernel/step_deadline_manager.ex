@@ -27,11 +27,17 @@ defmodule VilanoKernel.StepDeadlineManager do
 
   @impl true
   def handle_info(:bootstrap, state) do
-    next_state =
-      Storage.list_active_timed_steps()
-      |> Enum.reduce(state, fn step, acc -> schedule_timer(step, acc) end)
+    try do
+      next_state =
+        Storage.list_active_timed_steps()
+        |> Enum.reduce(state, fn step, acc -> schedule_timer(step, acc) end)
 
-    {:noreply, next_state}
+      {:noreply, next_state}
+    rescue
+      _error ->
+        Process.send_after(self(), :bootstrap, 100)
+        {:noreply, state}
+    end
   end
 
   def handle_info({:step_timeout, run_id, op_key, lease_id, step_name, timeout_ms}, state) do

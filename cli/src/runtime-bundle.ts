@@ -11,22 +11,11 @@ export interface RuntimeBundlePaths {
 
 export function resolveRuntimeBundlePaths(): RuntimeBundlePaths {
   const cliRoot = path.resolve(import.meta.dir, "..");
-  const bundledRoot = path.join(cliRoot, "runtime-dist");
-  const bundledKernel = path.join(bundledRoot, "kernel", "mix.exs");
-
-  if (fs.existsSync(bundledKernel)) {
-    return {
-      cliRoot,
-      runtimeRoot: bundledRoot,
-      kernelDir: path.join(bundledRoot, "kernel"),
-      workerDir: path.join(bundledRoot, "worker", "bun"),
-      bundled: true,
-    };
-  }
-
   const repoRoot = path.resolve(cliRoot, "..");
   const repoKernel = path.join(repoRoot, "kernel", "mix.exs");
-  if (fs.existsSync(repoKernel)) {
+  const repoWorker = path.join(repoRoot, "worker", "bun", "src", "cli.ts");
+
+  if (fs.existsSync(repoKernel) && fs.existsSync(repoWorker)) {
     return {
       cliRoot,
       runtimeRoot: repoRoot,
@@ -36,8 +25,22 @@ export function resolveRuntimeBundlePaths(): RuntimeBundlePaths {
     };
   }
 
+  const bundledRoot = path.join(cliRoot, "runtime-dist");
+  const bundledKernel = path.join(bundledRoot, "kernel", "mix.exs");
+  const bundledWorker = path.join(bundledRoot, "worker", "bun", "src", "cli.ts");
+
+  if (fs.existsSync(bundledKernel) && fs.existsSync(bundledWorker)) {
+    return {
+      cliRoot,
+      runtimeRoot: bundledRoot,
+      kernelDir: path.join(bundledRoot, "kernel"),
+      workerDir: path.join(bundledRoot, "worker", "bun"),
+      bundled: true,
+    };
+  }
+
   throw new Error(
-    `Unable to locate the Vilano runtime bundle from ${cliRoot}. Expected kernel/mix.exs in either ${path.join(
+    `Unable to locate the Vilano runtime bundle from ${cliRoot}. Expected kernel/mix.exs and worker/bun/src/cli.ts in either ${path.join(
       bundledRoot,
       "kernel"
     )} or ${path.join(repoRoot, "kernel")}.`

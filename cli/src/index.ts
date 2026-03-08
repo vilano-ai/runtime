@@ -164,7 +164,15 @@ async function handleDaemon(args: string[], flags: Record<string, string | boole
 }
 
 async function handleVersion(flags: Record<string, string | boolean>): Promise<number> {
-  const daemonStatus = await getRunningDaemonStatus().catch(() => null);
+  let daemonStatus: DaemonStatusResponse | null = null;
+  let kernelError: string | null = null;
+
+  try {
+    daemonStatus = await getRunningDaemonStatus();
+  } catch (error) {
+    kernelError = error instanceof Error ? error.message : String(error);
+  }
+
   const bundle = resolveRuntimeBundlePaths();
 
   const body = {
@@ -176,6 +184,7 @@ async function handleVersion(flags: Record<string, string | boolean>): Promise<n
       bundled: bundle.bundled,
     },
     kernel: daemonStatus,
+    kernelError,
   };
 
   writeOutput(flags, body, (payload) => renderVersionInfo(payload));
@@ -929,15 +938,19 @@ function renderVersionInfo(body: {
   protocolVersion: number;
   runtimeBundle: { root: string; bundled: boolean };
   kernel: DaemonStatusResponse | null;
+  kernelError?: string | null;
 }): string {
   return [
     `cli_version: ${body.cliVersion}`,
     `protocol_version: ${body.protocolVersion}`,
     `runtime_bundle: ${body.runtimeBundle.root}${body.runtimeBundle.bundled ? " (packaged)" : " (repo)"}`,
+    body.kernelError ? `kernel_error: ${body.kernelError}` : null,
     body.kernel
       ? `kernel: running ${body.kernel.runtimeVersion} schema=${body.kernel.schemaVersion} port=${body.kernel.port}`
       : "kernel: not running",
-  ].join("\n");
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
 }
 
 function renderDoctorReport(body: {
@@ -951,7 +964,13 @@ function renderDoctorReport(body: {
     mix: { found: boolean; path: string | null; version: string | null };
     elixir: { found: boolean; path: string | null; version: string | null };
   };
-  kernel: { depsReady: boolean; buildReady: boolean; running: boolean; status: DaemonStatusResponse | null };
+  kernel: {
+    depsReady: boolean;
+    buildReady: boolean;
+    running: boolean;
+    status: DaemonStatusResponse | null;
+    error?: string | null;
+  };
   appliedFixes: string[];
   checks: Array<{ name: string; ok: boolean; detail: string }>;
 }): string {
@@ -968,13 +987,16 @@ function renderDoctorReport(body: {
     `elixir: ${renderDoctorTool(body.tools.elixir)}`,
     `kernel_deps_ready: ${body.kernel.depsReady}`,
     `kernel_build_ready: ${body.kernel.buildReady}`,
+    body.kernel.error ? `kernel_error: ${body.kernel.error}` : null,
     body.kernel.running && body.kernel.status
       ? `kernel_status: running runtime=${body.kernel.status.runtimeVersion} protocol=${body.kernel.status.protocolVersion} schema=${body.kernel.status.schemaVersion}`
       : "kernel_status: not running",
     ...(body.appliedFixes.length > 0 ? [`applied_fixes: ${body.appliedFixes.join(", ")}`] : []),
     "checks:",
     ...body.checks.map((check) => `  [${check.ok ? "ok" : "fail"}] ${check.name}: ${check.detail}`),
-  ].join("\n");
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
 }
 
 function renderDoctorTool(tool: { found: boolean; path: string | null; version: string | null }): string {
