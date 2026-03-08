@@ -54,6 +54,7 @@ Run it from the dev shell:
 
 - `bun run test`
 - `VILANO_KERNEL_NO_COMPILE=1 bun test tests/integration.test.ts --timeout 30000 --max-concurrency 1`
+- `VILANO_TEST_TIMING=1 bun test tests/integration.test.ts -t "<test name>" --timeout 30000 --max-concurrency 1`
 - `bun run test:soak`
 
 Next high-value additions:

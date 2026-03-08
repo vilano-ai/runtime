@@ -151,6 +151,20 @@ test("run cancel marks active exec work cancelled", async () => {
   }
 });
 
+test("kernel rejects unauthenticated localhost requests", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const unauthorized = await fetch(`${harness.serverUrl}/v1/status`);
+    expect(unauthorized.status).toBe(401);
+
+    const authorized = await harness.requestKernel("/v1/status");
+    expect(authorized.status).toBe(200);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("expired leases cannot commit stale workflow completions", async () => {
   const harness = await RuntimeHarness.create({
     env: {
@@ -162,7 +176,7 @@ test("expired leases cannot commit stale workflow completions", async () => {
   try {
     const run = await harness.startWorkflow("demo/planner", { topic: "lease-fence" });
 
-    const leaseResponse = await fetch(`${harness.serverUrl}/v1/activations/lease`, {
+    const leaseResponse = await harness.requestKernel("/v1/activations/lease", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -183,7 +197,7 @@ test("expired leases cannot commit stale workflow completions", async () => {
 
     await sleep(1_500);
 
-    const staleComplete = await fetch(`${harness.serverUrl}/v1/leases/${encodeURIComponent(leaseId)}/complete`, {
+    const staleComplete = await harness.requestKernel(`/v1/leases/${encodeURIComponent(leaseId)}/complete`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
