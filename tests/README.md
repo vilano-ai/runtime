@@ -16,6 +16,8 @@ Current coverage:
 - active `exec()` cancellation
 - workflow replay after worker loss and lease expiry
 - service turn replay after worker loss and lease expiry
+- lease fencing that rejects stale workflow completions after expiry
+- implicit durable key generation for repeated steps, execs, and child spawns
 - durable step retry/backoff
 - durable exec retry/backoff
 - durable service-turn retry/backoff
@@ -45,6 +47,8 @@ Current coverage:
 - unmanaged-worker fallback for non-cooperative blocking service turns
 - service FIFO processing across mixed `ask` / `send` backlogs
 - `service stop` failing queued backlog behind an active turn
+- service ask correlation isolation across concurrent caller runs
+- handler-triggered service stop draining queued backlog
 
 Run it from the dev shell:
 

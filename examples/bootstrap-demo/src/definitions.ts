@@ -333,6 +333,74 @@ export const slowDelegator = workflow({
   },
 });
 
+export const echoChild = workflow({
+  name: "echoChild",
+  run: async (input: { value: number }) => {
+    return input;
+  },
+});
+
+export const implicitKeyProbe = workflow({
+  name: "implicitKeyProbe",
+  run: async (input: { token: string }, ctx) => {
+    const stepMarkerPath = `tmp/implicit-step-${input.token}.txt`;
+    const execMarkerPath = `tmp/implicit-exec-${input.token}.txt`;
+
+    const firstStep = await ctx.step("repeat-step", async () => await bumpMarkerAttempt(stepMarkerPath));
+    const secondStep = await ctx.step("repeat-step", async () => await bumpMarkerAttempt(stepMarkerPath));
+
+    const execScript = [
+      "const fs = require('node:fs');",
+      "fs.mkdirSync('tmp', { recursive: true });",
+      `const markerPath = ${JSON.stringify(execMarkerPath)};`,
+      "let current = 0;",
+      "try { current = Number(fs.readFileSync(markerPath, 'utf8').trim() || '0'); }",
+      "catch (error) { if (error.code !== 'ENOENT') throw error; }",
+      "const next = current + 1;",
+      "fs.writeFileSync(markerPath, String(next));",
+      "console.log(JSON.stringify({ attempt: next }));",
+    ].join(" ");
+
+    const firstExec = await ctx.exec({
+      name: "repeat-exec",
+      cmd: "bun",
+      args: ["-e", execScript],
+      capture: { stdout: true },
+      parse: (stdout) => JSON.parse(stdout.trim()) as { attempt: number },
+    });
+
+    const secondExec = await ctx.exec({
+      name: "repeat-exec",
+      cmd: "bun",
+      args: ["-e", execScript],
+      capture: { stdout: true },
+      parse: (stdout) => JSON.parse(stdout.trim()) as { attempt: number },
+    });
+
+    const firstChild = ctx.spawn(echoChild, { value: 1 });
+    const secondChild = ctx.spawn(echoChild, { value: 2 });
+    const [firstChildResult, secondChildResult] = await Promise.all([
+      firstChild.result(),
+      secondChild.result(),
+    ]);
+
+    return {
+      stepAttempts: [firstStep, secondStep],
+      execAttempts: [firstExec.attempt, secondExec.attempt],
+      childRunIds: [firstChild.id, secondChild.id],
+      childValues: [firstChildResult.value, secondChildResult.value],
+    };
+  },
+});
+
+export const mailboxAskWorkflow = workflow({
+  name: "mailboxAskWorkflow",
+  run: async (input: { sessionId: string; id: string; delayMs?: number }, ctx) => {
+    const ref = await ctx.connect(mailboxProbe, { sessionId: input.sessionId });
+    return await ref.ask.delay({ id: input.id, delayMs: input.delayMs ?? 0 });
+  },
+});
+
 export const reviewer = service({
   name: "reviewer",
   key: (input: { repoId: string }) => input.repoId,
@@ -537,6 +605,34 @@ export const mailboxProbe = service({
           id: payload.id,
           history,
         },
+      };
+    },
+    stopAfterDelay: async (payload: { delayMs?: number }, state, ctx) => {
+      if ((payload.delayMs ?? 0) > 0) {
+        await ctx.step(
+          "mailbox-stop-delay",
+          async () => {
+            await new Promise((resolve) => {
+              setTimeout(resolve, payload.delayMs ?? 0);
+            });
+
+            return null;
+          },
+          {
+            key: `mailbox-stop-delay:${payload.delayMs ?? 0}`,
+          }
+        );
+      }
+
+      return {
+        state: {
+          ...state,
+          history: [...state.history, "ask:stop"],
+        },
+        reply: {
+          stopped: true,
+        },
+        stop: true,
       };
     },
     history: async (_payload: Record<string, never>, state) => ({

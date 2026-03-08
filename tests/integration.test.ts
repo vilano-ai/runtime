@@ -151,6 +151,112 @@ test("run cancel marks active exec work cancelled", async () => {
   }
 });
 
+test("expired leases cannot commit stale workflow completions", async () => {
+  const harness = await RuntimeHarness.create({
+    env: {
+      VILANO_MANAGED_WORKERS: "0",
+      VILANO_LEASE_DURATION_SECONDS: "1",
+    },
+  });
+
+  try {
+    const run = await harness.startWorkflow("demo/planner", { topic: "lease-fence" });
+
+    const leaseResponse = await fetch(`${harness.serverUrl}/v1/activations/lease`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        workerId: "manual-lease-worker",
+      }),
+    });
+
+    expect(leaseResponse.status).toBe(200);
+    const leased = (await leaseResponse.json()) as {
+      ok: true;
+      activation: { leaseId: string } | null;
+    };
+
+    expect(leased.activation?.leaseId).toBeTruthy();
+    const leaseId = leased.activation?.leaseId as string;
+
+    await sleep(1_500);
+
+    const staleComplete = await fetch(`${harness.serverUrl}/v1/leases/${encodeURIComponent(leaseId)}/complete`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        result: { summary: "stale-completion" },
+      }),
+    });
+
+    expect(staleComplete.status).toBe(404);
+
+    const worker = await harness.spawnWorker({ once: true, workerId: "fresh-worker" });
+    const workerResult = await worker.wait();
+    expect(workerResult.exitCode).toBe(0);
+
+    const inspect = await harness.waitForRun(
+      run.run.id,
+      (body) => body.run.status === "completed"
+    );
+
+    expect(inspect.run.output).toEqual({ summary: "planned: lease-fence" });
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("implicit durable keys do not collapse repeated steps execs or child spawns", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/implicitKeyProbe", { token: "alpha" });
+
+    const inspect = await harness.waitForRun(
+      run.run.id,
+      (body) => body.run.status === "completed"
+    );
+
+    expect(inspect.run.output).toEqual({
+      stepAttempts: [1, 2],
+      execAttempts: [1, 2],
+      childRunIds: expect.any(Array),
+      childValues: [1, 2],
+    });
+
+    const output = inspect.run.output as {
+      stepAttempts: number[];
+      execAttempts: number[];
+      childRunIds: string[];
+      childValues: number[];
+    };
+
+    expect(output.childRunIds).toHaveLength(2);
+    expect(output.childRunIds[0]).not.toBe(output.childRunIds[1]);
+
+    expect(
+      inspect.steps
+        .filter((step) => step.name === "repeat-step")
+        .map((step) => step.status)
+    ).toEqual(["completed", "completed"]);
+
+    expect(
+      inspect.execs
+        .filter((exec) => exec.name === "repeat-exec")
+        .map((exec) => exec.status)
+    ).toEqual(["completed", "completed"]);
+
+    expect(inspect.children.map((child) => child.childRunId)).toHaveLength(2);
+    expect(new Set(inspect.children.map((child) => child.childRunId)).size).toBe(2);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("cooperative step cancellation releases the worker for later runs", async () => {
   const harness = await RuntimeHarness.create();
 
@@ -1873,6 +1979,126 @@ test("exec timeout persists failure metadata and captured artifacts", async () =
 
     expect(failed.events.map((event) => event.type)).toContain("ProcessFailed");
     expect(failed.events.map((event) => event.type)).toContain("RunFailed");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("service asks from different caller runs do not collide on reply correlation", async () => {
+  const harness = await RuntimeHarness.create();
+  const sessionId = "shared-mailbox";
+
+  try {
+    const [firstRun, secondRun] = await Promise.all([
+      harness.startWorkflow("demo/mailboxAskWorkflow", {
+        sessionId,
+        id: "first",
+        delayMs: 200,
+      }),
+      harness.startWorkflow("demo/mailboxAskWorkflow", {
+        sessionId,
+        id: "second",
+        delayMs: 200,
+      }),
+    ]);
+
+    const [firstInspect, secondInspect] = await Promise.all([
+      harness.waitForRun(
+        firstRun.run.id,
+        (body) => body.run.status === "completed",
+        20_000
+      ),
+      harness.waitForRun(
+        secondRun.run.id,
+        (body) => body.run.status === "completed",
+        20_000
+      ),
+    ]);
+
+    expect(firstInspect.run.output).toMatchObject({
+      id: "first",
+    });
+    expect(secondInspect.run.output).toMatchObject({
+      id: "second",
+    });
+
+    const firstHistory = (firstInspect.run.output as { history: string[] }).history;
+    const secondHistory = (secondInspect.run.output as { history: string[] }).history;
+    expect(firstHistory).toContain("ask:first");
+    expect(secondHistory).toContain("ask:second");
+
+    const serviceInspect = await harness.waitForService(
+      "demo/mailboxProbe",
+      { sessionId },
+      (body) => body.run.status === "idle" && body.envelopes.length >= 2
+    );
+
+    expect(serviceInspect.envelopes.filter((envelope) => envelope.kind === "ask")).toHaveLength(2);
+    expect(serviceInspect.envelopes.every((envelope) => envelope.status === "completed")).toBeTrue();
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("service handler stop drains queued backlog behind the completing turn", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { sessionId: "stop-backlog" };
+
+  try {
+    const stopCommand = harness.spawnCliCommand([
+      "service",
+      "ask",
+      "demo/mailboxProbe",
+      "stopAfterDelay",
+      "--key-json",
+      JSON.stringify(keyInput),
+      "--input",
+      JSON.stringify({ delayMs: 300 }),
+      "--json",
+    ]);
+
+    await harness.waitForService(
+      "demo/mailboxProbe",
+      keyInput,
+      (body) =>
+        body.envelopes.some((envelope) => envelope.name === "stopAfterDelay" && envelope.status === "processing")
+    );
+
+    const queuedCommand = harness.spawnCliCommand([
+      "service",
+      "ask",
+      "demo/mailboxProbe",
+      "history",
+      "--key-json",
+      JSON.stringify(keyInput),
+      "--json",
+    ]);
+
+    await harness.waitForService(
+      "demo/mailboxProbe",
+      keyInput,
+      (body) => body.envelopes.length >= 2
+    );
+
+    const [stopResult, queuedResult] = await Promise.all([stopCommand.wait(), queuedCommand.wait()]);
+    expect(stopResult.exitCode).toBe(0);
+    expect(JSON.parse(stopResult.stdout)).toMatchObject({
+      ok: true,
+      reply: { stopped: true },
+    });
+
+    expect(queuedResult.exitCode).toBe(1);
+    expect(`${queuedResult.stdout}\n${queuedResult.stderr}`).toContain("Service stopped");
+
+    const serviceInspect = await harness.waitForService(
+      "demo/mailboxProbe",
+      keyInput,
+      (body) =>
+        body.run.status === "stopped" &&
+        body.envelopes.some((envelope) => envelope.name === "history" && envelope.status === "failed")
+    );
+
+    expect(serviceInspect.events.map((event) => event.type)).toContain("ServiceStopped");
   } finally {
     await harness.dispose();
   }
