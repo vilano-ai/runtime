@@ -108,6 +108,14 @@
       },
       {
         "kind": "workflow",
+        "name": "moduleStateProbe",
+        "exportName": "moduleStateProbe",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "nonRetryingExec",
         "exportName": "nonRetryingExec",
         "file": "src/definitions.ts",
@@ -166,6 +174,14 @@
         "kind": "workflow",
         "name": "serviceStatusCoordinator",
         "exportName": "serviceStatusCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "snapshotIsolationProbe",
+        "exportName": "snapshotIsolationProbe",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"
@@ -238,6 +254,14 @@
         "kind": "workflow",
         "name": "workerEnvProbe",
         "exportName": "workerEnvProbe",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "execEnvSecretProbe",
+        "exportName": "execEnvSecretProbe",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"

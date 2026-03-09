@@ -5,6 +5,11 @@ export async function ensureDir(dirPath: string): Promise<void> {
   await fs.mkdir(dirPath, { recursive: true });
 }
 
+export async function ensurePrivateDir(dirPath: string): Promise<void> {
+  await ensureDir(dirPath);
+  await fs.chmod(dirPath, 0o700).catch(() => undefined);
+}
+
 export async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
   try {
     const raw = await fs.readFile(filePath, "utf8");

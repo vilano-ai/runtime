@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { ensureDir, writeJsonFileAtomic } from "./json-file.ts";
+import { ensurePrivateDir, writeJsonFileAtomic } from "./json-file.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
 
 const SNAPSHOT_EXCLUDED_NAMES = new Set([".git", ".hg", ".svn", ".vilano", "tmp"]);
@@ -23,7 +23,7 @@ export async function materializeProjectSnapshot(
   const snapshotId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}`;
   const snapshotRoot = path.join(runtimePaths.projectSnapshotsDir, projectName, snapshotId);
 
-  await ensureDir(path.dirname(snapshotRoot));
+  await ensurePrivateDir(path.dirname(snapshotRoot));
   await fs.cp(sourcePath, snapshotRoot, {
     recursive: true,
     force: true,
@@ -38,6 +38,7 @@ export async function materializeProjectSnapshot(
     sourcePath,
     createdAt: new Date().toISOString(),
   } satisfies ProjectSnapshotMetadata);
+  await sealSnapshot(snapshotRoot);
 
   return snapshotRoot;
 }
@@ -82,6 +83,36 @@ export async function pruneProjectSnapshots(
   if (remaining.length === 0) {
     await fs.rm(projectSnapshotRoot, { recursive: true, force: true });
   }
+}
+
+export async function pruneAllProjectSnapshots(retainedSnapshotPaths: Iterable<string>): Promise<void> {
+  const runtimePaths = getRuntimePaths();
+  const retained = new Set(
+    [...retainedSnapshotPaths]
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+      .map((value) => path.resolve(value))
+  );
+
+  let projects;
+  try {
+    projects = await fs.readdir(runtimePaths.projectSnapshotsDir, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+
+    throw error;
+  }
+
+  await Promise.all(
+    projects.map(async (entry) => {
+      if (!entry.isDirectory()) {
+        return;
+      }
+
+      await pruneProjectSnapshots(entry.name, retained);
+    })
+  );
 }
 
 async function ensureDependencyResolution(sourcePath: string, snapshotRoot: string): Promise<void> {
@@ -141,4 +172,23 @@ async function resolveDependencySource(sourcePath: string): Promise<string | nul
 
     currentPath = parentPath;
   }
+}
+
+async function sealSnapshot(rootPath: string): Promise<void> {
+  const entries = await fs.readdir(rootPath, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const entryPath = path.join(rootPath, entry.name);
+    if (entry.isDirectory()) {
+      await sealSnapshot(entryPath);
+      await fs.chmod(entryPath, 0o555);
+      continue;
+    }
+
+    if (entry.isFile()) {
+      await fs.chmod(entryPath, 0o444);
+    }
+  }
+
+  await fs.chmod(rootPath, 0o555);
 }

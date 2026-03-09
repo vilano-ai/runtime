@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
+import fsSync from "node:fs";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
 import type { components as ControlComponents } from "../../protocol/v1/generated/control.ts";
-import { ensureDir, readJsonFile, writeJsonFileAtomic } from "./json-file.ts";
+import { ensurePrivateDir, readJsonFile, writeJsonFileAtomic } from "./json-file.ts";
 import { prepareRuntimeBundle } from "./runtime-materializer.ts";
 import { CLI_PROTOCOL_VERSION } from "./runtime-version.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
@@ -61,8 +62,10 @@ export async function ensureDaemonStarted(
   }
 
   const runtimePaths = getRuntimePaths();
-  await ensureDir(runtimePaths.homeDir);
-  await ensureDir(runtimePaths.workerHomeDir);
+  await ensurePrivateDir(runtimePaths.homeDir);
+  await ensurePrivateDir(runtimePaths.executionHomeDir);
+  await ensurePrivateDir(runtimePaths.workerHomeDir);
+  await ensurePrivateDir(runtimePaths.runWorkspacesDir);
 
   const bundle = await prepareRuntimeBundle();
   const kernelDir = bundle.kernelDir;
@@ -74,19 +77,24 @@ export async function ensureDaemonStarted(
       ? ["run", "--no-compile", "--no-halt"]
       : ["run", "--no-halt"];
 
+  await fs.writeFile(runtimePaths.daemonStartupLogFile, "", { mode: 0o600 });
+  const startupLogFd = fsSync.openSync(runtimePaths.daemonStartupLogFile, "a");
+
   const child = spawn("mix", mixArgs, {
     cwd: kernelDir,
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", startupLogFd, startupLogFd],
     env: {
       ...process.env,
       VILANO_HOME: runtimePaths.homeDir,
+      VILANO_EXECUTION_HOME: runtimePaths.executionHomeDir,
       VILANO_KERNEL_PORT: String(port),
       VILANO_ROOT: projectRoot,
       VILANO_DAEMON_TOKEN: authToken,
       VILANO_WORKER_TOKEN: workerAuthToken,
     },
   });
+  fsSync.closeSync(startupLogFd);
 
   await new Promise<void>((resolve, reject) => {
     child.once("spawn", () => resolve());
@@ -141,7 +149,7 @@ export async function ensureDaemonStarted(
         signal: NodeJS.Signals | null;
       };
       throw new Error(
-        `Vilano kernel exited before startup (code=${exit.code ?? "null"} signal=${exit.signal ?? "null"})`
+        `Vilano kernel exited before startup (code=${exit.code ?? "null"} signal=${exit.signal ?? "null"}). See ${runtimePaths.daemonStartupLogFile}`
       );
     }
 
@@ -159,7 +167,7 @@ export async function ensureDaemonStarted(
     }
   }
 
-  throw new Error("Timed out waiting for the Vilano kernel to start");
+  throw new Error(`Timed out waiting for the Vilano kernel to start. See ${runtimePaths.daemonStartupLogFile}`);
 }
 
 export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
@@ -728,7 +736,7 @@ async function sleep(durationMs: number): Promise<void> {
   });
 }
 
-function resolveDefaultKernelPort(): number {
+export function resolveDefaultKernelPort(): number {
   const raw = process.env.VILANO_KERNEL_PORT;
   if (!raw) {
     return 4141;

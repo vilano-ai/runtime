@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
@@ -597,8 +598,23 @@ async function loadServiceDefinition(
   project: ProjectRecord,
   definition: DefinitionRecord
 ): Promise<ServiceDefinition<any, any, any, any, any>> {
-  const absolutePath = path.resolve(project.snapshotPath || project.path, definition.file);
-  const moduleUrl = pathToFileURL(absolutePath).href;
+  const projectRoot = path.resolve(project.snapshotPath || project.path);
+  const absolutePath = path.resolve(projectRoot, definition.file);
+  const [projectRealPath, absoluteRealPath] = await Promise.all([
+    fs.realpath(projectRoot),
+    fs.realpath(absolutePath),
+  ]);
+  const relativeToProject = path.relative(projectRealPath, absoluteRealPath);
+
+  if (
+    relativeToProject === "" ||
+    relativeToProject.startsWith("..") ||
+    path.isAbsolute(relativeToProject)
+  ) {
+    throw new CliError(`Definition file '${definition.file}' resolved outside the project root`);
+  }
+
+  const moduleUrl = pathToFileURL(absoluteRealPath).href;
   const moduleExports = (await import(moduleUrl)) as Record<string, unknown>;
   const value = moduleExports[definition.exportName];
 

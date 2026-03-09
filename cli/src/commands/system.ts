@@ -8,6 +8,7 @@ import {
   ensureDaemonStarted,
   getRunningDaemonStatus,
   readDaemonAuthState,
+  resolveDefaultKernelPort,
   stopDaemon,
 } from "../daemon-client.ts";
 import {
@@ -31,8 +32,10 @@ export async function handleDaemonCommand(
   switch (command) {
     case "start": {
       const portFlag = flags.port;
-      const port = typeof portFlag === "string" ? Number.parseInt(portFlag, 10) : 4141;
-      const status = await ensureDaemonStarted(Number.isFinite(port) ? port : 4141);
+      const defaultPort = resolveDefaultKernelPort();
+      const port =
+        typeof portFlag === "string" ? Number.parseInt(portFlag, 10) : defaultPort;
+      const status = await ensureDaemonStarted(Number.isFinite(port) ? port : defaultPort);
       writeOutput(flags, status, renderDaemonStatus);
       return 0;
     }

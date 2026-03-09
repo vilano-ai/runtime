@@ -118,7 +118,7 @@ defmodule VilanoKernel.ManagedWorker do
   defp start_port(executable_path, worker_entry, runtime, index) do
     server_url = "http://127.0.0.1:#{runtime.port}"
     worker_id = "managed-local-#{index}"
-    worker_home = Path.join(runtime.home_dir, "worker-home")
+    worker_home = Path.join(runtime.execution_home_dir, "worker-home")
 
     File.mkdir_p!(worker_home)
 
@@ -144,7 +144,7 @@ defmodule VilanoKernel.ManagedWorker do
   defp worker_env(runtime) do
     base_env = [
       {~c"VILANO_RUNTIME_HOME", String.to_charlist(runtime.home_dir)},
-      {~c"VILANO_WORKER_HOME", String.to_charlist(Path.join(runtime.home_dir, "worker-home"))},
+      {~c"VILANO_WORKER_HOME", String.to_charlist(Path.join(runtime.execution_home_dir, "worker-home"))},
       {~c"VILANO_KERNEL_PORT", String.to_charlist(Integer.to_string(runtime.port))}
     ]
 

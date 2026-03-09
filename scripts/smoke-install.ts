@@ -183,6 +183,7 @@ try {
     `${JSON.stringify({ ok: true, installDir, cliVersion: version.cliVersion, protocolVersion: version.protocolVersion }, null, 2)}\n`
   );
 } finally {
+  await makeTreeWritable(installDir).catch(() => undefined);
   await fs.rm(installDir, { recursive: true, force: true });
   await cleanupTarball(cliTarball);
   await cleanupTarball(sdkTarball);
@@ -204,6 +205,21 @@ async function packWorkspace(workspaceDir: string): Promise<string> {
 
 async function cleanupTarball(targetPath: string): Promise<void> {
   await fs.rm(targetPath, { force: true });
+}
+
+async function makeTreeWritable(rootPath: string): Promise<void> {
+  const stat = await fs.lstat(rootPath);
+
+  if (stat.isDirectory()) {
+    const entries = await fs.readdir(rootPath);
+    await Promise.all(entries.map((entry) => makeTreeWritable(path.join(rootPath, entry))));
+    await fs.chmod(rootPath, stat.mode | 0o200);
+    return;
+  }
+
+  if (stat.isFile()) {
+    await fs.chmod(rootPath, stat.mode | 0o200);
+  }
 }
 
 async function exists(targetPath: string): Promise<boolean> {

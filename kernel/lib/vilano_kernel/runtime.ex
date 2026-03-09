@@ -3,6 +3,7 @@ defmodule VilanoKernel.Runtime do
 
   defstruct [
     :home_dir,
+    :execution_home_dir,
     :runtime_db_path,
     :port,
     :started_at,
@@ -18,6 +19,10 @@ defmodule VilanoKernel.Runtime do
     home_dir =
       System.get_env("VILANO_HOME") ||
         Path.join(System.user_home!(), ".vilano")
+
+    execution_home_dir =
+      System.get_env("VILANO_EXECUTION_HOME") ||
+        default_execution_home_dir(home_dir)
 
     project_root =
       case System.get_env("VILANO_ROOT") do
@@ -47,6 +52,7 @@ defmodule VilanoKernel.Runtime do
 
     %__MODULE__{
       home_dir: home_dir,
+      execution_home_dir: execution_home_dir,
       runtime_db_path: Path.join(home_dir, "runtime.sqlite"),
       port: port,
       started_at: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
@@ -57,5 +63,22 @@ defmodule VilanoKernel.Runtime do
       managed_worker_runtime: managed_worker_runtime,
       lease_duration_seconds: lease_duration_seconds
     }
+  end
+
+  defp default_execution_home_dir(home_dir) do
+    home_dir = Path.expand(home_dir)
+    parent_dir = Path.dirname(home_dir)
+    base_name = sanitize_path_segment(Path.basename(home_dir))
+
+    suffix =
+      :crypto.hash(:sha256, home_dir)
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 12)
+
+    Path.join(parent_dir, ".#{base_name}-execution-#{suffix}")
+  end
+
+  defp sanitize_path_segment(value) when is_binary(value) do
+    Regex.replace(~r/[^A-Za-z0-9._-]+/, value, "_")
   end
 end

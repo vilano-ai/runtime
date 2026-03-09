@@ -94,6 +94,92 @@ defmodule VilanoKernel.Storage.Migrations.FailUnpinnedRuns do
     SQL.query!(
       Repo,
       """
+      update run_service_ops
+      set
+        status = 'failed',
+        response_json = null,
+        error_json = ?,
+        updated_at = ?
+      where
+        op_kind = 'ask'
+        and status = 'waiting'
+        and service_run_id in (
+          select id
+          from runs
+          where
+            definition_kind = 'service'
+            and #{unpinned_predicate}
+        )
+      """,
+      [error_json, now]
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      update run_waits
+      set
+        status = 'failed',
+        output_json = ?,
+        updated_at = ?
+      where
+        status = 'waiting'
+        and wait_kind = 'ask_reply'
+        and wait_name in (
+          select correlation_id
+          from run_service_ops
+          where
+            op_kind = 'ask'
+            and status = 'failed'
+            and error_json = ?
+            and service_run_id in (
+              select id
+              from runs
+              where
+                definition_kind = 'service'
+                and #{unpinned_predicate}
+            )
+        )
+      """,
+      [error_json, now, error_json]
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      update runs
+      set
+        status = 'pending',
+        lease_id = null,
+        lease_auth_token = null,
+        lease_worker_id = null,
+        lease_expires_at = null,
+        updated_at = ?
+      where
+        status = 'waiting'
+        and id in (
+          select caller_run_id
+          from run_service_ops
+          where
+            op_kind = 'ask'
+            and status = 'failed'
+            and error_json = ?
+            and service_run_id in (
+              select id
+              from runs
+              where
+                definition_kind = 'service'
+                and #{unpinned_predicate}
+            )
+        )
+        and not #{unpinned_predicate}
+      """,
+      [now, error_json]
+    )
+
+    SQL.query!(
+      Repo,
+      """
       update run_waits
       set
         status = 'failed',

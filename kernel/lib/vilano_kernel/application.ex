@@ -7,6 +7,9 @@ defmodule VilanoKernel.Application do
   def start(_type, _args) do
     runtime = VilanoKernel.Runtime.load!()
     File.mkdir_p!(runtime.home_dir)
+    File.mkdir_p!(runtime.execution_home_dir)
+    File.chmod(runtime.home_dir, 0o700)
+    File.chmod(runtime.execution_home_dir, 0o700)
 
     Application.put_env(:vilano_kernel, :runtime, runtime)
 

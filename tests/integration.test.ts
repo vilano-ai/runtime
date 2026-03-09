@@ -277,6 +277,45 @@ test("worker runtime does not expose daemon or worker tokens to workflow code", 
   }
 });
 
+test("worker loads fresh modules for each activation", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const first = await harness.startWorkflow("demo/moduleStateProbe", {});
+    const firstCompleted = await harness.waitForRun(first.run.id, (inspect) => inspect.run.status === "completed");
+    expect(firstCompleted.run.output).toEqual({ count: 1 });
+
+    const second = await harness.startWorkflow("demo/moduleStateProbe", {});
+    const secondCompleted = await harness.waitForRun(second.run.id, (inspect) => inspect.run.status === "completed");
+    expect(secondCompleted.run.output).toEqual({ count: 1 });
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("activations execute from writable workspaces while snapshots stay read-only", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/snapshotIsolationProbe", {});
+    const completed = await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed");
+    const output = completed.run.output as {
+      cwd: string;
+      workspaceMarkerPresent: boolean;
+      snapshotWritable: boolean;
+      snapshotWriteErrorCode: string | null;
+    };
+
+    expect(output.workspaceMarkerPresent).toBe(true);
+    expect(output.snapshotWritable).toBe(false);
+    expect(output.snapshotWriteErrorCode).toBeTruthy();
+    expect(output.cwd).not.toBe(completed.run.projectSnapshotPath);
+    await fs.access(path.join(output.cwd, "tmp", "workspace-marker.txt"));
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("kernel rejects persisted project definitions that escape the snapshot root", async () => {
   const harness = await RuntimeHarness.create();
 
@@ -1989,6 +2028,31 @@ test("exec success captures stdout stderr and artifacts", async () => {
     await fs.access(path.join(harness.homeDir, exec.stdoutRef as string));
     await fs.access(path.join(harness.homeDir, exec.stderrRef as string));
     await fs.access(path.join(harness.homeDir, exec.artifacts[0]!.ref));
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("exec env secrets are not persisted verbatim in runtime storage", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const secret = "super-secret-token";
+    const run = await harness.startWorkflow("demo/execEnvSecretProbe", { secret });
+    const completed = await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed");
+
+    const db = new Database(`${harness.homeDir}/runtime.sqlite`, { readonly: true });
+    try {
+      const rows = db
+        .query("select env_json from run_execs where run_id = ?")
+        .all(completed.run.id) as Array<{ env_json: string | null }>;
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.env_json).toContain("EXEC_SECRET");
+      expect(rows[0]?.env_json).not.toContain(secret);
+    } finally {
+      db.close(false);
+    }
   } finally {
     await harness.dispose();
   }

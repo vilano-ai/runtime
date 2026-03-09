@@ -7,9 +7,11 @@ import {
   syncProject,
 } from "../daemon-client.ts";
 import { renderProject, renderProjectSummary, writeOutput } from "../output.ts";
-import { materializeProjectSnapshot, pruneProjectSnapshots } from "../project-snapshot.ts";
+import { materializeProjectSnapshot, pruneAllProjectSnapshots } from "../project-snapshot.ts";
 import { buildProjectManifest } from "../registry.ts";
 import { CliError } from "../cli-error.ts";
+
+const PROJECT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 export async function handleProjectCommand(
   args: string[],
@@ -28,6 +30,10 @@ export async function handleProjectCommand(
 
       if (typeof nameFlag !== "string" || nameFlag.trim() === "") {
         throw new CliError("Usage: vilano project add <path> --name <project>");
+      }
+
+      if (!PROJECT_NAME_PATTERN.test(nameFlag)) {
+        throw new CliError("Project name must match /^[A-Za-z0-9][A-Za-z0-9._-]*$/");
       }
 
       const manifest = await buildProjectManifest(nameFlag, projectPath, { regenerate: true });
@@ -88,7 +94,7 @@ export async function handleProjectCommand(
   }
 }
 
-async function pruneRegisteredProjectSnapshots(projectName: string): Promise<void> {
-  const references = await listReferencedProjectSnapshots(projectName);
-  await pruneProjectSnapshots(projectName, references.snapshotPaths);
+async function pruneRegisteredProjectSnapshots(_projectName: string): Promise<void> {
+  const references = await listReferencedProjectSnapshots();
+  await pruneAllProjectSnapshots(references.snapshotPaths);
 }

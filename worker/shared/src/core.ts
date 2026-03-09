@@ -27,6 +27,10 @@ import {
   type ServiceTurnActivation,
   type WorkflowActivation,
 } from "./client.ts";
+import {
+  ensureActivationImportRoot,
+  ensureActivationWorkspace,
+} from "./activation-workspace.ts";
 import { loadServiceDefinition, loadWorkflowDefinition } from "./definitions.ts";
 import type { RuntimeAdapter } from "./runtime-adapter.ts";
 import { WORKER_PROTOCOL_VERSION } from "./runtime-version.ts";
@@ -75,6 +79,7 @@ export async function startWorker(
     await fs.mkdir(workerHome, { recursive: true });
     process.chdir(workerHome);
   }
+  const workerHomePath = process.cwd();
   setRuntimeHomeOverride(runtimeHome ? runtimeHome : null);
 
   const workerId = options.workerId ?? `worker-${crypto.randomUUID()}`;
@@ -115,7 +120,7 @@ export async function startWorker(
       continue;
     }
 
-    await executeActivation(adapter, client, activation, heartbeatIntervalMs);
+    await executeActivation(adapter, client, activation, heartbeatIntervalMs, workerHomePath);
 
     if (options.once) {
       return;
@@ -127,27 +132,50 @@ async function executeActivation(
   adapter: RuntimeAdapter,
   client: WorkerClient,
   activation: Activation,
-  heartbeatIntervalMs: number
+  heartbeatIntervalMs: number,
+  workerHomePath: string
 ): Promise<void> {
   const heartbeat = setInterval(() => {
     void client.heartbeat(activation.leaseId).catch(() => undefined);
   }, heartbeatIntervalMs);
   let serviceDefinition: ServiceDefinition<any, any, any, any, any> | null = null;
   let serviceRetry: ServiceDefinition<any, any, any, any, any>["retry"] | undefined;
+  const activationWorkspace = await ensureActivationWorkspace(workerHomePath, activation);
+  const activationImportRoot = await ensureActivationImportRoot(workerHomePath, activation);
 
   try {
-    await withActivationCwd(activation.project.path, async () => {
-      if (activation.kind === "workflow") {
-        const definition = await loadWorkflowDefinition(activation);
-        const ctx = createTurnContext(adapter, client, activation);
+    if (activation.kind === "workflow") {
+      const definition = await withActivationCwd(activationImportRoot, async () =>
+        await loadWorkflowDefinition(activation, {
+          cacheKey: activation.leaseId,
+          importRoot: activationImportRoot,
+        })
+      );
+
+      await withActivationCwd(activationWorkspace, async () => {
+        const ctx = createTurnContext(adapter, client, activation, activationWorkspace);
         const result = await definition.run(activation.run.input, ctx);
         await client.completeRun(activation.leaseId, result);
-        return;
-      }
+      });
+      return;
+    }
 
-      serviceDefinition = await loadServiceDefinition(activation);
-      serviceRetry = serviceDefinition.retry;
-      await executeServiceTurn(adapter, client, activation, serviceDefinition);
+    serviceDefinition = await withActivationCwd(activationImportRoot, async () =>
+      await loadServiceDefinition(activation, {
+        cacheKey: activation.leaseId,
+        importRoot: activationImportRoot,
+      })
+    );
+    serviceRetry = serviceDefinition.retry;
+
+    await withActivationCwd(activationWorkspace, async () => {
+      await executeServiceTurn(
+        adapter,
+        client,
+        activation,
+        serviceDefinition as ServiceDefinition<any, any, any, any, any>,
+        activationWorkspace
+      );
     });
   } catch (error) {
     if (error instanceof RunSuspendedError) {
@@ -191,6 +219,7 @@ async function executeActivation(
   } finally {
     clearInterval(heartbeat);
     client.clearLeaseAuthToken(activation.leaseId);
+    await fs.rm(activationImportRoot, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
@@ -208,7 +237,8 @@ async function withActivationCwd<T>(cwd: string, fn: () => Promise<T>): Promise<
 function createTurnContext(
   adapter: RuntimeAdapter,
   client: WorkerClient,
-  activation: Activation
+  activation: Activation,
+  activationCwd: string
 ): WorkflowContext {
   const implicitActivationOpCounters = new Map<string, number>();
   const implicitServiceOpCounters = new Map<string, number>();
@@ -401,7 +431,7 @@ function createTurnContext(
         spec.key
         )
       );
-      const cwd = resolveExecCwd(activation.project.path, spec.cwd);
+      const cwd = resolveExecCwd(activationCwd, spec.cwd);
       const timeoutMs = parseDurationToMs(spec.timeout);
       const retryPolicy = toRetryPolicy(spec.retry, {
         retries: spec.retries,
@@ -615,9 +645,10 @@ async function executeServiceTurn(
   adapter: RuntimeAdapter,
   client: WorkerClient,
   activation: ServiceTurnActivation,
-  definition: ServiceDefinition<any, any, any, any, any>
+  definition: ServiceDefinition<any, any, any, any, any>,
+  activationCwd: string
 ): Promise<void> {
-  const ctx = createTurnContext(adapter, client, activation);
+  const ctx = createTurnContext(adapter, client, activation, activationCwd);
   let state = activation.service.state;
   let shouldCommitState = false;
 

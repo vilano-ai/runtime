@@ -95,6 +95,7 @@ export interface RunRecord {
   project: string;
   definitionKind: DefinitionKind;
   definitionName: string;
+  projectSnapshotPath?: string | null;
   status: RunStatus;
   leaseId?: string | null;
   leaseWorkerId?: string | null;

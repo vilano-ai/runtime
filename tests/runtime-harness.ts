@@ -19,6 +19,7 @@ import type {
   RunStartResponse,
   ServiceStopResponse,
 } from "../cli/src/types.ts";
+import { deriveExecutionHomeDir } from "../cli/src/runtime-home.ts";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 const CLI_ENTRY = path.join(ROOT, "cli", "bin", "vilano.ts");
@@ -211,7 +212,7 @@ export class RuntimeHarness {
     const executable = runtime === "node" ? "node" : "bun";
     const workerEntry = path.join(WORKER_ROOT, runtime, "src", "cli.ts");
     const args = [executable, workerEntry, "--server", this.serverUrl];
-    const workerHome = path.join(this.runtimeHome, "worker-home");
+    const workerHome = path.join(deriveExecutionHomeDir(this.runtimeHome), "worker-home");
 
     await fs.mkdir(workerHome, { recursive: true });
 

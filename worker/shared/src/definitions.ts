@@ -7,12 +7,14 @@ import type { ServiceDefinition, WorkflowDefinition } from "./runtime-sdk.ts";
 import type { ServiceTurnActivation, WorkflowActivation } from "./client.ts";
 
 export async function loadWorkflowDefinition(
-  activation: WorkflowActivation
+  activation: WorkflowActivation,
+  options: { cacheKey?: string; importRoot?: string } = {}
 ): Promise<WorkflowDefinition<any, any>> {
   const moduleExports = await loadDefinitionModule(
-    activation.project.path,
+    options.importRoot ?? activation.project.path,
     activation.definition.file,
-    activation.definition.exportName
+    activation.definition.exportName,
+    options.cacheKey
   );
   const definition = selectDefinitionExport(
     moduleExports,
@@ -32,12 +34,14 @@ export async function loadWorkflowDefinition(
 }
 
 export async function loadServiceDefinition(
-  activation: ServiceTurnActivation
+  activation: ServiceTurnActivation,
+  options: { cacheKey?: string; importRoot?: string } = {}
 ): Promise<ServiceDefinition<any, any, any, any, any>> {
   const moduleExports = await loadDefinitionModule(
-    activation.project.path,
+    options.importRoot ?? activation.project.path,
     activation.definition.file,
-    activation.definition.exportName
+    activation.definition.exportName,
+    options.cacheKey
   );
   const definition = selectDefinitionExport(
     moduleExports,
@@ -59,7 +63,8 @@ export async function loadServiceDefinition(
 async function loadDefinitionModule(
   projectPath: string,
   file: string,
-  exportName: string
+  exportName: string,
+  cacheKey?: string
 ): Promise<Record<string, unknown>> {
   const absolutePath = path.join(projectPath, file);
   const [projectRealPath, absoluteRealPath] = await Promise.all([
@@ -76,7 +81,10 @@ async function loadDefinitionModule(
     throw new Error(`Definition file '${file}' resolved outside the project root`);
   }
 
-  const moduleUrl = pathToFileURL(absoluteRealPath).href;
+  const moduleUrl =
+    cacheKey && cacheKey.trim().length > 0
+      ? `${pathToFileURL(absoluteRealPath).href}?vilano_activation=${encodeURIComponent(cacheKey)}`
+      : pathToFileURL(absoluteRealPath).href;
   const moduleExports = (await import(moduleUrl)) as Record<string, unknown>;
   if (!(exportName in moduleExports)) {
     return moduleExports;

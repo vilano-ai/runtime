@@ -494,6 +494,11 @@ defmodule VilanoKernel.Storage.ReadModels do
         |> Map.keys()
         |> Enum.sort()
 
+      decoded when is_list(decoded) ->
+        decoded
+        |> Enum.filter(&is_binary/1)
+        |> Enum.sort()
+
       _ ->
         []
     end

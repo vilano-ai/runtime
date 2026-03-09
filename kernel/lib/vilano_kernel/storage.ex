@@ -118,27 +118,28 @@ defmodule VilanoKernel.Storage do
     now = Infrastructure.now_iso8601()
 
     Infrastructure.transaction_with_busy_retry(fn ->
-      caller_run_id =
+      caller_run =
         case lease_id do
           value when is_binary(value) and value != "" ->
-            case get_fenced_run_by_lease(value, now) do
-              nil -> nil
-              run -> run["id"]
-            end
+            get_fenced_run_by_lease(value, now)
 
           _ ->
             nil
         end
 
-      ensure_service_run_in_tx!(
-        project,
-        definition,
-        service_key,
-        key_input,
-        now,
-        caller_run_id,
-        must_exist
-      )
+      if is_binary(lease_id) and lease_id != "" and is_nil(caller_run) do
+        nil
+      else
+        ensure_service_run_in_tx!(
+          project,
+          definition,
+          service_key,
+          key_input,
+          now,
+          caller_run && caller_run["id"],
+          must_exist
+        )
+      end
     end)
     |> unwrap_transaction_result()
   end
@@ -1752,6 +1753,15 @@ defmodule VilanoKernel.Storage do
 
               args = Map.get(exec_spec, "args", [])
               env_map = Map.get(exec_spec, "env")
+              env_keys_json =
+                if is_map(env_map) do
+                  env_map
+                  |> Map.keys()
+                  |> Enum.sort()
+                  |> Jason.encode!()
+                else
+                  nil
+                end
 
               SQL.query!(
                 Repo,
@@ -1802,7 +1812,7 @@ defmodule VilanoKernel.Storage do
                   Map.fetch!(exec_spec, "cmd"),
                   Jason.encode!(args),
                   Map.get(exec_spec, "cwd"),
-                  if(is_map(env_map), do: Jason.encode!(env_map), else: nil),
+                  env_keys_json,
                   Map.get(exec_spec, "timeoutMs"),
                   attempt,
                   now,
@@ -2600,6 +2610,11 @@ defmodule VilanoKernel.Storage do
       decoded when is_map(decoded) ->
         decoded
         |> Map.keys()
+        |> Enum.sort()
+
+      decoded when is_list(decoded) ->
+        decoded
+        |> Enum.filter(&is_binary/1)
         |> Enum.sort()
 
       _ ->

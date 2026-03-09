@@ -7,11 +7,13 @@ defmodule VilanoKernel.Storage.Infrastructure do
   alias VilanoKernel.Storage.RuntimeMetadata
 
   def init! do
+    runtime = Application.fetch_env!(:vilano_kernel, :runtime)
     configure_database!()
     bootstrap_schema!()
     Migrations.ensure_tracking_table!()
     Migrations.run_pending!()
     RuntimeMetadata.sync_runtime_metadata!()
+    maybe_chmod_runtime_db(runtime.runtime_db_path)
   end
 
   def transaction_with_busy_retry(fun, attempts_left \\ 4)
@@ -74,6 +76,13 @@ defmodule VilanoKernel.Storage.Infrastructure do
     SQL.query!(Repo, "pragma journal_mode = wal", [])
     SQL.query!(Repo, "pragma foreign_keys = on", [])
     SQL.query!(Repo, "pragma busy_timeout = 5000", [])
+  end
+
+  defp maybe_chmod_runtime_db(runtime_db_path) do
+    case File.chmod(runtime_db_path, 0o600) do
+      :ok -> :ok
+      {:error, _reason} -> :ok
+    end
   end
 
   defp bootstrap_schema! do

@@ -1,3 +1,4 @@
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 
 import { nonRetryable, service, workflow } from "@vilano/runtime";
@@ -31,6 +32,8 @@ type DemoRetryBackoff =
       max?: string;
       jitter?: DemoRetryJitter;
     };
+
+let moduleStateProbeCounter = 0;
 
 async function bumpMarkerAttempt(markerPath: string): Promise<number> {
   await fs.mkdir("tmp", { recursive: true });
@@ -786,6 +789,73 @@ export const workerEnvProbe = workflow({
       workerHomePresent: Boolean(process.env.VILANO_WORKER_HOME),
       internalRuntimeHomePresent: Boolean(process.env.VILANO_RUNTIME_HOME),
     };
+  },
+});
+
+export const moduleStateProbe = workflow({
+  name: "moduleStateProbe",
+  run: async (_input, ctx) => {
+    return await ctx.step(
+      "module-state-probe",
+      async () => {
+        moduleStateProbeCounter += 1;
+        return { count: moduleStateProbeCounter };
+      },
+      { key: "module-state-probe" }
+    );
+  },
+});
+
+export const snapshotIsolationProbe = workflow({
+  name: "snapshotIsolationProbe",
+  run: async (_input, ctx) => {
+    return await ctx.step(
+      "snapshot-isolation-probe",
+      async () => {
+        await fs.mkdir("tmp", { recursive: true });
+        await fs.writeFile("tmp/workspace-marker.txt", "workspace-ok", "utf8");
+
+        let snapshotWritable = true;
+        let snapshotWriteErrorCode: string | null = null;
+
+        try {
+          await fs.access(new URL(import.meta.url), fsConstants.W_OK);
+        } catch (error) {
+          snapshotWritable = false;
+          snapshotWriteErrorCode = (error as NodeJS.ErrnoException).code ?? "unknown";
+        }
+
+        return {
+          cwd: process.cwd(),
+          workspaceMarkerPresent: true,
+          snapshotWritable,
+          snapshotWriteErrorCode,
+        };
+      },
+      { key: "snapshot-isolation-probe" }
+    );
+  },
+});
+
+export const execEnvSecretProbe = workflow({
+  name: "execEnvSecretProbe",
+  run: async (input: { secret: string }, ctx) => {
+    return await ctx.exec({
+      name: "exec-env-secret-probe",
+      key: `exec-env-secret-probe:${input.secret}`,
+      cmd: "bun",
+      args: [
+        "-e",
+        "console.log(JSON.stringify({ ok: true }))",
+      ],
+      env: {
+        EXEC_SECRET: input.secret,
+      },
+      capture: {
+        stdout: true,
+      },
+      parse: (stdout) => JSON.parse(stdout.trim()) as { ok: true },
+    });
   },
 });
 
