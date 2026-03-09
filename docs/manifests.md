@@ -52,14 +52,15 @@ When a project is registered or synced, the CLI resolves its manifest in this or
 2. `.vilano/project-manifest.json` cache if present and valid
 3. source scanning fallback, which writes the generated cache
 
-That means the runtime already prefers explicit manifests over discovery magic.
+That means the runtime already prefers explicit manifests over discovery magic. For OSS v0.1,
+`vilano.manifest.json` should be treated as the normal path.
 
 ## Direction
 
 For the current OSS release:
 
-- explicit manifest consumption is supported
-- generated cache fallback is supported as a convenience path for TS/JS repos
+- explicit manifest consumption is supported and recommended
+- generated cache fallback is supported as a convenience path for existing TS/JS repos
 - source scanning fallback is still regex-based and should be treated as a compatibility bridge,
   not as the long-term portable manifest story
 

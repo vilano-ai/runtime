@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+
 import {
   addProject,
   inspectProject,
@@ -8,6 +10,7 @@ import {
 } from "../daemon-client.ts";
 import { renderProject, renderProjectSummary, writeOutput } from "../output.ts";
 import { materializeProjectSnapshot, pruneAllProjectSnapshots } from "../project-snapshot.ts";
+import { getProjectManifestPath } from "../project-manifest.ts";
 import { buildProjectManifest } from "../registry.ts";
 import { CliError } from "../cli-error.ts";
 
@@ -36,6 +39,7 @@ export async function handleProjectCommand(
         throw new CliError("Project name must match /^[A-Za-z0-9][A-Za-z0-9._-]*$/");
       }
 
+      await warnIfUsingGeneratedManifestFallback(projectPath);
       const manifest = await buildProjectManifest(nameFlag, projectPath, { regenerate: true });
       manifest.snapshotPath = await materializeProjectSnapshot(nameFlag, manifest.path);
       const response = await addProject(manifest);
@@ -69,6 +73,7 @@ export async function handleProjectCommand(
       }
 
       const existing = await inspectProject(projectName);
+      await warnIfUsingGeneratedManifestFallback(existing.project.path);
       const manifest = await buildProjectManifest(existing.project.name, existing.project.path, {
         regenerate: true,
       });
@@ -97,4 +102,19 @@ export async function handleProjectCommand(
 async function pruneRegisteredProjectSnapshots(_projectName: string): Promise<void> {
   const references = await listReferencedProjectSnapshots();
   await pruneAllProjectSnapshots(references.snapshotPaths);
+}
+
+async function warnIfUsingGeneratedManifestFallback(projectPath: string): Promise<void> {
+  try {
+    await fs.access(getProjectManifestPath(projectPath));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      process.stderr.write(
+        "Vilano is using generated manifest fallback for this project. Add `vilano.manifest.json` for the recommended explicit contract.\n"
+      );
+      return;
+    }
+
+    throw error;
+  }
 }
