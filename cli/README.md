@@ -2,31 +2,59 @@
 
 `vilano` is the local operator surface for Vilano Runtime.
 
-Current commands cover:
+It is responsible for:
 
-- `version`
-- `doctor [--fix]`
-- daemon lifecycle
-- project registry management
-- workflow definition discovery
-- run start / inspect / replay / cancel
-- service ensure / inspect / send / ask / signal / stop
+- bootstrapping the local daemon
+- managing the project registry
+- resolving workflow and service definitions
+- starting runs and talking to services
+- rendering inspect and replay output
+- packaging and smoke-install validation
 
-The CLI talks to the local BEAM kernel and is intended to run with Bun. Worker processes can be launched under Bun or Node with `vilano worker start --runtime <bun|node>`.
+The CLI is intentionally a client of the kernel, not a second runtime authority.
 
-The local kernel is loopback-only and protected with a per-runtime token stored under `VILANO_HOME`, which the CLI and managed workers pass automatically.
+## Runtime Assumptions
 
-Useful root-level checks:
+- Bun-first CLI entrypoint
+- loopback-only kernel connection
+- per-runtime access token loaded from `VILANO_HOME`
+- repo mode and packaged-install mode
 
-- `bun run check`
-- `bun run pack`
-- `bun run smoke:install`
+When running from an installed package, the CLI materializes the bundled runtime payload under
+`VILANO_HOME` before starting the daemon. It does not mutate the installed package tree.
 
-Useful operator commands:
+## Important Commands
 
-- `vilano version`
-- `vilano doctor --fix`
-- `vilano daemon status`
-- `vilano run replay <run-id>`
+```bash
+vilano version
+vilano doctor --fix
+vilano daemon start
+vilano daemon status
+vilano project add /path/to/project --name demo
+vilano run start demo/planner --input '{"topic":"BEAM"}'
+vilano run inspect <run-id>
+vilano run replay <run-id>
+vilano service ask demo/reviewer status --key-json '{"repoId":"repo_123"}'
+```
 
-When installed from a package, the CLI resolves a bundled runtime payload from `runtime-dist/`. In a repo checkout it falls back to the local `kernel/` and `worker/` directories.
+## Code Layout
+
+- [src/index.ts](./src/index.ts)
+  - command routing and command handlers
+- [src/daemon-client.ts](./src/daemon-client.ts)
+  - kernel client and daemon bootstrap logic
+- [src/output.ts](./src/output.ts)
+  - general CLI output helpers
+- [src/run-views.ts](./src/run-views.ts)
+  - inspect/replay rendering and projections
+- [src/registry.ts](./src/registry.ts)
+  - project registration and local resolution
+- [src/project-manifest.ts](./src/project-manifest.ts)
+  - generated manifest support
+- [src/runtime-materializer.ts](./src/runtime-materializer.ts)
+  - packaged runtime bundle materialization
+
+## Release Notes
+
+The CLI currently supports the Bun-first release path. Worker processes may be launched under Bun or
+Node, but the CLI itself remains Bun-oriented today.

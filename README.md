@@ -1,39 +1,82 @@
 # Vilano Runtime
 
-Vilano Runtime is a TypeScript-first durable execution runtime with a BEAM kernel and JavaScript/TypeScript workers.
+Vilano Runtime is a local-first durable execution runtime with a BEAM kernel and external
+JavaScript/TypeScript workers.
 
-Today, this repo already has a working local runtime with:
+It is built for workflows and long-lived services that need:
 
-- durable workflows
-- durable services with inboxes and typed `send` / `ask` / `signal`
-- BEAM-owned leasing, waits, timers, routing, and supervision
-- JavaScript/TypeScript workers for TypeScript execution and subprocess execution
-- project registry, `run inspect`, and `run replay`
-- integration coverage for cancellation, replay, retries, signals, and hard-stop fallback paths
+- durable replay instead of best-effort retries
+- explicit waits, signals, and child execution
+- subprocess-heavy work with durable artifacts
+- inspectable execution timelines instead of opaque background jobs
 
-The local daemon listens on loopback only and now requires a per-runtime access token stored under `VILANO_HOME`. That is meant to block blind localhost access by unrelated local processes; it is not a strong isolation boundary against fully trusted code already running as the same user.
+Vilano is currently a `0.x` runtime. The core execution model is real and tested, but the project
+should still be treated as preview software.
 
-Working design notes live under `spec/` and are intentionally ignored by git.
+## What It Is
 
-## Quickstart
+Vilano has three main pieces:
 
-### Repo First Run
+- **BEAM kernel**
+  - durable state, leases, waits, retries, signals, service inboxes, and managed worker
+    supervision
+- **JS/TS workers**
+  - replay workflows and service turns, execute in-process `step()` logic, and run durable
+    subprocesses through `exec()`
+- **CLI**
+  - local operator surface for bootstrapping the daemon, registering projects, starting runs,
+    inspecting timelines, and delivering signals
 
-1. Run `direnv allow`.
-2. Run `bun install`.
-3. Run `./cli/bin/vilano.ts version`.
-4. Run `./cli/bin/vilano.ts doctor --fix`.
+The runtime is intentionally local-first today:
 
-Start the local runtime:
+- single-machine
+- SQLite-backed
+- loopback-only control plane
+- per-runtime access token under `VILANO_HOME`
+
+## Current Capabilities
+
+- workflows with replay-from-the-top semantics
+- services with durable inboxes and typed `send` / `ask` / `signal`
+- durable `step`, `exec`, `sleep`, `waitForSignal`, `spawn`, and `connect`
+- kernel-scheduled retries with fixed, linear, or exponential backoff plus jitter
+- cancellation propagation across waits, child runs, service asks, and subprocesses
+- managed-worker hard-stop fallback for timed blocking steps
+- `run inspect` and `run replay` for durable operator visibility
+- packaged local install flow with runtime bundle materialization under `VILANO_HOME`
+
+## Status
+
+Supported today:
+
+- BEAM kernel
+- TypeScript SDK
+- Bun CLI
+- JS/TS worker core running under Bun or Node
+
+Not supported yet:
+
+- hosted/cloud mode
+- clustering / multi-node scheduling
+- language-native SDKs beyond TypeScript
+- exact-once side-effect guarantees
+
+The current support posture is documented in [docs/support-matrix.md](./docs/support-matrix.md).
+
+## Quick Start
+
+### From a Repo Checkout
 
 ```bash
+direnv allow
+bun install
+./cli/bin/vilano.ts doctor --fix
 ./cli/bin/vilano.ts daemon start
-./cli/bin/vilano.ts daemon status
 ./cli/bin/vilano.ts project add ./examples/bootstrap-demo --name demo
 ./cli/bin/vilano.ts workflow list
 ```
 
-Run a workflow:
+Start a workflow:
 
 ```bash
 ./cli/bin/vilano.ts run start demo/planner --input '{"topic":"BEAM"}'
@@ -42,7 +85,7 @@ Run a workflow:
 ./cli/bin/vilano.ts run replay <run-id>
 ```
 
-Address a service:
+Talk to a service:
 
 ```bash
 ./cli/bin/vilano.ts service ensure demo/reviewer --key-json '{"repoId":"repo_123"}'
@@ -50,41 +93,22 @@ Address a service:
 ./cli/bin/vilano.ts service ask demo/reviewer status --key-json '{"repoId":"repo_123"}'
 ```
 
-Run the integration suite:
+### Packaged Smoke Path
 
-```bash
-direnv exec . bun test tests --timeout 120000 --max-concurrency 1
-```
-
-Run a manual worker under a specific JS runtime:
-
-```bash
-./cli/bin/vilano.ts worker start --runtime bun
-./cli/bin/vilano.ts worker start --runtime node
-```
-
-Packaging and release smoke checks:
+The repo includes a packaged install smoke check:
 
 ```bash
 bun run check
-bun run prepare:cli-package
 bun run pack
 bun run smoke:install
 ```
 
-### Packaged Install Flow
+That path packs `vilano` and `@vilano/runtime`, installs them into a temporary directory, starts the
+daemon, runs health checks, and verifies the packaged bundle stays immutable.
 
-The CLI package now bundles a local runtime payload under `runtime-dist/` so an installed `vilano` can boot its own kernel and worker without a repo checkout. The current repo-level smoke path is:
+## Programming Model
 
-```bash
-bun run smoke:install
-```
-
-That script packs `vilano` and `@vilano/runtime`, installs them into a temporary directory, runs `vilano version`, `vilano doctor --fix`, starts the daemon, checks status, and stops it again.
-
-## Authoring Model
-
-Workflows are bounded runs:
+### Workflow
 
 ```ts
 import { workflow } from "@vilano/runtime";
@@ -95,7 +119,7 @@ export const planner = workflow({
     const research = await ctx.step(
       "research",
       async () => ({ topic: input.topic, sources: 3 }),
-      { retries: 1, backoff: "50ms" }
+      { retry: { retries: 1, backoff: "50ms" } }
     );
 
     return await ctx.exec({
@@ -109,7 +133,7 @@ export const planner = workflow({
 });
 ```
 
-Services are durable, addressable runs with typed inbox handlers:
+### Service
 
 ```ts
 import { service } from "@vilano/runtime";
@@ -117,11 +141,6 @@ import { service } from "@vilano/runtime";
 export const reviewer = service({
   name: "reviewer",
   key: (input: { repoId: string }) => input.repoId,
-  retry: {
-    retries: 1,
-    backoff: { kind: "exponential", initial: "50ms", factor: 2, max: "1s" },
-    on: ["application", "timeout"],
-  },
 
   init: async (input) => ({
     repoId: input.repoId,
@@ -150,9 +169,12 @@ await reviewerRef.send.hint({ note: "Focus on migrations" });
 const status = await reviewerRef.ask.status();
 ```
 
-## Runtime Semantics
+## Execution Semantics
 
-The runtime does not capture arbitrary JavaScript stack frames. Recovery works by replaying workflow or service-turn orchestration code from the top against durable history.
+Vilano does **not** capture arbitrary JavaScript stack frames.
+
+Recovery works by rerunning workflow or service-turn orchestration code from the top against durable
+kernel state until the next incomplete operation boundary.
 
 Durable boundaries today:
 
@@ -161,115 +183,71 @@ Durable boundaries today:
 - `ctx.sleep()`
 - `ctx.waitForSignal()`
 - `ctx.spawn()` / `child.result()`
-- `ctx.connect()` with service `send` / `ask` / `signal`
+- `ctx.connect()` and service `send` / `ask` / `signal`
 
 ### `step()` vs `exec()`
 
-Use `ctx.step()` for short, replayable, in-process TypeScript logic.
+Use `step()` for short, replayable in-process logic.
 
-Use `ctx.exec()` for:
+Use `exec()` when the work should be:
 
-- CLI tools
-- browser drivers
-- codegen processes
-- anything that should be killable as a real subprocess
-- work that should capture stdout, stderr, and artifacts durably
+- an actual subprocess
+- killable by the runtime
+- observable through stdout/stderr/artifacts
+- isolated from the worker process
 
 ### Cancellation and Timeouts
 
-`step()` supports cooperative control inside the callback:
+`step()` is cooperative first. Inside a step callback you can use:
 
 - `step.signal`
 - `step.checkCancelled()`
 - `await step.yield()`
 
-For managed local workers, the kernel also has a hard-stop fallback for timed, non-cooperative blocking steps: it fails the step, revokes the lease, and kills the stuck worker process so the runtime can continue.
-
-For unmanaged workers, the kernel still marks the activation as failed or cancelled durably, but it cannot force-kill that external worker process.
+For managed workers, the kernel also has a hard-stop fallback for timed, non-cooperative blocking
+steps. For unmanaged workers, cancellation and timeout remain durable, but the kernel cannot kill
+the external worker process.
 
 ### Retries
 
-Retries are durable and kernel-scheduled for:
+Retries are kernel-scheduled and durable for:
 
 - steps
 - execs
 - service turns
 
-If a failure should bypass retries entirely, throw `nonRetryable(...)` from TypeScript-authored logic or parse code:
+If a failure should never retry, throw `nonRetryable(...)`.
 
-```ts
-import { nonRetryable } from "@vilano/runtime";
+## Documentation
 
-throw nonRetryable(new Error("invalid user input"));
+- [Docs index](./docs/README.md)
+- [Architecture](./docs/architecture.md)
+- [Support matrix](./docs/support-matrix.md)
+- [Development guide](./docs/development.md)
+- [Operations guide](./docs/operations.md)
+- [Protocol artifacts](./protocol/README.md)
+- [Test coverage](./tests/README.md)
+
+## Repository Layout
+
+- [kernel/](./kernel) — BEAM kernel and durable control plane
+- [cli/](./cli) — Bun-based operator CLI
+- [sdk/typescript/](./sdk/typescript) — TypeScript SDK
+- [worker/](./worker) — shared JS/TS worker core and runtime-specific entrypoints
+- [examples/](./examples) — reference project definitions and demos
+- [protocol/](./protocol) — versioned transport contract
+- [tests/](./tests) — integration and soak coverage
+
+## Running the Checks
+
+```bash
+bun run typecheck
+direnv exec . bash -lc 'cd kernel && mix compile'
+direnv exec . bun run test
+direnv exec . bun run smoke:install
 ```
 
-Current retry behavior is durable, kernel-scheduled, and configurable:
+## Notes
 
-- `retries: 1` still means at most 2 attempts total
-- `retry: { retries, backoff, on }` is the preferred shape for new code
-- `backoff` can now be:
-  `"50ms"`, `{ kind: "fixed", delay: "50ms" }`, `{ kind: "linear", initial: "50ms", step: "50ms", max: "1s" }`, or `{ kind: "exponential", initial: "50ms", factor: 2, max: "1s" }`
-- object backoff policies can also add `jitter: "full" | "half" | { kind: "ratio", ratio: 0.5 }`
-- capped backoff and applied jitter are persisted durably, so retries schedule from recorded data instead of worker-local timers
-- `on` can target retry families like `application`, `timeout`, `process_exit`, or `process_spawn`
-- `run inspect` and `run replay` surface the retry decision directly as `scheduled`, `non_retryable`, `family_not_selected`, `retries_disabled`, or `attempts_exhausted`
-- `run inspect`, `service inspect`, and `run replay` now also show a `retry_series` view with base delay, capped delay, and applied jitter per attempt
-
-## Operator Surface
-
-Current CLI surfaces:
-
-- `vilano version`
-- `vilano doctor [--fix]`
-- `vilano daemon start|status|stop`
-- `vilano project add|list|inspect|sync|remove`
-- `vilano workflow list|inspect`
-- `vilano run start|list|inspect|replay|cancel`
-- `vilano service list|ensure|inspect|send|ask|signal|stop`
-- `vilano signal send`
-
-Useful commands:
-
-- `vilano version`
-  Shows the CLI version, protocol version, whether the runtime bundle is repo-backed or packaged, and current kernel info when running.
-- `vilano doctor --fix`
-  Checks Bun/Elixir tooling, runtime bundle paths, kernel deps/build state, and optionally runs `mix local.hex`, `mix local.rebar`, `mix deps.get`, and `mix compile`.
-- `vilano daemon status`
-  Shows runtime version, protocol version, schema version, migration count, runtime home, and managed worker state.
-- `vilano run inspect <run-id>`
-  Shows current run state, events, waits, turns, steps, execs, child runs, and service envelopes.
-- `vilano run replay <run-id>`
-  Shows a chronological timeline derived from the durable event stream.
-- `--json`
-  Available on important commands for scripting and future TUI layering.
-
-## Current Limits
-
-This runtime is real, but still v1-shaped.
-
-Current limits worth knowing:
-
-- `step()` hard-stop escalation is only available for managed workers the kernel supervises.
-- In-process TypeScript code is still cooperative first; the hard-stop path is a fallback, not normal control flow.
-- Managed local workers materialize a versioned source copy under `.vilano-cache/managed-workers/` so Bun always runs the matching worker implementation.
-- `run replay` is served by a dedicated kernel endpoint and rendered by the CLI.
-- Hosted, clustered, and multi-node execution are not built yet.
-
-## Runtime Lifecycle
-
-The local runtime now has explicit versioning and migration metadata.
-
-- the kernel persists schema state in `schema_migrations`
-- runtime metadata includes runtime version, protocol version, schema version, and applied migrations
-- CLI and worker both fail fast on protocol mismatch instead of attempting partial operation
-- `daemon status`, `version`, and `doctor --json` expose that metadata for tooling
-
-## Repo Layout
-
-- `kernel/`: Elixir/BEAM control plane
-- `sdk/typescript/`: TypeScript authoring surface
-- `worker/bun/`: Bun worker runtime
-- `cli/`: Bun CLI and kernel client
-- `examples/`: runnable demo definitions
-- `tests/`: Bun integration suite
-- `protocol/`: protocol notes
+Long-form design exploration still lives under `spec/` and is intentionally ignored by git. The
+tracked docs in `docs/` describe the codebase and support posture as it exists in the repository.

@@ -2,94 +2,78 @@
 
 The kernel is the durable control plane for Vilano Runtime.
 
-It runs on Elixir/BEAM and currently owns:
+It runs on Elixir/BEAM and owns:
 
-- run and service state
-- durable event storage
-- activation leasing
-- timer scheduling
-- signal routing
-- child-run wakeups
-- service inboxes and one-turn-at-a-time service execution
-- managed local worker supervision
-- hard-stop escalation for timed, stuck managed workers
+- runtime metadata and schema state
+- durable runs, events, waits, steps, execs, and child lineage
+- service instances and service inboxes
+- activation leasing and lease fencing
+- retry scheduling
+- timers and signals
+- managed worker supervision
 
-## What the Kernel Does
+## Responsibility Boundary
 
-The kernel is the source of truth. JS/TS workers do not own workflow state.
+The kernel owns durable truth.
 
-At a high level:
+Workers do **not** own workflow or service truth; they lease an activation, replay orchestration,
+and resolve durable operations back through the kernel.
 
-1. The CLI or a worker calls the kernel HTTP API.
-2. The kernel persists runs, events, waits, steps, execs, service envelopes, and child lineage.
-3. The kernel grants leases to workers.
-4. Workers replay TypeScript orchestration and call back into the kernel for durable boundaries.
-5. The kernel wakes suspended runs when timers fire, signals arrive, children finish, or service replies commit.
+That split is the core of the runtime:
 
-## Managed vs Unmanaged Workers
+- kernel = coordination, durability, supervision
+- worker = execution
 
-Managed local workers are supervised by the kernel.
+## Main Modules
 
-That lets the kernel:
+- [lib/vilano_kernel/runtime_supervisor.ex](./lib/vilano_kernel/runtime_supervisor.ex)
+- [lib/vilano_kernel/router.ex](./lib/vilano_kernel/router.ex)
+- [lib/vilano_kernel/storage.ex](./lib/vilano_kernel/storage.ex)
+- [lib/vilano_kernel/managed_worker.ex](./lib/vilano_kernel/managed_worker.ex)
+- [lib/vilano_kernel/wait_manager.ex](./lib/vilano_kernel/wait_manager.ex)
+- [lib/vilano_kernel/step_deadline_manager.ex](./lib/vilano_kernel/step_deadline_manager.ex)
 
-- restart workers automatically
-- kill a worker that is stuck in a timed blocking step
-- kill a worker immediately on cancellation when needed
+Recent decompositions:
 
-Unmanaged workers still work, but the kernel cannot terminate their OS process. In that mode, the kernel falls back to durable failure/cancellation plus lease recovery.
+- [lib/vilano_kernel/router/support.ex](./lib/vilano_kernel/router/support.ex)
+- [lib/vilano_kernel/router/run_views.ex](./lib/vilano_kernel/router/run_views.ex)
+- [lib/vilano_kernel/storage/read_models.ex](./lib/vilano_kernel/storage/read_models.ex)
+- [lib/vilano_kernel/storage/projects.ex](./lib/vilano_kernel/storage/projects.ex)
+- [lib/vilano_kernel/storage/runtime_metadata.ex](./lib/vilano_kernel/storage/runtime_metadata.ex)
+- [lib/vilano_kernel/storage/retry_policy.ex](./lib/vilano_kernel/storage/retry_policy.ex)
+- [lib/vilano_kernel/storage/service_lifecycle.ex](./lib/vilano_kernel/storage/service_lifecycle.ex)
 
 ## Storage Model
 
-The kernel currently persists durable runtime state in SQLite.
+The current kernel uses SQLite for durable state.
 
-Important tables include:
+It tracks:
 
-- `runs`
-- `run_events`
-- `run_steps`
-- `run_execs`
-- `run_waits`
-- `run_children`
-- `service_runs`
-- `service_envelopes`
-- `run_service_ops`
-- `run_signals`
+- schema migrations
+- runtime metadata
+- run/event timelines
+- current-state projections and scheduling indexes
 
-The event log is the durable timeline. The relational tables act as current-state projections and scheduling indexes.
+Kernel startup applies pending migrations before serving traffic and exposes runtime/schema metadata
+through `/v1/status`.
 
-Schema evolution is now explicit:
+## Managed vs Unmanaged Workers
 
-- `schema_migrations` tracks ordered storage migrations
-- `runtime_metadata` records runtime version, protocol version, schema version, and applied migrations
-- kernel startup runs pending migrations before serving traffic
+Managed workers are supervised by the kernel, which allows:
 
-## Current API Surface
+- automatic restart
+- lease-aware lifecycle control
+- hard-stop fallback for timed blocking steps
 
-The kernel exposes a local HTTP API used by:
+Unmanaged workers still participate through the same protocol, but the kernel cannot terminate their
+OS process directly.
+
+## Protocol
+
+The kernel serves a loopback HTTP API used by:
 
 - the CLI
-- JavaScript/TypeScript workers running under Bun or Node
+- JS/TS workers
 
-That API currently supports:
-
-- project registration and sync
-- workflow start/list/inspect/cancel
-- service ensure/inspect/send/ask/signal/stop
-- activation lease/heartbeat/complete/fail
-- step/exec/wait/service-turn resolution and completion
-
-`run replay` is served by a dedicated kernel endpoint that returns inspect data plus a durable replay timeline.
-
-`/v1/status` now also exposes runtime, protocol, and schema metadata so CLI and worker processes can reject incompatible versions early.
-
-## Important Semantics
-
-- The kernel never resumes arbitrary JavaScript stack frames.
-- Replay happens by rerunning orchestration from the top against durable state.
-- Retries are kernel-scheduled, not worker-local loops.
-- Retry policies can match retry families like `application`, `timeout`, `process_exit`, and `process_spawn`.
-- Backoff can be fixed, linear, or exponential, with optional cap and jitter, and the kernel computes each scheduled retry wake time durably.
-- Failure events carry an explicit retry decision so inspect/replay can show why work retried or stopped.
-- Inspect and replay also surface a retry-series projection with per-attempt base delay, capped delay, and applied jitter.
-- Waits and signals are durable state, not in-memory promises.
-- Service turns are processed one at a time per service instance in v1.
+See [protocol/README.md](../protocol/README.md) for the versioned transport artifacts and
+[docs/architecture.md](../docs/architecture.md) for the end-to-end control flow.

@@ -1,67 +1,15 @@
 # TypeScript SDK
 
-The TypeScript SDK is the authoring surface for Vilano Runtime.
+The TypeScript SDK is the primary authoring surface for Vilano Runtime.
 
 It gives you two durable definition types:
 
-- `workflow()`: bounded execution that completes
-- `service()`: addressable, long-lived execution with inbox handlers
+- `workflow()` for bounded execution
+- `service()` for addressable, inbox-driven execution
 
-## Workflow Example
+## Core APIs
 
-```ts
-import { workflow } from "@vilano/runtime";
-
-export const planner = workflow({
-  name: "planner",
-  run: async (input: { topic: string }, ctx) => {
-    const summary = await ctx.step(
-      "summarize",
-      async () => `planned: ${input.topic}`,
-      { retries: 1, backoff: "50ms" }
-    );
-
-    return { summary };
-  },
-});
-```
-
-## Service Example
-
-```ts
-import { service } from "@vilano/runtime";
-
-export const reviewer = service({
-  name: "reviewer",
-  key: (input: { repoId: string }) => input.repoId,
-  retry: {
-    retries: 1,
-    backoff: { kind: "exponential", initial: "50ms", factor: 2, max: "1s" },
-    on: ["application", "timeout"],
-  },
-
-  init: async (input) => ({
-    repoId: input.repoId,
-    notes: [] as string[],
-  }),
-
-  onSend: {
-    hint: async (payload: { note: string }, state) => ({
-      state: { ...state, notes: [...state.notes, payload.note] },
-    }),
-  },
-
-  onAsk: {
-    status: async (_payload, state) => ({
-      reply: { ready: true, notes: state.notes.length },
-    }),
-  },
-});
-```
-
-## Available Context
-
-Inside workflows and service turns:
+Inside workflows and service turns, the runtime context supports:
 
 - `ctx.step(name, fn, options?)`
 - `ctx.exec(spec)`
@@ -79,83 +27,66 @@ await ref.send.hint({ note: "Focus on migrations" });
 const status = await ref.ask.status();
 ```
 
-## `step()` Semantics
+## Semantics
 
-`step()` is for replayable in-process TypeScript logic.
+The SDK follows the Vilano replay model:
 
-The callback receives a step helper:
+- orchestration replays from the top
+- durable operations resolve from history
+- arbitrary JavaScript continuation capture is not attempted
 
-```ts
-await ctx.step("work", async (step) => {
-  while (true) {
-    step.checkCancelled();
-    await step.yield();
-  }
-});
-```
+### `step()`
 
-Available step helpers:
+Use `step()` for short, replayable in-process logic.
+
+Step callbacks receive cooperative control helpers:
 
 - `step.signal`
 - `step.checkCancelled()`
 - `await step.yield()`
 
-Use `step()` for short logic. If the work should be a killable process, use `exec()` instead.
+### `exec()`
 
-## `exec()` Semantics
+Use `exec()` for subprocess-heavy work that should be:
 
-`exec()` is the durable subprocess boundary.
+- killable
+- retryable as a process boundary
+- observable through stdout/stderr/artifacts
 
-It supports:
+### Retries
 
-- command, args, cwd, env
-- timeout
-- durable retry policies with retry families and fixed/linear/exponential backoff
-- capped backoff and jitter scheduling
-- stdout/stderr capture
-- artifact capture
-- parse callback for typed output
+Preferred retry shape:
 
-That makes it the right boundary for CLI tools, browser drivers, codegen, and long-running external work.
+```ts
+retry: {
+  retries: 2,
+  backoff: { kind: "exponential", initial: "50ms", factor: 2, max: "1s" },
+  on: ["application", "timeout"],
+}
+```
 
-## Current Guarantees
+Supported retry families today:
 
-- replay-from-the-top orchestration
-- durable step, exec, wait, child, and service-message boundaries
-- durable retries for steps, execs, and service turns
-- cooperative cancellation for in-process `step()` code
-- kernel hard-stop fallback for timed blocking steps on managed workers
+- `application`
+- `timeout`
+- `process_exit`
+- `process_spawn`
+- `always`
 
-## Explicit Non-Retryable Failures
-
-If a failure should fail immediately even when retries are configured, throw `nonRetryable(...)`:
+If a failure should bypass retries entirely:
 
 ```ts
 import { nonRetryable } from "@vilano/runtime";
 
-throw nonRetryable(new Error("bad request"));
+throw nonRetryable(new Error("invalid input"));
 ```
 
-That works for:
+## Limits
 
-- `step()` callback failures
-- service handler failures
-- `exec()` parse failures
-
-`vilano run inspect` and `vilano run replay` now surface the retry decision directly so operators can see whether a failure was `scheduled`, `non_retryable`, `retries_disabled`, or `attempts_exhausted`.
-
-Current retry policy shape:
-
-- `retry: { retries, backoff, on }`
-- `backoff` may be `"50ms"`, `{ kind: "fixed", delay: "50ms" }`, `{ kind: "linear", initial: "50ms", step: "50ms", max: "1s" }`, or `{ kind: "exponential", initial: "50ms", factor: 2, max: "1s" }`
-- object backoff policies may also add `jitter: "full" | "half" | { kind: "ratio", ratio: 0.5 }`
-- `on` may target `application`, `timeout`, `process_exit`, or `process_spawn`
-- legacy top-level `retries` and `backoff` fields still work for `step()` and `exec()`
-- inspect and replay surface a retry series with per-attempt base delay, capped delay, and applied jitter
-
-## Current Limits
-
-- no arbitrary JS continuation capture
-- no exact-once guarantee for side effects
+- no arbitrary JS stack capture
+- no exact-once side-effect guarantee
 - hard-stop fallback only for managed workers the kernel supervises
-- retry families are intentionally small and fixed in v1
+- TypeScript is the flagship SDK today; other language SDKs are future work
+
+See [docs/architecture.md](../../docs/architecture.md) and
+[docs/support-matrix.md](../../docs/support-matrix.md) for the broader runtime context.
