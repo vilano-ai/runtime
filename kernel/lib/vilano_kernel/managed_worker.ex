@@ -171,24 +171,27 @@ defmodule VilanoKernel.ManagedWorker do
   end
 
   defp worker_source_version(worker_root_dir) do
-    files =
+    digest =
       worker_root_dir
       |> list_worker_files!()
       |> Enum.sort()
-      |> Enum.map(fn relative_path ->
+      |> Enum.reduce(:crypto.hash_init(:sha256), fn relative_path, hash ->
         path = Path.join(worker_root_dir, relative_path)
+        contents =
+          case File.read(path) do
+            {:ok, binary} -> binary
+            {:error, reason} -> "missing:#{inspect(reason)}"
+          end
 
-        case File.stat(path) do
-          {:ok, stat} ->
-            "#{relative_path}:#{stat.size}:#{inspect(stat.mtime)}"
-
-          {:error, _reason} ->
-            "#{relative_path}:missing"
-        end
+        hash
+        |> :crypto.hash_update(relative_path)
+        |> :crypto.hash_update(<<0>>)
+        |> :crypto.hash_update(contents)
+        |> :crypto.hash_update(<<0>>)
       end)
-      |> Enum.join("|")
+      |> :crypto.hash_final()
 
-    :crypto.hash(:sha256, files)
+    digest
     |> Base.encode16(case: :lower)
     |> binary_part(0, 16)
   end
