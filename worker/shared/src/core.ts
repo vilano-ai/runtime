@@ -22,6 +22,7 @@ import type {
 } from "./runtime-sdk.ts";
 import {
   WorkerClient,
+  WorkerRequestError,
   type ServiceTurnActivation,
   type WorkflowActivation,
 } from "./client.ts";
@@ -73,6 +74,8 @@ export async function startWorker(
   const workerId = options.workerId ?? `worker-${crypto.randomUUID()}`;
   const serverUrl = options.serverUrl ?? "http://127.0.0.1:4141";
   const authToken = options.authToken ?? process.env.VILANO_WORKER_TOKEN;
+  delete process.env.VILANO_WORKER_TOKEN;
+  delete process.env.VILANO_DAEMON_TOKEN;
   const pollIntervalMs = options.pollIntervalMs ?? 1000;
   const client = new WorkerClient(serverUrl, workerId, authToken);
   const status = await client.assertCompatible(WORKER_PROTOCOL_VERSION);
@@ -245,11 +248,11 @@ function createTurnContext(
         },
         async status() {
           await spawnPromise;
-          return (await client.getRunStatus(childRunId)) as RunStatus;
+          return (await client.getRelatedRunStatus(activation.leaseId, childRunId)) as RunStatus;
         },
         async signal(name: string, payload?: unknown) {
           await spawnPromise;
-          await client.sendRunSignal(childRunId, name, payload ?? null);
+          await client.sendChildRunSignal(activation.leaseId, childRunId, name, payload ?? null);
         },
       };
     },
@@ -592,7 +595,7 @@ function createServiceRef(
     ask: Object.fromEntries(askEntries),
     signal: Object.fromEntries(signalEntries),
     async status() {
-      return (await client.getRunStatus(serviceRunId)) as RunStatus;
+      return (await client.getRelatedRunStatus(activation.leaseId, serviceRunId)) as RunStatus;
     },
   };
 }
@@ -804,8 +807,13 @@ function createStepController(
           failForInactiveLease();
         }
       })
-      .catch(() => {
-        failForInactiveLease();
+      .catch((error) => {
+        if (
+          error instanceof WorkerRequestError &&
+          (error.status === 401 || error.status === 404)
+        ) {
+          failForInactiveLease();
+        }
       })
       .finally(() => {
         leaseCheckInFlight = false;

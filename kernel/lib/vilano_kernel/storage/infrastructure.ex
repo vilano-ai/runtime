@@ -246,6 +246,19 @@ defmodule VilanoKernel.Storage.Infrastructure do
     SQL.query!(
       Repo,
       """
+      create table if not exists run_service_refs (
+        caller_run_id text not null,
+        service_run_id text not null,
+        created_at text not null,
+        primary key (caller_run_id, service_run_id)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
       create table if not exists service_runs (
         run_id text primary key,
         service_key text not null,

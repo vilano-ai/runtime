@@ -8,6 +8,7 @@ defmodule VilanoKernel.Storage.Migrations do
     AddRunSnapshotsAndProjectSnapshots,
     AddServiceEnvelopeAttemptColumn,
     CreateRunEventSequences,
+    CreateRunServiceRefs,
     CreateRuntimeMetadata
   }
 
@@ -16,7 +17,8 @@ defmodule VilanoKernel.Storage.Migrations do
     AddServiceEnvelopeAttemptColumn,
     CreateRuntimeMetadata,
     AddRunSnapshotsAndProjectSnapshots,
-    CreateRunEventSequences
+    CreateRunEventSequences,
+    CreateRunServiceRefs
   ]
 
   def ensure_tracking_table! do

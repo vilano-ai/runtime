@@ -53,7 +53,7 @@ async function writeBundleManifest(): Promise<void> {
   const kernelVersion = await readKernelVersion(path.join(ROOT, "kernel", "mix.exs"));
   const protocolVersion = await readProtocolVersion(path.join(ROOT, "kernel", "lib", "vilano_kernel", "version.ex"));
   const runtimeVersion = kernelVersion ?? cliPackage.version ?? workerPackage.version ?? "0.0.0";
-  const bundleVersion = `runtime-${runtimeVersion}-protocol-${protocolVersion}`;
+  const bundleVersion = `cli-${cliPackage.version ?? "0.0.0"}-runtime-${runtimeVersion}-protocol-${protocolVersion}`;
 
   await fs.writeFile(
     path.join(RUNTIME_DIST_DIR, "bundle-manifest.json"),

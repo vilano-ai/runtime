@@ -36,6 +36,14 @@
       },
       {
         "kind": "workflow",
+        "name": "childSignalCoordinator",
+        "exportName": "childSignalCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "childTask",
         "exportName": "childTask",
         "file": "src/definitions.ts",
@@ -156,6 +164,14 @@
       },
       {
         "kind": "workflow",
+        "name": "serviceStatusCoordinator",
+        "exportName": "serviceStatusCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "signaledExec",
         "exportName": "signaledExec",
         "file": "src/definitions.ts",
@@ -214,6 +230,14 @@
         "kind": "workflow",
         "name": "waitingChild",
         "exportName": "waitingChild",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "workerEnvProbe",
+        "exportName": "workerEnvProbe",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"

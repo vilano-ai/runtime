@@ -46,6 +46,18 @@ type ServiceRunResponse = WorkerComponents["schemas"]["ServiceRunResponse"];
 type ServiceCallResolveResponse = WorkerComponents["schemas"]["ServiceCallResolveResponse"];
 type ServiceTurnFailResponse = WorkerComponents["schemas"]["ServiceTurnFailResponse"];
 
+export class WorkerRequestError extends Error {
+  readonly status?: number;
+  readonly code?: string;
+
+  constructor(message: string, options: { status?: number; code?: string } = {}) {
+    super(message);
+    this.name = "WorkerRequestError";
+    this.status = options.status;
+    this.code = options.code;
+  }
+}
+
 export class WorkerClient {
   private compatibilityChecked = false;
   private readonly serverUrl: string;
@@ -293,16 +305,23 @@ export class WorkerClient {
     return response.child;
   }
 
-  async getRunStatus(runId: string): Promise<string> {
-    const response = await this.request<RunStatusResponse>("GET", `/v1/runs/${encodeURIComponent(runId)}`);
+  async getRelatedRunStatus(leaseId: string, runId: string): Promise<string> {
+    const response = await this.request<RunStatusResponse>(
+      "GET",
+      `/v1/leases/${encodeURIComponent(leaseId)}/runs/${encodeURIComponent(runId)}/status`
+    );
     return response.run.status;
   }
 
-  async sendRunSignal(runId: string, name: string, payload: unknown): Promise<void> {
-    await this.request("POST", `/v1/runs/${encodeURIComponent(runId)}/signals`, {
-      name,
-      payload,
-    });
+  async sendChildRunSignal(leaseId: string, runId: string, name: string, payload: unknown): Promise<void> {
+    await this.request(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/runs/${encodeURIComponent(runId)}/signals`,
+      {
+        name,
+        payload,
+      }
+    );
   }
 
   async ensureService(
@@ -435,7 +454,19 @@ export class WorkerClient {
             ? `Worker request failed with status ${response.status}: ${raw}`
             : `Worker request failed with status ${response.status}`;
 
-      throw new Error(message);
+      const code =
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "error" in parsed &&
+        parsed.error &&
+        typeof parsed.error.code === "string"
+          ? parsed.error.code
+          : undefined;
+
+      throw new WorkerRequestError(message, {
+        status: response.status,
+        code,
+      });
     }
 
     return parsed as T;

@@ -325,6 +325,21 @@ export const waitingChild = workflow({
   },
 });
 
+export const childSignalCoordinator = workflow({
+  name: "childSignalCoordinator",
+  run: async (input: { token: string }, ctx) => {
+    const child = ctx.spawn(waitingChild, { token: input.token }, { key: `child:${input.token}` });
+    const initialStatus = await child.status();
+    await child.signal("continue", { source: "parent" });
+    const result = await child.result();
+
+    return {
+      initialStatus,
+      child: result,
+    };
+  },
+});
+
 export const cancelledChildParent = workflow({
   name: "cancelledChildParent",
   run: async (input: { token: string }, ctx) => {
@@ -746,6 +761,28 @@ export const askTimeoutCoordinator = workflow({
   run: async (input: { sessionId: string }, ctx) => {
     const operatorRef = await ctx.connect(operator, { sessionId: input.sessionId });
     return await operatorRef.ask.awaitApproval(undefined, { timeout: "100ms" });
+  },
+});
+
+export const serviceStatusCoordinator = workflow({
+  name: "serviceStatusCoordinator",
+  run: async (input: { sessionId: string }, ctx) => {
+    const operatorRef = await ctx.connect(operator, { sessionId: input.sessionId });
+
+    return {
+      status: await operatorRef.status(),
+      serviceRunId: operatorRef.id,
+    };
+  },
+});
+
+export const workerEnvProbe = workflow({
+  name: "workerEnvProbe",
+  run: async () => {
+    return {
+      workerTokenPresent: Boolean(process.env.VILANO_WORKER_TOKEN),
+      daemonTokenPresent: Boolean(process.env.VILANO_DAEMON_TOKEN),
+    };
   },
 });
 

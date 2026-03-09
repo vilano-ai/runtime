@@ -50,17 +50,49 @@ defmodule VilanoKernel.Storage do
     get_run(run_id)
   end
 
-  def ensure_service_run!(project, definition, service_key, key_input) do
+  def ensure_service_run!(project, definition, service_key, key_input, lease_id \\ nil) do
     now = Infrastructure.now_iso8601()
 
     Infrastructure.transaction_with_busy_retry(fn ->
-      ensure_service_run_in_tx!(project, definition, service_key, key_input, now)
+      caller_run_id =
+        case lease_id do
+          value when is_binary(value) and value != "" ->
+            case get_run_by_lease(value) do
+              nil -> nil
+              run -> run["id"]
+            end
+
+          _ ->
+            nil
+        end
+
+      ensure_service_run_in_tx!(project, definition, service_key, key_input, now, caller_run_id)
     end)
     |> unwrap_transaction_result()
   end
 
   def find_service_run(project_name, definition_name, service_key) do
     get_service_run(project_name, definition_name, service_key)
+  end
+
+  def get_related_run_status(lease_id, run_id) do
+    with caller_run when not is_nil(caller_run) <- get_run_by_lease(lease_id),
+         true <- related_run?(caller_run["id"], run_id),
+         run when not is_nil(run) <- get_run(run_id) do
+      %{"status" => run["status"]}
+    else
+      _ -> nil
+    end
+  end
+
+  def send_child_run_signal(lease_id, child_run_id, signal_name, payload) do
+    with caller_run when not is_nil(caller_run) <- get_run_by_lease(lease_id),
+         child_ref when not is_nil(child_ref) <- get_run_child_by_child(caller_run["id"], child_run_id) do
+      _ = child_ref
+      send_run_signal(child_run_id, signal_name, payload)
+    else
+      _ -> nil
+    end
   end
 
   def enqueue_service_envelope!(project, definition, service_key, key_input, kind, name, payload) do
@@ -188,8 +220,8 @@ defmodule VilanoKernel.Storage do
   def resolve_spawn(lease_id, definition_name, op_key, child_run_id, input) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
-      case get_run_by_lease(lease_id) do
+    Infrastructure.transaction_with_busy_retry(fn ->
+      case get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
 
@@ -246,7 +278,7 @@ defmodule VilanoKernel.Storage do
     wait_key = "child_result:" <> child_run_id
 
     Repo.transaction(fn ->
-      case get_run_by_lease(lease_id) do
+      case get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
 
@@ -379,7 +411,7 @@ defmodule VilanoKernel.Storage do
     now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
-      case {get_run_by_lease(lease_id), get_service_run_by_id(service_run_id)} do
+      case {get_fenced_run_by_lease(lease_id, now), get_service_run_by_id(service_run_id)} do
         {nil, _} ->
           nil
 
@@ -445,7 +477,7 @@ defmodule VilanoKernel.Storage do
     now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
-      case {get_run_by_lease(lease_id), get_service_run_by_id(service_run_id)} do
+      case {get_fenced_run_by_lease(lease_id, now), get_service_run_by_id(service_run_id)} do
         {nil, _} ->
           nil
 
@@ -512,7 +544,7 @@ defmodule VilanoKernel.Storage do
     wake_at = wait_deadline(now, timeout_ms)
 
     Repo.transaction(fn ->
-      case {get_run_by_lease(lease_id), get_service_run_by_id(service_run_id)} do
+      case {get_fenced_run_by_lease(lease_id, now), get_service_run_by_id(service_run_id)} do
         {nil, _} ->
           nil
 
@@ -703,7 +735,7 @@ defmodule VilanoKernel.Storage do
     now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
-      case {get_run_by_lease(lease_id), get_service_envelope(envelope_id)} do
+      case {get_fenced_run_by_lease(lease_id, now), get_service_envelope(envelope_id)} do
         {nil, _} ->
           nil
 
@@ -810,7 +842,7 @@ defmodule VilanoKernel.Storage do
     now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
-      case {get_run_by_lease(lease_id), get_service_envelope(envelope_id)} do
+      case {get_fenced_run_by_lease(lease_id, now), get_service_envelope(envelope_id)} do
         {nil, _} ->
           nil
 
@@ -836,7 +868,7 @@ defmodule VilanoKernel.Storage do
     now = Infrastructure.now_iso8601()
     expires_at = shift_seconds(now, Infrastructure.lease_duration_seconds())
 
-    case Repo.transaction(fn ->
+    case Infrastructure.transaction_with_busy_retry(fn ->
            case next_activation_candidate(now) do
              nil ->
                nil
@@ -879,12 +911,20 @@ defmodule VilanoKernel.Storage do
                  now
                )
 
-               %{
-                 lease_id: lease_id,
-                 lease_expires_at: expires_at,
-                 activation_kind: "workflow",
-                 run: get_run(run_id)
-               }
+               run = get_run(run_id)
+
+               case ensure_run_activation_pinned!(run) do
+                 {:ok, pinned_run} ->
+                   %{
+                     lease_id: lease_id,
+                     lease_expires_at: expires_at,
+                     activation_kind: "workflow",
+                     run: pinned_run
+                   }
+
+                 {:error, {:unresumable_candidate, unpinned_run}} ->
+                   Repo.rollback({:unresumable_candidate, unpinned_run})
+               end
 
              {:service_turn, candidate} ->
                lease_id = "lease_" <> Ecto.UUID.generate()
@@ -988,20 +1028,32 @@ defmodule VilanoKernel.Storage do
                  )
                end
 
-               %{
-                 lease_id: lease_id,
-                 lease_expires_at: expires_at,
-                 activation_kind: "service_turn",
-                 run: get_run(run_id),
-                 service: get_service_run_by_id(run_id),
-                 envelope: service_envelope_from_row(get_service_envelope(envelope_id))
-               }
+               run = get_run(run_id)
+
+               case ensure_run_activation_pinned!(run) do
+                 {:ok, pinned_run} ->
+                   %{
+                     lease_id: lease_id,
+                     lease_expires_at: expires_at,
+                     activation_kind: "service_turn",
+                     run: pinned_run,
+                     service: get_service_run_by_id(run_id),
+                     envelope: service_envelope_from_row(get_service_envelope(envelope_id))
+                   }
+
+                 {:error, {:unresumable_candidate, unpinned_run}} ->
+                   Repo.rollback({:unresumable_candidate, unpinned_run})
+               end
            end
          end) do
       {:ok, value} ->
         value
 
       {:error, :stale_candidate} ->
+        do_lease_next_run(worker_id, attempts_remaining - 1)
+
+      {:error, {:unresumable_candidate, run}} ->
+        invalidate_unpinned_run!(run, Infrastructure.now_iso8601())
         do_lease_next_run(worker_id, attempts_remaining - 1)
 
       {:error, reason} ->
@@ -1086,7 +1138,7 @@ defmodule VilanoKernel.Storage do
     now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
-      case get_run_by_lease(lease_id) do
+      case get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
 
@@ -1120,7 +1172,7 @@ defmodule VilanoKernel.Storage do
     now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
-      case get_run_by_lease(lease_id) do
+      case get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
 
@@ -1162,7 +1214,7 @@ defmodule VilanoKernel.Storage do
 
     result =
       Repo.transaction(fn ->
-        case get_run_by_lease(lease_id) do
+        case get_fenced_run_by_lease(lease_id, now) do
           nil ->
             nil
 
@@ -1447,7 +1499,7 @@ defmodule VilanoKernel.Storage do
 
     result =
       Repo.transaction(fn ->
-        case get_run_by_lease(lease_id) do
+        case get_fenced_run_by_lease(lease_id, now) do
           nil ->
             nil
 
@@ -1497,7 +1549,7 @@ defmodule VilanoKernel.Storage do
 
     result =
       Repo.transaction(fn ->
-        case get_run_by_lease(lease_id) do
+        case get_fenced_run_by_lease(lease_id, now) do
           nil ->
             nil
 
@@ -1525,7 +1577,7 @@ defmodule VilanoKernel.Storage do
 
     result =
       Repo.transaction(fn ->
-        case get_run_by_lease(lease_id) do
+        case get_fenced_run_by_lease(lease_id, now) do
           nil ->
             nil
 
@@ -1567,7 +1619,7 @@ defmodule VilanoKernel.Storage do
     now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
-      case get_run_by_lease(lease_id) do
+      case get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
 
@@ -1676,7 +1728,7 @@ defmodule VilanoKernel.Storage do
     now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
-      case get_run_by_lease(lease_id) do
+      case get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
 
@@ -1745,7 +1797,7 @@ defmodule VilanoKernel.Storage do
     now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
-      case get_run_by_lease(lease_id) do
+      case get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
 
@@ -1767,7 +1819,7 @@ defmodule VilanoKernel.Storage do
     wake_at = shift_milliseconds(now, duration_ms)
 
     Repo.transaction(fn ->
-      case get_run_by_lease(lease_id) do
+      case get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
 
@@ -2497,6 +2549,95 @@ defmodule VilanoKernel.Storage do
     end
   end
 
+  defp get_fenced_run_by_lease(lease_id, now) do
+    case get_run_by_lease(lease_id) do
+      nil ->
+        nil
+
+      run ->
+        if acquire_lease_write_fence(run["id"], lease_id, now) do
+          run
+        else
+          nil
+        end
+    end
+  end
+
+  defp acquire_lease_write_fence(run_id, lease_id, now) do
+    write_changes!(
+      """
+      update runs
+      set updated_at = updated_at
+      where
+        id = ?
+        and lease_id = ?
+        and status in ('running', 'active')
+        and lease_expires_at is not null
+        and lease_expires_at >= ?
+      """,
+      [run_id, lease_id, now]
+    ) == 1
+  end
+
+  defp ensure_run_activation_pinned!(run) do
+    if activation_pinned?(run) do
+      {:ok, run}
+    else
+      {:error, {:unresumable_candidate, run}}
+    end
+  end
+
+  defp activation_pinned?(run) do
+    is_binary(run["projectSnapshotPath"]) and run["projectSnapshotPath"] != "" and
+      is_map(run["definition"]) and
+      is_binary(get_in(run, ["definition", "file"])) and get_in(run, ["definition", "file"]) != "" and
+      is_binary(get_in(run, ["definition", "exportName"])) and get_in(run, ["definition", "exportName"]) != "" and
+      is_binary(get_in(run, ["definition", "runtimeKind"])) and get_in(run, ["definition", "runtimeKind"]) != "" and
+      is_binary(get_in(run, ["definition", "sourceLanguage"])) and get_in(run, ["definition", "sourceLanguage"]) != ""
+  end
+
+  defp invalidate_unpinned_run!(%{"definitionKind" => "service"} = run, now) do
+    _ =
+      stop_service_run_instance!(
+        get_service_run_by_id(run["id"]),
+        legacy_run_error(),
+        "missing_pinned_definition",
+        now
+      )
+
+    :ok
+  end
+
+  defp invalidate_unpinned_run!(run, now) do
+    SQL.query!(
+      Repo,
+      """
+      update runs
+      set
+        status = 'failed',
+        lease_id = null,
+        lease_worker_id = null,
+        lease_expires_at = null,
+        error_json = ?,
+        updated_at = ?
+      where id = ?
+      """,
+      [Jason.encode!(legacy_run_error()), now, run["id"]]
+    )
+
+    append_event!(run["id"], "RunFailed", %{"error" => legacy_run_error()}, now)
+    wake_waiting_parents_for_child!(run["id"], "failed", legacy_run_error(), now)
+    :ok
+  end
+
+  defp legacy_run_error do
+    %{
+      "message" =>
+        "Run cannot be resumed safely because this runtime did not record an immutable project snapshot and definition payload when it started",
+      "reason" => "missing_pinned_definition"
+    }
+  end
+
   defp get_run_exec(run_id, op_key) do
     Repo
     |> SQL.query!(
@@ -2650,11 +2791,53 @@ defmodule VilanoKernel.Storage do
     |> List.first()
   end
 
-  defp ensure_service_run_in_tx!(project, definition, service_key, key_input, now) do
+  defp get_run_service_ref(caller_run_id, service_run_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        caller_run_id,
+        service_run_id,
+        created_at
+      from run_service_refs
+      where caller_run_id = ? and service_run_id = ?
+      """,
+      [caller_run_id, service_run_id]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
+  defp record_service_ref!(nil, _service_run_id, _now), do: :ok
+
+  defp record_service_ref!(caller_run_id, service_run_id, now) do
+    SQL.query!(
+      Repo,
+      """
+      insert or ignore into run_service_refs (
+        caller_run_id,
+        service_run_id,
+        created_at
+      ) values (?, ?, ?)
+      """,
+      [caller_run_id, service_run_id, now]
+    )
+
+    :ok
+  end
+
+  defp related_run?(caller_run_id, target_run_id) do
+    caller_run_id == target_run_id or
+      not is_nil(get_run_child_by_child(caller_run_id, target_run_id)) or
+      not is_nil(get_run_service_ref(caller_run_id, target_run_id))
+  end
+
+  defp ensure_service_run_in_tx!(project, definition, service_key, key_input, now, caller_run_id \\ nil) do
     project_name = Map.fetch!(project, "name")
     definition_name = Map.fetch!(definition, "name")
 
-    case get_service_run(project_name, definition_name, service_key) do
+    service_run =
+      case get_service_run(project_name, definition_name, service_key) do
       nil ->
         run_id = deterministic_service_run_id(project_name, definition_name, service_key)
         definitions_json = Jason.encode!(Map.fetch!(project, "definitions"))
@@ -2732,7 +2915,10 @@ defmodule VilanoKernel.Storage do
 
       service_run ->
         service_run
-    end
+      end
+
+    record_service_ref!(caller_run_id, service_run["id"], now)
+    service_run
   end
 
   defp get_service_run(project_name, definition_name, service_key) do

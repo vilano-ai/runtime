@@ -89,9 +89,9 @@ defmodule VilanoKernel.Router do
   defp worker_scoped_request?("POST", "/v1/activations/lease"), do: true
   defp worker_scoped_request?("POST", "/v1/activations/heartbeat"), do: true
   defp worker_scoped_request?("POST", "/v1/services/ensure"), do: true
-  defp worker_scoped_request?("GET", path), do: Regex.match?(~r{^/v1/leases/[^/]+/status$}, path) or Regex.match?(~r{^/v1/runs/[^/]+$}, path)
+  defp worker_scoped_request?("GET", path), do: Regex.match?(~r{^/v1/leases/[^/]+/}, path)
   defp worker_scoped_request?("POST", path) do
-    Regex.match?(~r{^/v1/leases/[^/]+/}, path) or Regex.match?(~r{^/v1/runs/[^/]+/signals$}, path)
+    Regex.match?(~r{^/v1/leases/[^/]+/}, path)
   end
   defp worker_scoped_request?(_method, _path), do: false
 
@@ -308,6 +308,23 @@ defmodule VilanoKernel.Router do
 
   get "/v1/leases/:lease_id/status" do
     send_json(conn, 200, %{ok: true, lease: Storage.lease_status(lease_id)})
+  end
+
+  get "/v1/leases/:lease_id/runs/:id/status" do
+    case Storage.get_related_run_status(lease_id, id) do
+      nil -> send_error(conn, 404, "not_found", "Unknown related run for active lease: #{id}")
+      run -> send_json(conn, 200, %{ok: true, run: run})
+    end
+  end
+
+  post "/v1/leases/:lease_id/runs/:id/signals" do
+    name = fetch_required_string(conn.body_params, "name")
+    payload = Map.get(conn.body_params, "payload")
+
+    case Storage.send_child_run_signal(lease_id, id, name, payload) do
+      nil -> send_error(conn, 404, "not_found", "Unknown child run for active lease: #{id}")
+      signal -> send_json(conn, 200, %{ok: true, signal: signal})
+    end
   end
 
   post "/v1/leases/:lease_id/complete" do
@@ -578,13 +595,22 @@ defmodule VilanoKernel.Router do
   post "/v1/services/ensure" do
     service = fetch_required_string(conn.body_params, "service")
     service_key = fetch_required_string(conn.body_params, "serviceKey")
+    lease_id =
+      case Map.get(conn.body_params, "leaseId") do
+        value when is_binary(value) and value != "" -> value
+        _ -> nil
+      end
 
-    with {project_record, definition} when not is_nil(project_record) <- resolve_service_definition(conn.body_params, service),
-         run <- Storage.ensure_service_run!(project_record, definition, service_key, Map.get(conn.body_params, "keyInput", %{})) do
-      send_json(conn, 200, %{ok: true, run: run})
+    if conn.assigns[:auth_scope] == :worker and is_nil(lease_id) do
+      send_error(conn, 401, "unauthorized", "Vilano worker token requires lease-scoped service resolution")
     else
-      nil ->
-        send_error(conn, 404, "not_found", "Unknown service '#{service}'")
+      with {project_record, definition} when not is_nil(project_record) <- resolve_service_definition(conn.body_params, service),
+           run <- Storage.ensure_service_run!(project_record, definition, service_key, Map.get(conn.body_params, "keyInput", %{}), lease_id) do
+        send_json(conn, 200, %{ok: true, run: run})
+      else
+        nil ->
+          send_error(conn, 404, "not_found", "Unknown service '#{service}'")
+      end
     end
   end
 
@@ -793,21 +819,15 @@ defmodule VilanoKernel.Router do
         "service" -> get_in(run, ["projectDefinitions", "services"]) || []
       end
 
-    Enum.find(bucket, &(&1["name"] == definition_name)) ||
-      Storage.get_definition(run["project"], kind, definition_name)
+    Enum.find(bucket, &(&1["name"] == definition_name))
   end
 
   defp activation_project_path(run) do
-    run["projectSnapshotPath"] ||
-      case Storage.get_project(run["project"]) do
-        nil -> run["project"]
-        project -> project["snapshotPath"] || project["path"]
-      end
+    run["projectSnapshotPath"]
   end
 
   defp activation_definition(run) do
-    run["definition"] ||
-      Storage.get_definition(run["project"], run["definitionKind"], run["definitionName"])
+    run["definition"]
   end
 
   match _ do

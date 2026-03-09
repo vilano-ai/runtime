@@ -13,7 +13,7 @@ import type {
   RetryJitter,
   RetryOptions,
 } from "./runtime-sdk.ts";
-import type { WorkerClient } from "./client.ts";
+import { WorkerRequestError, type WorkerClient } from "./client.ts";
 import type { RuntimeAdapter } from "./runtime-adapter.ts";
 
 interface ActivationLike {
@@ -147,8 +147,12 @@ export async function executeProcess<TOutput>(
           subprocess.kill("SIGKILL");
         }
       })
-      .catch(() => {
-        if (!activationCancelled) {
+      .catch((error) => {
+        if (
+          error instanceof WorkerRequestError &&
+          (error.status === 401 || error.status === 404) &&
+          !activationCancelled
+        ) {
           activationCancelled = true;
           subprocess.kill("SIGKILL");
         }

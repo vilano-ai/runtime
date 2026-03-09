@@ -94,6 +94,8 @@ async function isMaterialized(
   return (
     state !== null &&
     state.sourceRoot === sourceRoot &&
-    state.bundleVersion === bundleVersion
+    state.bundleVersion === bundleVersion &&
+    state.cliVersion === getCliVersion() &&
+    state.protocolVersion === CLI_PROTOCOL_VERSION
   );
 }
