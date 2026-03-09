@@ -96,7 +96,7 @@ Talk to a service:
 ```bash
 ./cli/bin/vilano.ts service ensure demo/reviewer --key-json '{"repoId":"repo_123"}'
 ./cli/bin/vilano.ts service send demo/reviewer hint --key-json '{"repoId":"repo_123"}' --input '{"note":"Focus on migrations"}'
-./cli/bin/vilano.ts service ask demo/reviewer status --key-json '{"repoId":"repo_123"}'
+./cli/bin/vilano.ts service ask demo/reviewer status --key-json '{"repoId":"repo_123"}' --wait-timeout 30s
 ```
 
 ### Packaged Smoke Path
@@ -109,9 +109,9 @@ bun run pack
 bun run smoke:install
 ```
 
-That path packs `vilano`, installs it into a temporary directory, starts the daemon, runs health
-checks, and verifies the packaged bundle stays immutable while the materialized runtime under
-`VILANO_HOME` remains the writable execution root.
+That path packs `vilano`, installs it into a temporary directory, verifies that read-only commands
+do not mutate the vendored bundle, starts the daemon, and confirms that runtime state is written
+under `VILANO_HOME`.
 
 ## Programming Model
 

@@ -330,7 +330,11 @@ async function handleService(
       const reference = args[1];
       const messageName = args[2];
       if (!reference || !messageName) {
-        throw new CliError("Usage: vilano service ask <service-ref> <ask-name> --key-json '{...}' [--input '{...}'] [--timeout 30s]");
+        throw new CliError("Usage: vilano service ask <service-ref> <ask-name> --key-json '{...}' [--input '{...}'] [--wait-timeout 30s]");
+      }
+
+      if (flags.timeout !== undefined) {
+        throw new CliError("External service asks use --wait-timeout for CLI polling. Durable ask timeouts are only supported from workflow/service code today.");
       }
 
       const target = await resolveServiceTarget(reference, flags);
@@ -343,7 +347,7 @@ async function handleService(
         messageName,
         payload
       );
-      const timeoutMs = parseDurationFlag(flags.timeout, 30_000, "timeout");
+      const timeoutMs = parseDurationFlag(flags["wait-timeout"], 30_000, "wait-timeout");
       const envelope = await waitForServiceEnvelope(initial.envelope.id, timeoutMs);
 
       if (envelope.status === "failed") {

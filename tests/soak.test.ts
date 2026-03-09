@@ -36,7 +36,7 @@ test("mixed workflow and service traffic survives repeated restarts and worker c
         JSON.stringify(mailboxKey),
         "--input",
         JSON.stringify({ id: askId, delayMs: 250 }),
-        "--timeout",
+        "--wait-timeout",
         "120s",
         "--json",
       ]);

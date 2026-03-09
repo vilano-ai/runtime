@@ -33,6 +33,9 @@ vilano doctor --fix
 `doctor --fix` can bootstrap local Mix/Hex state and compile kernel dependencies when needed. Node
 is reported as optional unless you are validating the preview Node worker lane.
 
+`version` and `doctor` are read-only. They do not start the daemon. `doctor --fix` is the mutating
+path when you want Vilano to prepare local Mix/Hex state.
+
 ## Daemon Lifecycle
 
 ```bash
@@ -83,7 +86,7 @@ vilano run cancel <run-id>
 ```bash
 vilano service ensure demo/reviewer --key-json '{"repoId":"repo_123"}'
 vilano service inspect demo/reviewer --key-json '{"repoId":"repo_123"}'
-vilano service ask demo/reviewer status --key-json '{"repoId":"repo_123"}'
+vilano service ask demo/reviewer status --key-json '{"repoId":"repo_123"}' --wait-timeout 30s
 vilano service send demo/reviewer hint --key-json '{"repoId":"repo_123"}' --input '{"note":"Focus on migrations"}'
 vilano service signal demo/reviewer reset --key-json '{"repoId":"repo_123"}'
 vilano service stop demo/reviewer --key-json '{"repoId":"repo_123"}'
@@ -109,6 +112,9 @@ Use `run replay` when you want the durable timeline, including:
 - retry decisions and retry series
 
 These views are derived from durable kernel state, not from worker-local memory.
+
+For external CLI asks, `--wait-timeout` only controls how long the CLI waits for a reply. Durable
+ask timeouts are available inside workflow/service code.
 
 ## Managed vs Unmanaged Workers
 

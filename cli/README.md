@@ -21,7 +21,8 @@ The CLI is intentionally a client of the kernel, not a second runtime authority.
 - repo mode and packaged-install mode
 
 When running from an installed package, the CLI materializes the bundled runtime payload under
-`VILANO_HOME` before starting the daemon. It does not mutate the installed package tree.
+`VILANO_HOME` when the daemon actually needs to start. Read-only commands such as `version` and
+`doctor` do not mutate the installed package tree.
 
 The current local trust model is still single-user. The CLI reduces blind localhost access, but it
 does not claim strong isolation from arbitrary code running as the same OS user.
@@ -30,14 +31,14 @@ does not claim strong isolation from arbitrary code running as the same OS user.
 
 ```bash
 vilano version
-vilano doctor --fix
+vilano doctor
 vilano daemon start
 vilano daemon status
 vilano project add /path/to/project --name demo
 vilano run start demo/planner --input '{"topic":"BEAM"}'
 vilano run inspect <run-id>
 vilano run replay <run-id>
-vilano service ask demo/reviewer status --key-json '{"repoId":"repo_123"}'
+vilano service ask demo/reviewer status --key-json '{"repoId":"repo_123"}' --wait-timeout 30s
 ```
 
 ## Code Layout

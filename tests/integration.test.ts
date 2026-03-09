@@ -1063,7 +1063,7 @@ test("service turns resume after worker loss and lease expiry", async () => {
         JSON.stringify(keyInput),
         "--input",
         JSON.stringify({ durationMs: 2500 }),
-        "--timeout",
+        "--wait-timeout",
         "20s",
         "--json",
       ]);
@@ -1133,7 +1133,7 @@ test("service turn blocking step timeout is enforced by the kernel and restarts 
       JSON.stringify(keyInput),
       "--input",
       JSON.stringify({ durationMs: 5_000, timeout: "200ms" }),
-      "--timeout",
+      "--wait-timeout",
       "20s",
       "--json",
     ]);
@@ -1207,7 +1207,7 @@ test("unmanaged workers fall back to durable failure when a service turn blocks 
       JSON.stringify(keyInput),
       "--input",
       JSON.stringify({ durationMs: 5_000, timeout: "200ms" }),
-      "--timeout",
+      "--wait-timeout",
       "20s",
       "--json",
     ]);
@@ -1328,7 +1328,7 @@ test("services process mixed ask and send backlogs in FIFO order", async () => {
       JSON.stringify(keyInput),
       "--input",
       JSON.stringify({ id: "first", delayMs: 400 }),
-      "--timeout",
+      "--wait-timeout",
       "60s",
       "--json",
     ]);
@@ -1353,7 +1353,7 @@ test("services process mixed ask and send backlogs in FIFO order", async () => {
       JSON.stringify(keyInput),
       "--input",
       JSON.stringify({}),
-      "--timeout",
+      "--wait-timeout",
       "60s",
       "--json",
     ]);
@@ -1454,7 +1454,7 @@ test("service stop fails queued backlog behind an active turn", async () => {
       JSON.stringify(keyInput),
       "--input",
       JSON.stringify({ id: "first", delayMs: 2500 }),
-      "--timeout",
+      "--wait-timeout",
       "60s",
       "--json",
     ]);
@@ -1479,7 +1479,7 @@ test("service stop fails queued backlog behind an active turn", async () => {
       JSON.stringify(keyInput),
       "--input",
       JSON.stringify({}),
-      "--timeout",
+      "--wait-timeout",
       "60s",
       "--json",
     ]);
@@ -1563,7 +1563,7 @@ test("queued envelopes do not re-lease waiting service turns", async () => {
       "awaitApproval",
       "--key-json",
       JSON.stringify(keyInput),
-      "--timeout",
+      "--wait-timeout",
       "20s",
       "--json",
     ]);
@@ -1586,7 +1586,7 @@ test("queued envelopes do not re-lease waiting service turns", async () => {
       JSON.stringify(keyInput),
       "--input",
       JSON.stringify({ topic: "queued-while-waiting" }),
-      "--timeout",
+      "--wait-timeout",
       "20s",
       "--json",
     ]);
@@ -1667,7 +1667,7 @@ test("non-retryable service turn failures bypass configured retries", async () =
       JSON.stringify(keyInput),
       "--input",
       JSON.stringify({ token: "service-no-retry" }),
-      "--timeout",
+      "--wait-timeout",
       "20s",
       "--json",
     ]);
@@ -1709,7 +1709,7 @@ test("service retry families can exclude application failures", async () => {
       JSON.stringify(keyInput),
       "--input",
       JSON.stringify({ token: "service-timeout-only" }),
-      "--timeout",
+      "--wait-timeout",
       "20s",
       "--json",
     ]);
@@ -1992,7 +1992,7 @@ test("service backlogs survive repeated daemon restarts and lease recovery", asy
       JSON.stringify(keyInput),
       "--input",
       JSON.stringify({ id: "first", delayMs: 1500 }),
-      "--timeout",
+      "--wait-timeout",
       "60s",
       "--json",
     ]);
@@ -2017,7 +2017,7 @@ test("service backlogs survive repeated daemon restarts and lease recovery", asy
       JSON.stringify(keyInput),
       "--input",
       JSON.stringify({}),
-      "--timeout",
+      "--wait-timeout",
       "60s",
       "--json",
     ]);
@@ -2349,7 +2349,7 @@ test("run replay json captures waiting and resumed service turns", async () => {
       "awaitApproval",
       "--key-json",
       JSON.stringify(keyInput),
-      "--timeout",
+      "--wait-timeout",
       "20s",
       "--json",
     ]);

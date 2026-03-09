@@ -136,7 +136,7 @@ export class RuntimeHarness {
       JSON.stringify(keyInput),
       "--input",
       JSON.stringify(input),
-      "--timeout",
+      "--wait-timeout",
       "20s",
     ]);
 
