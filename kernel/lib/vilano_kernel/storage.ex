@@ -1681,7 +1681,7 @@ defmodule VilanoKernel.Storage do
     result
   end
 
-  def timeout_step(lease_id, op_key, error_body) do
+  def timeout_step(lease_id, op_key, expected_attempt, error_body) do
     now = Infrastructure.now_iso8601()
 
     result =
@@ -1696,7 +1696,7 @@ defmodule VilanoKernel.Storage do
                 nil
 
               step ->
-                if step["status"] != "running" do
+                if step["status"] != "running" or step["attempt"] != expected_attempt do
                   nil
                 else
                   case fail_step_attempt!(run, step, step["name"], error_body, now, lease_id) do
@@ -2040,7 +2040,7 @@ defmodule VilanoKernel.Storage do
     |> unwrap_transaction_result()
   end
 
-  def satisfy_timed_wait(run_id, op_key) do
+  def satisfy_timed_wait(run_id, op_key, expected_wake_at) do
     now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
@@ -2049,7 +2049,7 @@ defmodule VilanoKernel.Storage do
           nil
 
         wait ->
-          if wait["status"] != "waiting" or is_nil(wait["wake_at"]) do
+          if wait["status"] != "waiting" or is_nil(wait["wake_at"]) or wait["wake_at"] != expected_wake_at do
             nil
           else
             case wait["wait_kind"] do

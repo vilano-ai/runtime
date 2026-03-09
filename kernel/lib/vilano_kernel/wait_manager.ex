@@ -34,8 +34,8 @@ defmodule VilanoKernel.WaitManager do
     end
   end
 
-  def handle_info({:fire_timed_wait, run_id, op_key}, state) do
-    _ = Storage.satisfy_timed_wait(run_id, op_key)
+  def handle_info({:fire_timed_wait, run_id, op_key, wake_at}, state) do
+    _ = Storage.satisfy_timed_wait(run_id, op_key, wake_at)
     {:noreply, Map.delete(state, {run_id, op_key})}
   end
 
@@ -53,7 +53,8 @@ defmodule VilanoKernel.WaitManager do
     end
 
     delay_ms = wait_delay_ms(wait["wakeAt"])
-    timer_ref = Process.send_after(self(), {:fire_timed_wait, wait["runId"], wait["key"]}, delay_ms)
+    timer_ref =
+      Process.send_after(self(), {:fire_timed_wait, wait["runId"], wait["key"], wait["wakeAt"]}, delay_ms)
     Map.put(state, key, timer_ref)
   end
 

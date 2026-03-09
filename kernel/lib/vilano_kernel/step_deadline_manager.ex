@@ -40,10 +40,10 @@ defmodule VilanoKernel.StepDeadlineManager do
     end
   end
 
-  def handle_info({:step_timeout, run_id, op_key, lease_id, step_name, timeout_ms}, state) do
+  def handle_info({:step_timeout, run_id, op_key, lease_id, expected_attempt, step_name, timeout_ms}, state) do
     error_body = timeout_error(run_id, op_key, step_name, timeout_ms)
 
-    case Storage.timeout_step(lease_id, op_key, error_body) do
+    case Storage.timeout_step(lease_id, op_key, expected_attempt, error_body) do
       %{"wait" => wait, "activeLeaseWorkerId" => worker_id} when is_binary(worker_id) ->
         WaitManager.schedule_timed_wait(wait)
         _ = ManagedWorker.kill_worker(worker_id, {:step_timeout, run_id, op_key})
@@ -78,7 +78,13 @@ defmodule VilanoKernel.StepDeadlineManager do
     timer_ref =
       Process.send_after(
         self(),
-        {:step_timeout, step["runId"], step["key"], step["leaseId"], step["name"], step["timeoutMs"]},
+        {:step_timeout,
+         step["runId"],
+         step["key"],
+         step["leaseId"],
+         step["attempt"],
+         step["name"],
+         step["timeoutMs"]},
         delay_ms
       )
 

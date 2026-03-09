@@ -657,13 +657,18 @@ defmodule VilanoKernel.Router do
     service = fetch_required_string(conn.body_params, "service")
     service_key = fetch_required_string(conn.body_params, "serviceKey")
     must_exist = Map.get(conn.body_params, "mustExist", false) == true
-    lease_id =
+    requested_lease_id =
       case Map.get(conn.body_params, "leaseId") do
         value when is_binary(value) and value != "" -> value
         _ -> nil
       end
+    effective_lease_id =
+      case conn.assigns[:auth_scope] do
+        :lease -> conn.assigns[:lease_id]
+        _ -> requested_lease_id
+      end
 
-    if conn.assigns[:auth_scope] == :lease and conn.assigns[:lease_id] != lease_id do
+    if conn.assigns[:auth_scope] == :lease and conn.assigns[:lease_id] != requested_lease_id do
       send_error(conn, 401, "unauthorized", "Lease token can only resolve services for its active lease")
     else
       with {project_record, definition} when not is_nil(project_record) <- resolve_service_definition(conn.body_params, service),
@@ -672,7 +677,7 @@ defmodule VilanoKernel.Router do
              definition,
              service_key,
              Map.get(conn.body_params, "keyInput", %{}),
-             lease_id,
+             effective_lease_id,
              must_exist
            ) do
         send_json(conn, 200, %{ok: true, run: run})
