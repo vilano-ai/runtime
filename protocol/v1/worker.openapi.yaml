@@ -130,7 +130,7 @@ components:
               type: [string, "null"]
     DefinitionRef:
       type: object
-      required: [kind, name, exportName, file]
+      required: [kind, name, exportName, file, runtimeKind, sourceLanguage]
       properties:
         kind:
           enum: [workflow, service]
@@ -140,6 +140,12 @@ components:
           type: string
         file:
           type: string
+        runtimeKind:
+          type: string
+          enum: [javascript]
+        sourceLanguage:
+          type: string
+          enum: [typescript]
 security:
   - daemonToken: []
 paths:

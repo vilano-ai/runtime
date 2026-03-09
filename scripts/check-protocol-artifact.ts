@@ -5,7 +5,7 @@ const ROOT = path.resolve(import.meta.dir, "..");
 
 const metaPath = path.join(ROOT, "protocol", "v1", "meta.json");
 const cliRuntimeVersionPath = path.join(ROOT, "cli", "src", "runtime-version.ts");
-const workerRuntimeVersionPath = path.join(ROOT, "worker", "bun", "src", "runtime-version.ts");
+const sharedWorkerRuntimeVersionPath = path.join(ROOT, "worker", "shared", "src", "runtime-version.ts");
 const kernelVersionPath = path.join(ROOT, "kernel", "lib", "vilano_kernel", "version.ex");
 
 const meta = JSON.parse(await fs.readFile(metaPath, "utf8")) as {
@@ -13,13 +13,16 @@ const meta = JSON.parse(await fs.readFile(metaPath, "utf8")) as {
 };
 
 const cliProtocolVersion = await readTsConst(cliRuntimeVersionPath, "CLI_PROTOCOL_VERSION");
-const workerProtocolVersion = await readTsConst(workerRuntimeVersionPath, "WORKER_PROTOCOL_VERSION");
+const workerProtocolVersion = await readTsConst(
+  sharedWorkerRuntimeVersionPath,
+  "WORKER_PROTOCOL_VERSION"
+);
 const kernelProtocolVersion = await readElixirAttribute(kernelVersionPath, "@protocol_version");
 
 const mismatches = [
   ["protocol/v1/meta.json", meta.protocolVersion],
   ["cli/src/runtime-version.ts", cliProtocolVersion],
-  ["worker/bun/src/runtime-version.ts", workerProtocolVersion],
+  ["worker/shared/src/runtime-version.ts", workerProtocolVersion],
   ["kernel/lib/vilano_kernel/version.ex", kernelProtocolVersion],
 ].filter(([, value]) => value !== meta.protocolVersion);
 

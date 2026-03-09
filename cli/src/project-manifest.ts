@@ -182,6 +182,8 @@ function scanDefinitionsInSource(
       name: nameMatch?.[1] ?? exportName,
       exportName,
       file,
+      runtimeKind: "javascript",
+      sourceLanguage: "typescript",
     });
   }
 
