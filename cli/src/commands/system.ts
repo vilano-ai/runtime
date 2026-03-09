@@ -171,7 +171,7 @@ async function resolveWorkerAuthEnv(serverUrl: string): Promise<Record<string, s
     if (isLoopback && port === daemonState.port) {
       return {
         VILANO_WORKER_TOKEN: daemonAuthState.workerAuthToken,
-        VILANO_RUNTIME_HOME: getRuntimePaths().homeDir,
+        VILANO_WORKER_ARTIFACT_HOME: getRuntimePaths().artifactHomeDir,
         VILANO_WORKER_HOME: getRuntimePaths().workerHomeDir,
       };
     }

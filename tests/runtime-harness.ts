@@ -228,7 +228,7 @@ export class RuntimeHarness {
       args,
       {
         VILANO_WORKER_TOKEN: await this.readWorkerToken(),
-        VILANO_RUNTIME_HOME: this.runtimeHome,
+        VILANO_WORKER_ARTIFACT_HOME: path.join(deriveExecutionHomeDir(this.runtimeHome), "artifacts"),
         VILANO_WORKER_HOME: workerHome,
       },
       workerHome,
@@ -251,6 +251,14 @@ export class RuntimeHarness {
 
   get homeDir(): string {
     return this.runtimeHome;
+  }
+
+  get artifactHomeDir(): string {
+    return path.join(deriveExecutionHomeDir(this.runtimeHome), "artifacts");
+  }
+
+  resolveArtifactRef(ref: string): string {
+    return path.join(this.artifactHomeDir, ref);
   }
 
   private async runCli(

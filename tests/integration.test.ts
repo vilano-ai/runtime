@@ -2043,9 +2043,9 @@ test("exec success captures stdout stderr and artifacts", async () => {
     expect(exec.stderrRef).toBeTruthy();
     expect(exec.artifacts).toHaveLength(1);
 
-    await fs.access(path.join(harness.homeDir, exec.stdoutRef as string));
-    await fs.access(path.join(harness.homeDir, exec.stderrRef as string));
-    await fs.access(path.join(harness.homeDir, exec.artifacts[0]!.ref));
+    await fs.access(harness.resolveArtifactRef(exec.stdoutRef as string));
+    await fs.access(harness.resolveArtifactRef(exec.stderrRef as string));
+    await fs.access(harness.resolveArtifactRef(exec.artifacts[0]!.ref));
   } finally {
     await harness.dispose();
   }
@@ -2434,8 +2434,8 @@ test("exec timeout persists failure metadata and captured artifacts", async () =
       true
     );
 
-    await fs.access(path.join(harness.homeDir, exec.stderrRef as string));
-    await fs.access(path.join(harness.homeDir, exec.artifacts[0]!.ref));
+    await fs.access(harness.resolveArtifactRef(exec.stderrRef as string));
+    await fs.access(harness.resolveArtifactRef(exec.artifacts[0]!.ref));
 
     expect(failed.events.map((event) => event.type)).toContain("ProcessFailed");
     expect(failed.events.map((event) => event.type)).toContain("RunFailed");

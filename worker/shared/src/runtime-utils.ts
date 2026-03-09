@@ -670,6 +670,8 @@ export function setRuntimeHomeOverride(runtimeHome: string | null): void {
 function getRuntimeHome(): string {
   return runtimeHomeOverride
     ? runtimeHomeOverride
+    : process.env.VILANO_WORKER_ARTIFACT_HOME
+    ? path.resolve(process.env.VILANO_WORKER_ARTIFACT_HOME)
     : process.env.VILANO_RUNTIME_HOME
     ? path.resolve(process.env.VILANO_RUNTIME_HOME)
     : process.env.VILANO_WORKER_HOME

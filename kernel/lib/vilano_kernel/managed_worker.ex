@@ -143,7 +143,7 @@ defmodule VilanoKernel.ManagedWorker do
 
   defp worker_env(runtime) do
     base_env = [
-      {~c"VILANO_RUNTIME_HOME", String.to_charlist(runtime.home_dir)},
+      {~c"VILANO_WORKER_ARTIFACT_HOME", String.to_charlist(runtime.artifact_home_dir)},
       {~c"VILANO_WORKER_HOME", String.to_charlist(Path.join(runtime.execution_home_dir, "worker-home"))},
       {~c"VILANO_KERNEL_PORT", String.to_charlist(Integer.to_string(runtime.port))}
     ]

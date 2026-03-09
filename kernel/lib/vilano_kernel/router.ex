@@ -34,6 +34,7 @@ defmodule VilanoKernel.Router do
       port: runtime.port,
       startedAt: runtime.started_at,
       homeDir: runtime.home_dir,
+      executionHomeDir: runtime.execution_home_dir,
       projectRoot: runtime.project_root,
       runtimeDbPath: runtime.runtime_db_path,
       managedWorkerCount: runtime.managed_worker_count,

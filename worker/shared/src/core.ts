@@ -730,10 +730,10 @@ function splitPayloadAndOptions(
     return { payload: undefined, options: undefined };
   }
 
-  if (args.length === 1 && looksLikeOptions(args[0], kind)) {
+  if (args.length === 1) {
     return {
-      payload: undefined,
-      options: args[0] as AskOptions | MessageOptions | SignalOptions,
+      payload: args[0],
+      options: undefined,
     };
   }
 

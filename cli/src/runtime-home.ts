@@ -5,6 +5,7 @@ import path from "node:path";
 export interface RuntimePaths {
   homeDir: string;
   executionHomeDir: string;
+  artifactHomeDir: string;
   daemonStateFile: string;
   daemonAuthFile: string;
   daemonStartupLogFile: string;
@@ -24,6 +25,7 @@ export function getRuntimePaths(): RuntimePaths {
   return {
     homeDir,
     executionHomeDir,
+    artifactHomeDir: path.join(executionHomeDir, "artifacts"),
     daemonStateFile: path.join(homeDir, "daemon.json"),
     daemonAuthFile: path.join(homeDir, "daemon-auth.json"),
     daemonStartupLogFile: path.join(homeDir, "kernel-startup.log"),

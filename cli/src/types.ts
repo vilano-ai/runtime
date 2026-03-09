@@ -61,6 +61,7 @@ export interface DaemonStatusResponse {
   schemaVersion: number;
   appliedMigrations: Array<{ version: number; name: string; applied_at: string }>;
   homeDir: string;
+  executionHomeDir: string;
   projectRoot: string;
   managedWorkerCount: number;
   managedWorkerRuntime: string;

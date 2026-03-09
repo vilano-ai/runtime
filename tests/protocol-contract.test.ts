@@ -25,6 +25,7 @@ test("control status endpoint matches the published contract", async () => {
     expect(typeof body.schemaVersion).toBe("number");
     expect(Array.isArray(body.appliedMigrations)).toBe(true);
     expect(typeof body.homeDir).toBe("string");
+    expect(typeof body.executionHomeDir).toBe("string");
     expect(typeof body.projectRoot).toBe("string");
     expect(typeof body.runtimeDbPath).toBe("string");
     expect(typeof body.managedWorkerRuntime).toBe("string");

@@ -4,6 +4,7 @@ defmodule VilanoKernel.Runtime do
   defstruct [
     :home_dir,
     :execution_home_dir,
+    :artifact_home_dir,
     :runtime_db_path,
     :port,
     :started_at,
@@ -53,6 +54,7 @@ defmodule VilanoKernel.Runtime do
     %__MODULE__{
       home_dir: home_dir,
       execution_home_dir: execution_home_dir,
+      artifact_home_dir: Path.join(execution_home_dir, "artifacts"),
       runtime_db_path: Path.join(home_dir, "runtime.sqlite"),
       port: port,
       started_at: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),

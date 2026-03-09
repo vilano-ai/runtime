@@ -1177,6 +1177,7 @@ export interface components {
             /** Format: date-time */
             startedAt: string;
             homeDir: string;
+            executionHomeDir: string;
             projectRoot: string;
             runtimeDbPath: string;
             managedWorkerCount: number;
