@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -196,20 +197,139 @@ test("worker tokens cannot access daemon-only routes", async () => {
   const harness = await RuntimeHarness.create();
 
   try {
+    const run = await harness.startWorkflow("demo/planner", { topic: "worker-auth" });
     const daemonState = JSON.parse(
       await Bun.file(`${harness.homeDir}/daemon.json`).text()
     ) as { workerAuthToken?: string };
+    const headers = new Headers();
+    if (daemonState.workerAuthToken) {
+      headers.set("x-vilano-token", daemonState.workerAuthToken);
+      headers.set("content-type", "application/json");
+    }
 
     const response = await fetch(`${harness.serverUrl}/v1/projects`, {
-      headers: daemonState.workerAuthToken
-        ? {
-            "x-vilano-token": daemonState.workerAuthToken,
-          }
-        : {},
+      headers,
     });
 
     expect(response.status).toBe(401);
+
+    const runInspect = await fetch(
+      `${harness.serverUrl}/v1/runs/${encodeURIComponent(run.run.id)}`,
+      {
+        headers,
+      }
+    );
+    expect(runInspect.status).toBe(401);
+
+    const runSignal = await fetch(
+      `${harness.serverUrl}/v1/runs/${encodeURIComponent(run.run.id)}/signals`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          name: "continue",
+          payload: { source: "worker-token" },
+        }),
+      }
+    );
+    expect(runSignal.status).toBe(401);
   } finally {
+    await harness.dispose();
+  }
+});
+
+test("worker runtime does not expose daemon or worker tokens to workflow code", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/workerEnvProbe", {});
+    const completed = await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed");
+
+    expect(completed.run.output).toEqual({
+      workerTokenPresent: false,
+      daemonTokenPresent: false,
+    });
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("lease-scoped child status and signals work inside workflow execution", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/childSignalCoordinator", { token: "lease-child" });
+    const completed = await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed");
+    const output = completed.run.output as {
+      initialStatus: string;
+      child: { token: string };
+    };
+
+    expect(["pending", "running", "waiting", "completed"]).toContain(output.initialStatus);
+    expect(output.child).toEqual({ token: "lease-child" });
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("lease-scoped service status works through connected service refs", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/serviceStatusCoordinator", {
+      sessionId: "service-status",
+    });
+    const completed = await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed");
+    const output = completed.run.output as {
+      status: string;
+      serviceRunId: string;
+    };
+
+    expect(["idle", "active", "waiting"]).toContain(output.status);
+    expect(typeof output.serviceRunId).toBe("string");
+
+    const operatorInspect = await harness.inspectService("demo/operator", { sessionId: "service-status" });
+    expect(operatorInspect.run.id).toBe(output.serviceRunId);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("historical runs without pinned snapshots fail safely on resume", async () => {
+  const harness = await RuntimeHarness.create({
+    env: {
+      VILANO_MANAGED_WORKERS: "0",
+    },
+  });
+
+  const db = new Database(`${harness.homeDir}/runtime.sqlite`);
+
+  try {
+    const run = await harness.startWorkflow("demo/planner", { topic: "legacy-run" });
+
+    db.query(
+      `
+        update runs
+        set project_snapshot_path = null,
+            project_definitions_json = null,
+            definition_file = null,
+            definition_export_name = null,
+            definition_runtime_kind = null,
+            definition_source_language = null
+        where id = ?
+      `
+    ).run(run.run.id);
+
+    const worker = await harness.spawnWorker({ once: true, workerId: "legacy-run-worker" });
+    const workerResult = await worker.wait();
+    expect(workerResult.exitCode).toBe(0);
+
+    const failed = await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "failed");
+    expect(failed.run.error).toMatchObject({
+      reason: "missing_pinned_definition",
+    });
+  } finally {
+    db.close();
     await harness.dispose();
   }
 });

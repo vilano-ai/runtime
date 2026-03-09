@@ -409,6 +409,16 @@ paths:
   /v1/activations/lease:
     post:
       summary: Lease the next workflow or service-turn activation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workerId]
+              properties:
+                workerId:
+                  type: string
       responses:
         '200':
           description: Activation lease result
@@ -425,6 +435,16 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workerId]
+              properties:
+                workerId:
+                  type: string
       responses:
         '200':
           description: Lease heartbeat accepted
@@ -444,6 +464,55 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/LeaseStatusResponse'
+  /v1/leases/{leaseId}/runs/{id}/status:
+    get:
+      summary: Inspect a child run or related service run from the active lease context.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Related run status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunStatusResponse'
+  /v1/leases/{leaseId}/runs/{id}/signals:
+    post:
+      summary: Send a signal to a child run from the active lease context.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                payload: {}
+      responses:
+        '200':
+          description: Child signal accepted
   /v1/leases/{leaseId}/complete:
     post:
       summary: Complete a workflow activation.
@@ -453,6 +522,15 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [result]
+              properties:
+                result: {}
       responses:
         '200':
           description: Workflow completed
@@ -465,6 +543,15 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [error]
+              properties:
+                error: {}
       responses:
         '200':
           description: Workflow failed
@@ -477,6 +564,40 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, key]
+              properties:
+                name:
+                  type: string
+                key:
+                  type: string
+                timeoutMs:
+                  type: [integer, 'null']
+                maxAttempts:
+                  type: [integer, 'null']
+                backoffKind:
+                  type: [string, 'null']
+                backoffMs:
+                  type: [integer, 'null']
+                backoffStepMs:
+                  type: [integer, 'null']
+                backoffFactor:
+                  type: [number, 'null']
+                maxBackoffMs:
+                  type: [integer, 'null']
+                backoffJitterKind:
+                  type: [string, 'null']
+                backoffJitterRatio:
+                  type: [number, 'null']
+                retryOn:
+                  type: [array, 'null']
+                  items:
+                    type: string
       responses:
         '200':
           description: Step state
@@ -493,6 +614,19 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, key, output]
+              properties:
+                name:
+                  type: string
+                key:
+                  type: string
+                output: {}
       responses:
         '200':
           description: Step completed
@@ -505,6 +639,19 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, key, error]
+              properties:
+                name:
+                  type: string
+                key:
+                  type: string
+                error: {}
       responses:
         '200':
           description: Step failed or entered retry wait
@@ -521,6 +668,32 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, key, cmd, args]
+              properties:
+                name:
+                  type: string
+                key:
+                  type: string
+                cmd:
+                  type: string
+                args:
+                  type: array
+                  items:
+                    type: string
+                cwd:
+                  type: [string, 'null']
+                env:
+                  type: [object, 'null']
+                  additionalProperties:
+                    type: string
+                timeoutMs:
+                  type: [integer, 'null']
       responses:
         '200':
           description: Exec state
@@ -537,6 +710,37 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, key, exitCode, signalCode, artifacts, output]
+              properties:
+                name:
+                  type: string
+                key:
+                  type: string
+                exitCode:
+                  type: [integer, 'null']
+                signalCode:
+                  type: [string, 'null']
+                stdoutRef:
+                  type: [string, 'null']
+                stderrRef:
+                  type: [string, 'null']
+                artifacts:
+                  type: array
+                  items:
+                    type: object
+                    required: [path, ref]
+                    properties:
+                      path:
+                        type: string
+                      ref:
+                        type: string
+                output: {}
       responses:
         '200':
           description: Exec completed
@@ -549,6 +753,57 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, key, artifacts, error]
+              properties:
+                name:
+                  type: string
+                key:
+                  type: string
+                exitCode:
+                  type: [integer, 'null']
+                signalCode:
+                  type: [string, 'null']
+                stdoutRef:
+                  type: [string, 'null']
+                stderrRef:
+                  type: [string, 'null']
+                artifacts:
+                  type: array
+                  items:
+                    type: object
+                    required: [path, ref]
+                    properties:
+                      path:
+                        type: string
+                      ref:
+                        type: string
+                error: {}
+                maxAttempts:
+                  type: [integer, 'null']
+                backoffKind:
+                  type: [string, 'null']
+                backoffMs:
+                  type: [integer, 'null']
+                backoffStepMs:
+                  type: [integer, 'null']
+                backoffFactor:
+                  type: [number, 'null']
+                maxBackoffMs:
+                  type: [integer, 'null']
+                backoffJitterKind:
+                  type: [string, 'null']
+                backoffJitterRatio:
+                  type: [number, 'null']
+                retryOn:
+                  type: [array, 'null']
+                  items:
+                    type: string
       responses:
         '200':
           description: Exec failed or entered retry wait
@@ -565,6 +820,18 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, durationMs]
+              properties:
+                key:
+                  type: string
+                durationMs:
+                  type: integer
       responses:
         '200':
           description: Wait state
@@ -581,6 +848,18 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, name]
+              properties:
+                key:
+                  type: string
+                name:
+                  type: string
       responses:
         '200':
           description: Wait state
@@ -597,6 +876,21 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project, workflow, input, key]
+              properties:
+                project:
+                  type: string
+                workflow:
+                  type: string
+                input: {}
+                key:
+                  type: string
       responses:
         '200':
           description: Spawn state
@@ -609,6 +903,16 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key:
+                  type: string
       responses:
         '200':
           description: Child result state
@@ -625,6 +929,19 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [serviceRunId, message, payload]
+              properties:
+                serviceRunId:
+                  type: string
+                message:
+                  type: string
+                payload: {}
       responses:
         '200':
           description: Send state
@@ -641,6 +958,21 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [serviceRunId, message]
+              properties:
+                serviceRunId:
+                  type: string
+                message:
+                  type: string
+                payload: {}
+                timeoutMs:
+                  type: [integer, 'null']
       responses:
         '200':
           description: Ask state
@@ -657,6 +989,19 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [serviceRunId, signal]
+              properties:
+                serviceRunId:
+                  type: string
+                signal:
+                  type: string
+                payload: {}
       responses:
         '200':
           description: Signal state
@@ -678,6 +1023,18 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reply]
+              properties:
+                reply: {}
+                state: {}
+                stop:
+                  type: boolean
       responses:
         '200':
           description: Service turn completed
@@ -695,6 +1052,35 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [error]
+              properties:
+                error: {}
+                maxAttempts:
+                  type: [integer, 'null']
+                backoffKind:
+                  type: [string, 'null']
+                backoffMs:
+                  type: [integer, 'null']
+                backoffStepMs:
+                  type: [integer, 'null']
+                backoffFactor:
+                  type: [number, 'null']
+                maxBackoffMs:
+                  type: [integer, 'null']
+                backoffJitterKind:
+                  type: [string, 'null']
+                backoffJitterRatio:
+                  type: [number, 'null']
+                retryOn:
+                  type: [array, 'null']
+                  items:
+                    type: string
       responses:
         '200':
           description: Service turn failed or entered retry wait
@@ -705,6 +1091,23 @@ paths:
   /v1/services/ensure:
     post:
       summary: Resolve or create a durable service instance.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project, service, serviceKey]
+              properties:
+                project:
+                  type: string
+                service:
+                  type: string
+                serviceKey:
+                  type: string
+                keyInput: {}
+                leaseId:
+                  type: [string, 'null']
       responses:
         '200':
           description: Service ensured
@@ -712,31 +1115,3 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ServiceRunResponse'
-  /v1/runs/{id}:
-    get:
-      summary: Inspect run status for a referenced child or service target.
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Run status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RunStatusResponse'
-  /v1/runs/{id}/signals:
-    post:
-      summary: Send a signal to another run.
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Signal accepted

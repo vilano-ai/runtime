@@ -109,7 +109,22 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        path: string;
+                        snapshotPath?: string | null;
+                        /** Format: date-time */
+                        lastSyncedAt?: string | null;
+                        definitionsManifestHash?: string | null;
+                        definitions: {
+                            workflows: Record<string, never>[];
+                            services: Record<string, never>[];
+                        };
+                    };
+                };
+            };
             responses: {
                 /** @description Project upserted */
                 200: {
@@ -201,7 +216,22 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        path: string;
+                        snapshotPath?: string | null;
+                        /** Format: date-time */
+                        lastSyncedAt?: string | null;
+                        definitionsManifestHash?: string | null;
+                        definitions: {
+                            workflows: Record<string, never>[];
+                            services: Record<string, never>[];
+                        };
+                    };
+                };
+            };
             responses: {
                 /** @description Project synced */
                 200: {
@@ -448,7 +478,16 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        project: string;
+                        service: string;
+                        serviceKey: string;
+                        keyInput?: unknown;
+                    };
+                };
+            };
             responses: {
                 /** @description Service ensured */
                 200: {
@@ -486,7 +525,15 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        keyInput?: unknown;
+                        message: string;
+                        payload: unknown;
+                    };
+                };
+            };
             responses: {
                 /** @description Message enqueued */
                 200: {
@@ -524,7 +571,15 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        keyInput?: unknown;
+                        message: string;
+                        payload: unknown;
+                    };
+                };
+            };
             responses: {
                 /** @description Ask accepted or completed */
                 200: {
@@ -562,7 +617,15 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        keyInput?: unknown;
+                        signal: string;
+                        payload?: unknown;
+                    };
+                };
+            };
             responses: {
                 /** @description Signal enqueued */
                 200: {
@@ -652,7 +715,15 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        project: string;
+                        workflow: string;
+                        input: unknown;
+                    };
+                };
+            };
             responses: {
                 /** @description Run created */
                 200: {
@@ -796,7 +867,14 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        payload?: unknown;
+                    };
+                };
+            };
             responses: {
                 /** @description Signal accepted */
                 200: {

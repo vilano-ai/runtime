@@ -97,6 +97,37 @@ paths:
           description: Project list
     post:
       summary: Add or replace a registered project manifest.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, path, definitions]
+              properties:
+                name:
+                  type: string
+                path:
+                  type: string
+                snapshotPath:
+                  type: [string, 'null']
+                lastSyncedAt:
+                  type: [string, 'null']
+                  format: date-time
+                definitionsManifestHash:
+                  type: [string, 'null']
+                definitions:
+                  type: object
+                  required: [workflows, services]
+                  properties:
+                    workflows:
+                      type: array
+                      items:
+                        type: object
+                    services:
+                      type: array
+                      items:
+                        type: object
       responses:
         '200':
           description: Project upserted
@@ -132,6 +163,37 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, path, definitions]
+              properties:
+                name:
+                  type: string
+                path:
+                  type: string
+                snapshotPath:
+                  type: [string, 'null']
+                lastSyncedAt:
+                  type: [string, 'null']
+                  format: date-time
+                definitionsManifestHash:
+                  type: [string, 'null']
+                definitions:
+                  type: object
+                  required: [workflows, services]
+                  properties:
+                    workflows:
+                      type: array
+                      items:
+                        type: object
+                    services:
+                      type: array
+                      items:
+                        type: object
       responses:
         '200':
           description: Project synced
@@ -207,6 +269,21 @@ paths:
   /v1/services/ensure:
     post:
       summary: Resolve or create a durable service instance.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project, service, serviceKey]
+              properties:
+                project:
+                  type: string
+                service:
+                  type: string
+                serviceKey:
+                  type: string
+                keyInput: {}
       responses:
         '200':
           description: Service ensured
@@ -229,6 +306,18 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message, payload]
+              properties:
+                keyInput: {}
+                message:
+                  type: string
+                payload: {}
       responses:
         '200':
           description: Message enqueued
@@ -251,6 +340,18 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message, payload]
+              properties:
+                keyInput: {}
+                message:
+                  type: string
+                payload: {}
       responses:
         '200':
           description: Ask accepted or completed
@@ -273,6 +374,18 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signal]
+              properties:
+                keyInput: {}
+                signal:
+                  type: string
+                payload: {}
       responses:
         '200':
           description: Signal enqueued
@@ -301,6 +414,19 @@ paths:
   /v1/runs:
     post:
       summary: Start a workflow run.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project, workflow, input]
+              properties:
+                project:
+                  type: string
+                workflow:
+                  type: string
+                input: {}
       responses:
         '200':
           description: Run created
@@ -354,6 +480,17 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                payload: {}
       responses:
         '200':
           description: Signal accepted

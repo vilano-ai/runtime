@@ -57,7 +57,13 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        workerId: string;
+                    };
+                };
+            };
             responses: {
                 /** @description Activation lease result */
                 200: {
@@ -95,7 +101,13 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        workerId: string;
+                    };
+                };
+            };
             responses: {
                 /** @description Lease heartbeat accepted */
                 200: {
@@ -150,6 +162,89 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/leases/{leaseId}/runs/{id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect a child run or related service run from the active lease context. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Related run status */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunStatusResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/runs/{id}/signals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send a signal to a child run from the active lease context. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        payload?: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Child signal accepted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/leases/{leaseId}/complete": {
         parameters: {
             query?: never;
@@ -169,7 +264,13 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        result: unknown;
+                    };
+                };
+            };
             responses: {
                 /** @description Workflow completed */
                 200: {
@@ -205,7 +306,13 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        error: unknown;
+                    };
+                };
+            };
             responses: {
                 /** @description Workflow failed */
                 200: {
@@ -241,7 +348,24 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        key: string;
+                        timeoutMs?: number | null;
+                        maxAttempts?: number | null;
+                        backoffKind?: string | null;
+                        backoffMs?: number | null;
+                        backoffStepMs?: number | null;
+                        backoffFactor?: number | null;
+                        maxBackoffMs?: number | null;
+                        backoffJitterKind?: string | null;
+                        backoffJitterRatio?: number | null;
+                        retryOn?: string[] | null;
+                    };
+                };
+            };
             responses: {
                 /** @description Step state */
                 200: {
@@ -279,7 +403,15 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        key: string;
+                        output: unknown;
+                    };
+                };
+            };
             responses: {
                 /** @description Step completed */
                 200: {
@@ -315,7 +447,15 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        key: string;
+                        error: unknown;
+                    };
+                };
+            };
             responses: {
                 /** @description Step failed or entered retry wait */
                 200: {
@@ -353,7 +493,21 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        key: string;
+                        cmd: string;
+                        args: string[];
+                        cwd?: string | null;
+                        env?: {
+                            [key: string]: string;
+                        } | null;
+                        timeoutMs?: number | null;
+                    };
+                };
+            };
             responses: {
                 /** @description Exec state */
                 200: {
@@ -391,7 +545,23 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        key: string;
+                        exitCode: number | null;
+                        signalCode: string | null;
+                        stdoutRef?: string | null;
+                        stderrRef?: string | null;
+                        artifacts: {
+                            path: string;
+                            ref: string;
+                        }[];
+                        output: unknown;
+                    };
+                };
+            };
             responses: {
                 /** @description Exec completed */
                 200: {
@@ -427,7 +597,32 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        key: string;
+                        exitCode?: number | null;
+                        signalCode?: string | null;
+                        stdoutRef?: string | null;
+                        stderrRef?: string | null;
+                        artifacts: {
+                            path: string;
+                            ref: string;
+                        }[];
+                        error: unknown;
+                        maxAttempts?: number | null;
+                        backoffKind?: string | null;
+                        backoffMs?: number | null;
+                        backoffStepMs?: number | null;
+                        backoffFactor?: number | null;
+                        maxBackoffMs?: number | null;
+                        backoffJitterKind?: string | null;
+                        backoffJitterRatio?: number | null;
+                        retryOn?: string[] | null;
+                    };
+                };
+            };
             responses: {
                 /** @description Exec failed or entered retry wait */
                 200: {
@@ -465,7 +660,14 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        key: string;
+                        durationMs: number;
+                    };
+                };
+            };
             responses: {
                 /** @description Wait state */
                 200: {
@@ -503,7 +705,14 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        key: string;
+                        name: string;
+                    };
+                };
+            };
             responses: {
                 /** @description Wait state */
                 200: {
@@ -541,7 +750,16 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        project: string;
+                        workflow: string;
+                        input: unknown;
+                        key: string;
+                    };
+                };
+            };
             responses: {
                 /** @description Spawn state */
                 200: {
@@ -577,7 +795,13 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        key: string;
+                    };
+                };
+            };
             responses: {
                 /** @description Child result state */
                 200: {
@@ -615,7 +839,15 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        serviceRunId: string;
+                        message: string;
+                        payload: unknown;
+                    };
+                };
+            };
             responses: {
                 /** @description Send state */
                 200: {
@@ -653,7 +885,16 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        serviceRunId: string;
+                        message: string;
+                        payload?: unknown;
+                        timeoutMs?: number | null;
+                    };
+                };
+            };
             responses: {
                 /** @description Ask state */
                 200: {
@@ -691,7 +932,15 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        serviceRunId: string;
+                        signal: string;
+                        payload?: unknown;
+                    };
+                };
+            };
             responses: {
                 /** @description Signal state */
                 200: {
@@ -730,7 +979,15 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        reply: unknown;
+                        state?: unknown;
+                        stop?: boolean;
+                    };
+                };
+            };
             responses: {
                 /** @description Service turn completed */
                 200: {
@@ -767,7 +1024,22 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        error: unknown;
+                        maxAttempts?: number | null;
+                        backoffKind?: string | null;
+                        backoffMs?: number | null;
+                        backoffStepMs?: number | null;
+                        backoffFactor?: number | null;
+                        maxBackoffMs?: number | null;
+                        backoffJitterKind?: string | null;
+                        backoffJitterRatio?: number | null;
+                        retryOn?: string[] | null;
+                    };
+                };
+            };
             responses: {
                 /** @description Service turn failed or entered retry wait */
                 200: {
@@ -803,7 +1075,17 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        project: string;
+                        service: string;
+                        serviceKey: string;
+                        keyInput?: unknown;
+                        leaseId?: string | null;
+                    };
+                };
+            };
             responses: {
                 /** @description Service ensured */
                 200: {
@@ -813,80 +1095,6 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["ServiceRunResponse"];
                     };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/runs/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Inspect run status for a referenced child or service target. */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Run status */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["RunStatusResponse"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/runs/{id}/signals": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Send a signal to another run. */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Signal accepted */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
                 };
             };
         };
