@@ -1,6 +1,19 @@
 defmodule VilanoKernel.Storage do
   @moduledoc false
 
+  @fenced_run_exists_sql """
+  exists (
+    select 1
+    from runs
+    where
+      id = ?
+      and lease_id = ?
+      and status in ('running', 'active')
+      and lease_expires_at is not null
+      and lease_expires_at >= ?
+  )
+  """
+
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
   alias VilanoKernel.Storage.{
@@ -23,6 +36,54 @@ defmodule VilanoKernel.Storage do
   def runtime_metadata, do: RuntimeMetadata.runtime_metadata()
 
   def list_projects, do: Projects.list_projects()
+
+  def list_referenced_snapshot_paths(project_name \\ nil) do
+    args =
+      case project_name do
+        nil -> []
+        value -> [value, value]
+      end
+
+    where_clause =
+      case project_name do
+        nil ->
+          """
+          where snapshot_path is not null
+          union
+          select distinct project_snapshot_path as snapshot_path
+          from runs
+          where
+            project_snapshot_path is not null
+            and status in ('pending', 'running', 'waiting', 'active', 'idle')
+          """
+
+        _ ->
+          """
+          where snapshot_path is not null and name = ?
+          union
+          select distinct project_snapshot_path as snapshot_path
+          from runs
+          where
+            project_snapshot_path is not null
+            and project_name = ?
+            and status in ('pending', 'running', 'waiting', 'active', 'idle')
+          """
+      end
+
+    Repo
+    |> SQL.query!(
+      """
+      select distinct snapshot_path
+      from projects
+      #{where_clause}
+      order by snapshot_path asc
+      """,
+      args
+    )
+    |> rows_to_maps()
+    |> Enum.map(& &1["snapshot_path"])
+    |> Enum.filter(&is_binary/1)
+  end
 
   def get_project(name), do: Projects.get_project(name)
 
@@ -53,7 +114,7 @@ defmodule VilanoKernel.Storage do
     get_run(run_id)
   end
 
-  def ensure_service_run!(project, definition, service_key, key_input, lease_id \\ nil) do
+  def ensure_service_run!(project, definition, service_key, key_input, lease_id \\ nil, must_exist \\ false) do
     now = Infrastructure.now_iso8601()
 
     Infrastructure.transaction_with_busy_retry(fn ->
@@ -69,7 +130,15 @@ defmodule VilanoKernel.Storage do
             nil
         end
 
-      ensure_service_run_in_tx!(project, definition, service_key, key_input, now, caller_run_id)
+      ensure_service_run_in_tx!(
+        project,
+        definition,
+        service_key,
+        key_input,
+        now,
+        caller_run_id,
+        must_exist
+      )
     end)
     |> unwrap_transaction_result()
   end
@@ -348,8 +417,10 @@ defmodule VilanoKernel.Storage do
                             [parent_run["id"], wait_key, child_run_id, now, now]
                           )
 
-                          SQL.query!(
-                            Repo,
+                          ensure_fenced_run_write!(
+                            parent_run["id"],
+                            lease_id,
+                            now,
                             """
                             update runs
                             set
@@ -654,8 +725,10 @@ defmodule VilanoKernel.Storage do
                     [caller_run["id"], "ask_reply:" <> correlation_id, correlation_id, wake_at, now, now]
                   )
 
-                  SQL.query!(
-                    Repo,
+                  ensure_fenced_run_write!(
+                    caller_run["id"],
+                    lease_id,
+                    now,
                     """
                     update runs
                     set
@@ -752,10 +825,12 @@ defmodule VilanoKernel.Storage do
             ensure_fenced_run_ownership!(service_run["id"], lease_id, now)
             state = Map.get(body, "state")
 
-            state_commit = maybe_commit_service_state!(service_run["id"], state, now)
+            state_commit = maybe_commit_service_state!(service_run["id"], state, now, lease_id)
 
-            SQL.query!(
-              Repo,
+            ensure_fenced_related_write!(
+              service_run["id"],
+              lease_id,
+              now,
               """
               update service_envelopes
               set
@@ -763,7 +838,9 @@ defmodule VilanoKernel.Storage do
                 reply_json = ?,
                 error_json = null,
                 updated_at = ?
-              where id = ?
+              where
+                id = ?
+                and #{@fenced_run_exists_sql}
               """,
               [maybe_encode_json(Map.get(body, "reply")), now, envelope_id]
             )
@@ -814,7 +891,8 @@ defmodule VilanoKernel.Storage do
                   get_service_run_by_id(service_run["id"]),
                   cancellation_error("Service stopped", "handler_stop"),
                   "handler_stop",
-                  now
+                  now,
+                  lease_id
                 )
             else
               next_status = service_next_status(service_run["id"], false)
@@ -1530,10 +1608,10 @@ defmodule VilanoKernel.Storage do
               nil
 
             _step ->
-              ensure_fenced_run_ownership!(run["id"], lease_id, now)
-
-              SQL.query!(
-                Repo,
+              ensure_fenced_related_write!(
+                run["id"],
+                lease_id,
+                now,
                 """
                 update run_steps
                 set
@@ -1542,7 +1620,10 @@ defmodule VilanoKernel.Storage do
                   output_json = ?,
                   error_json = null,
                   updated_at = ?
-                where run_id = ? and op_key = ?
+                where
+                  run_id = ?
+                  and op_key = ?
+                  and #{@fenced_run_exists_sql}
                 """,
                 [name, Jason.encode!(output), now, run["id"], op_key]
               )
@@ -1623,7 +1704,7 @@ defmodule VilanoKernel.Storage do
                       }
 
                     _ ->
-                      timeout_result_for_run!(run, error_body, now)
+                      timeout_result_for_run!(run, error_body, now, lease_id)
                   end
                 end
             end
@@ -1761,10 +1842,10 @@ defmodule VilanoKernel.Storage do
               nil
 
             existing ->
-              ensure_fenced_run_ownership!(run["id"], lease_id, now)
-
-              SQL.query!(
-                Repo,
+              ensure_fenced_related_write!(
+                run["id"],
+                lease_id,
+                now,
                 """
                 update run_execs
                 set
@@ -1778,7 +1859,10 @@ defmodule VilanoKernel.Storage do
                   output_json = ?,
                   error_json = null,
                   updated_at = ?
-                where run_id = ? and op_key = ?
+                where
+                  run_id = ?
+                  and op_key = ?
+                  and #{@fenced_run_exists_sql}
                 """,
                 [
                   name,
@@ -1881,8 +1965,10 @@ defmodule VilanoKernel.Storage do
                 [run["id"], op_key, wake_at, now, now]
               )
 
-              SQL.query!(
-                Repo,
+              ensure_fenced_run_write!(
+                run["id"],
+                lease_id,
+                now,
                 """
                 update runs
                 set
@@ -2036,7 +2122,7 @@ defmodule VilanoKernel.Storage do
     now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
-      case get_run_by_lease(lease_id) do
+      case get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
 
@@ -2079,8 +2165,10 @@ defmodule VilanoKernel.Storage do
                     [run["id"], op_key, name, now, now]
                   )
 
-                  SQL.query!(
-                    Repo,
+                  ensure_fenced_run_write!(
+                    run["id"],
+                    lease_id,
+                    now,
                     """
                     update runs
                     set
@@ -2624,6 +2712,27 @@ defmodule VilanoKernel.Storage do
     end
   end
 
+  defp ensure_fenced_related_write!(
+         run_id,
+         lease_id,
+         now,
+         query,
+         params,
+         expected_rows \\ 1
+       ) do
+    changed_rows =
+      write_changes!(
+        query,
+        params ++ [run_id, lease_id, now]
+      )
+
+    if changed_rows == expected_rows do
+      :ok
+    else
+      Repo.rollback(:stale_candidate)
+    end
+  end
+
   defp lease_auth_token_valid?(lease_id, lease_auth_token)
        when is_binary(lease_id) and lease_id != "" and is_binary(lease_auth_token) and
               lease_auth_token != "" do
@@ -2903,12 +3012,23 @@ defmodule VilanoKernel.Storage do
       not is_nil(get_run_service_ref(caller_run_id, target_run_id))
   end
 
-  defp ensure_service_run_in_tx!(project, definition, service_key, key_input, now, caller_run_id \\ nil) do
+  defp ensure_service_run_in_tx!(
+         project,
+         definition,
+         service_key,
+         key_input,
+         now,
+         caller_run_id \\ nil,
+         must_exist \\ false
+       ) do
     project_name = Map.fetch!(project, "name")
     definition_name = Map.fetch!(definition, "name")
 
     service_run =
       case get_service_run(project_name, definition_name, service_key) do
+      nil when must_exist ->
+        nil
+
       nil ->
         run_id = deterministic_service_run_id(project_name, definition_name, service_key)
         definitions_json = Jason.encode!(Map.fetch!(project, "definitions"))
@@ -2988,8 +3108,14 @@ defmodule VilanoKernel.Storage do
         service_run
       end
 
-    record_service_ref!(caller_run_id, service_run["id"], now)
-    service_run
+    case service_run do
+      nil ->
+        nil
+
+      resolved ->
+        record_service_ref!(caller_run_id, resolved["id"], now)
+        resolved
+    end
   end
 
   defp get_service_run(project_name, definition_name, service_key) do
@@ -3352,9 +3478,11 @@ defmodule VilanoKernel.Storage do
     end
   end
 
-  defp stop_service_run_instance!(nil, _error_body, _reason, _now), do: nil
+  defp stop_service_run_instance!(service_run, error_body, reason, now, lease_id \\ nil)
 
-  defp stop_service_run_instance!(service_run, error_body, reason, now) do
+  defp stop_service_run_instance!(nil, _error_body, _reason, _now, _lease_id), do: nil
+
+  defp stop_service_run_instance!(service_run, error_body, reason, now, lease_id) do
     if service_run["status"] == "stopped" do
       %{
         "run" => service_run,
@@ -3369,23 +3497,45 @@ defmodule VilanoKernel.Storage do
       open_envelopes = list_open_service_envelopes(service_run["id"])
       had_in_flight_turn = Enum.any?(open_envelopes, &(&1["status"] == "processing"))
 
-      SQL.query!(
-        Repo,
-        """
-        update runs
-        set
-          status = 'stopped',
-          lease_id = null,
-          lease_auth_token = null,
-          lease_worker_id = null,
-          lease_expires_at = null,
-          output_json = null,
-          error_json = ?,
-          updated_at = ?
-        where id = ?
-        """,
-        [Jason.encode!(error_body), now, service_run["id"]]
-      )
+      if is_binary(lease_id) and lease_id != "" do
+        ensure_fenced_run_write!(
+          service_run["id"],
+          lease_id,
+          now,
+          """
+          update runs
+          set
+            status = 'stopped',
+            lease_id = null,
+            lease_auth_token = null,
+            lease_worker_id = null,
+            lease_expires_at = null,
+            output_json = null,
+            error_json = ?,
+            updated_at = ?
+          where id = ?
+          """,
+          [Jason.encode!(error_body), now, service_run["id"]]
+        )
+      else
+        SQL.query!(
+          Repo,
+          """
+          update runs
+          set
+            status = 'stopped',
+            lease_id = null,
+            lease_auth_token = null,
+            lease_worker_id = null,
+            lease_expires_at = null,
+            output_json = null,
+            error_json = ?,
+            updated_at = ?
+          where id = ?
+          """,
+          [Jason.encode!(error_body), now, service_run["id"]]
+        )
+      end
 
       Enum.each(open_envelopes, fn envelope ->
         fail_service_open_envelope!(service_run, envelope, error_body, reason, now, true)
@@ -3428,26 +3578,48 @@ defmodule VilanoKernel.Storage do
     end
   end
 
-  defp timeout_result_for_run!(run, error_body, now) do
+  defp timeout_result_for_run!(run, error_body, now, lease_id) do
     case run["definitionKind"] do
       "workflow" ->
-        SQL.query!(
-          Repo,
-          """
-          update runs
-          set
-            status = 'failed',
-            lease_id = null,
-            lease_auth_token = null,
-            lease_worker_id = null,
-            lease_expires_at = null,
-            output_json = null,
-            error_json = ?,
-            updated_at = ?
-          where id = ?
-          """,
-          [Jason.encode!(error_body), now, run["id"]]
-        )
+        if is_binary(lease_id) and lease_id != "" do
+          ensure_fenced_run_write!(
+            run["id"],
+            lease_id,
+            now,
+            """
+            update runs
+            set
+              status = 'failed',
+              lease_id = null,
+              lease_auth_token = null,
+              lease_worker_id = null,
+              lease_expires_at = null,
+              output_json = null,
+              error_json = ?,
+              updated_at = ?
+            where id = ?
+            """,
+            [Jason.encode!(error_body), now, run["id"]]
+          )
+        else
+          SQL.query!(
+            Repo,
+            """
+            update runs
+            set
+              status = 'failed',
+              lease_id = null,
+              lease_auth_token = null,
+              lease_worker_id = null,
+              lease_expires_at = null,
+              output_json = null,
+              error_json = ?,
+              updated_at = ?
+            where id = ?
+            """,
+            [Jason.encode!(error_body), now, run["id"]]
+          )
+        end
 
         append_event!(run["id"], "RunFailed", %{"error" => error_body}, now)
         wake_waiting_parents_for_child!(run["id"], "failed", error_body, now)
@@ -3461,21 +3633,41 @@ defmodule VilanoKernel.Storage do
       "service" ->
         case get_processing_service_envelope_for_run(run["id"]) do
           nil ->
-            SQL.query!(
-              Repo,
-              """
-              update runs
-              set
-                status = 'idle',
-                lease_id = null,
-                lease_auth_token = null,
-                lease_worker_id = null,
-                lease_expires_at = null,
-                updated_at = ?
-              where id = ?
-              """,
-              [now, run["id"]]
-            )
+            if is_binary(lease_id) and lease_id != "" do
+              ensure_fenced_run_write!(
+                run["id"],
+                lease_id,
+                now,
+                """
+                update runs
+                set
+                  status = 'idle',
+                  lease_id = null,
+                  lease_auth_token = null,
+                  lease_worker_id = null,
+                  lease_expires_at = null,
+                  updated_at = ?
+                where id = ?
+                """,
+                [now, run["id"]]
+              )
+            else
+              SQL.query!(
+                Repo,
+                """
+                update runs
+                set
+                  status = 'idle',
+                  lease_id = null,
+                  lease_auth_token = null,
+                  lease_worker_id = null,
+                  lease_expires_at = null,
+                  updated_at = ?
+                where id = ?
+                """,
+                [now, run["id"]]
+              )
+            end
 
             %{
               "run" => get_run(run["id"]),
@@ -3592,8 +3784,10 @@ defmodule VilanoKernel.Storage do
     if decision["willRetry"] do
       wait_key = retry_wait_key("step", step["op_key"])
 
-      SQL.query!(
-        Repo,
+      ensure_fenced_related_write!(
+        run["id"],
+        lease_id,
+        now,
         """
         update run_steps
         set
@@ -3601,7 +3795,10 @@ defmodule VilanoKernel.Storage do
           status = 'retry_waiting',
           error_json = ?,
           updated_at = ?
-        where run_id = ? and op_key = ?
+        where
+          run_id = ?
+          and op_key = ?
+          and #{@fenced_run_exists_sql}
         """,
         [name, encoded_error, now, run["id"], step["op_key"]]
       )
@@ -3627,7 +3824,8 @@ defmodule VilanoKernel.Storage do
           "retryOn" => retry_on,
           "wakeAt" => wake_at
         },
-        now
+        now,
+        lease_id
       )
 
       %{
@@ -3644,8 +3842,10 @@ defmodule VilanoKernel.Storage do
         }
       }
     else
-      SQL.query!(
-        Repo,
+      ensure_fenced_related_write!(
+        run["id"],
+        lease_id,
+        now,
         """
         update run_steps
         set
@@ -3653,7 +3853,10 @@ defmodule VilanoKernel.Storage do
           status = 'failed',
           error_json = ?,
           updated_at = ?
-        where run_id = ? and op_key = ?
+        where
+          run_id = ?
+          and op_key = ?
+          and #{@fenced_run_exists_sql}
         """,
         [name, encoded_error, now, run["id"], step["op_key"]]
       )
@@ -3712,8 +3915,10 @@ defmodule VilanoKernel.Storage do
     if decision["willRetry"] do
       wait_key = retry_wait_key("exec", op_key)
 
-      SQL.query!(
-        Repo,
+      ensure_fenced_related_write!(
+        run["id"],
+        lease_id,
+        now,
         """
         update run_execs
         set
@@ -3727,7 +3932,10 @@ defmodule VilanoKernel.Storage do
           output_json = null,
           error_json = ?,
           updated_at = ?
-        where run_id = ? and op_key = ?
+        where
+          run_id = ?
+          and op_key = ?
+          and #{@fenced_run_exists_sql}
         """,
         [
           name,
@@ -3764,7 +3972,8 @@ defmodule VilanoKernel.Storage do
           "retryOn" => retry_on,
           "wakeAt" => wake_at
         },
-        now
+        now,
+        lease_id
       )
 
       %{
@@ -3780,8 +3989,10 @@ defmodule VilanoKernel.Storage do
         }
       }
     else
-      SQL.query!(
-        Repo,
+      ensure_fenced_related_write!(
+        run["id"],
+        lease_id,
+        now,
         """
         update run_execs
         set
@@ -3795,7 +4006,10 @@ defmodule VilanoKernel.Storage do
           output_json = null,
           error_json = ?,
           updated_at = ?
-        where run_id = ? and op_key = ?
+        where
+          run_id = ?
+          and op_key = ?
+          and #{@fenced_run_exists_sql}
         """,
         [
           name,
@@ -3861,15 +4075,19 @@ defmodule VilanoKernel.Storage do
       next_attempt = attempt + 1
       wait_key = retry_wait_key("turn", envelope["id"])
 
-      SQL.query!(
-        Repo,
+      ensure_fenced_related_write!(
+        service_run["id"],
+        lease_id,
+        now,
         """
         update service_envelopes
         set
           attempt = ?,
           error_json = ?,
           updated_at = ?
-        where id = ?
+        where
+          id = ?
+          and #{@fenced_run_exists_sql}
         """,
         [next_attempt, maybe_encode_json(error_body), now, envelope["id"]]
       )
@@ -3895,7 +4113,8 @@ defmodule VilanoKernel.Storage do
           "retryOn" => retry_on,
           "wakeAt" => wake_at
         },
-        now
+        now,
+        lease_id
       )
 
       %{
@@ -3911,15 +4130,19 @@ defmodule VilanoKernel.Storage do
         }
       }
     else
-      SQL.query!(
-        Repo,
+      ensure_fenced_related_write!(
+        service_run["id"],
+        lease_id,
+        now,
         """
         update service_envelopes
         set
           status = 'failed',
           error_json = ?,
           updated_at = ?
-        where id = ?
+        where
+          id = ?
+          and #{@fenced_run_exists_sql}
         """,
         [Jason.encode!(error_body), now, envelope["id"]]
       )
@@ -3930,8 +4153,10 @@ defmodule VilanoKernel.Storage do
 
       next_status = service_next_status(service_run["id"], false)
 
-      SQL.query!(
-        Repo,
+      ensure_fenced_run_write!(
+        service_run["id"],
+        lease_id,
+        now,
         """
         update runs
         set
@@ -3950,7 +4175,7 @@ defmodule VilanoKernel.Storage do
     end
   end
 
-  defp schedule_retry_wait!(run, wait_key, body, now) do
+  defp schedule_retry_wait!(run, wait_key, body, now, lease_id) do
     SQL.query!(
       Repo,
       """
@@ -3976,8 +4201,10 @@ defmodule VilanoKernel.Storage do
       [run["id"], wait_key, Map.fetch!(body, "operationName"), Map.fetch!(body, "wakeAt"), now, now]
     )
 
-    SQL.query!(
-      Repo,
+    ensure_fenced_run_write!(
+      run["id"],
+      lease_id,
+      now,
       """
       update runs
       set
@@ -4678,21 +4905,25 @@ defmodule VilanoKernel.Storage do
     envelope_id
   end
 
-  defp maybe_commit_service_state!(_run_id, nil, _now), do: :unchanged
+  defp maybe_commit_service_state!(_run_id, nil, _now, _lease_id), do: :unchanged
 
-  defp maybe_commit_service_state!(run_id, state, now) do
+  defp maybe_commit_service_state!(run_id, state, now, lease_id) do
     current = get_service_run_by_id(run_id)
     encoded_state = Jason.encode!(state)
     initial? = is_nil(current["state"])
 
-    SQL.query!(
-      Repo,
+    ensure_fenced_related_write!(
+      run_id,
+      lease_id,
+      now,
       """
       update service_runs
       set
         state_json = ?,
         updated_at = ?
-      where run_id = ?
+      where
+        run_id = ?
+        and #{@fenced_run_exists_sql}
       """,
       [encoded_state, now, run_id]
     )
