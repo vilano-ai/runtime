@@ -56,7 +56,7 @@ defmodule VilanoKernel.ManagedWorker do
         :ignore
 
       {bun_path, true} ->
-        cached_worker_entry = materialize_worker_entry!(runtime.project_root, worker_source_dir)
+        cached_worker_entry = materialize_worker_entry!(runtime.home_dir, worker_source_dir)
         port = start_port(bun_path, cached_worker_entry, runtime, index)
 
         state = %{
@@ -142,9 +142,9 @@ defmodule VilanoKernel.ManagedWorker do
     end
   end
 
-  defp materialize_worker_entry!(project_root, worker_source_dir) do
+  defp materialize_worker_entry!(home_dir, worker_source_dir) do
     version = worker_source_version(worker_source_dir)
-    cache_root = Path.join([project_root, ".vilano-cache", "managed-workers", version])
+    cache_root = Path.join([home_dir, "runtime-cache", "managed-workers", version])
     cached_source_dir = Path.join([cache_root, "worker", "bun", "src"])
 
     unless File.exists?(cached_source_dir) do

@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 
 import { getRunningDaemonStatus } from "./daemon-client.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
-import { resolveRuntimeBundlePaths } from "./runtime-bundle.ts";
+import { prepareRuntimeBundle } from "./runtime-materializer.ts";
 import { CLI_PROTOCOL_VERSION, getCliVersion } from "./runtime-version.ts";
 
 export interface DoctorCheck {
@@ -20,9 +20,12 @@ export interface DoctorReport {
   daemonStateFile: string;
   runtimeBundle: {
     root: string;
+    sourceRoot: string;
     kernelDir: string;
     workerDir: string;
     bundled: boolean;
+    materialized: boolean;
+    bundleVersion: string;
   };
   tools: {
     bun: ToolCheck;
@@ -48,7 +51,7 @@ interface ToolCheck {
 
 export async function runDoctor(options: { fix?: boolean } = {}): Promise<DoctorReport> {
   const runtimePaths = getRuntimePaths();
-  const bundle = resolveRuntimeBundlePaths();
+  const bundle = await prepareRuntimeBundle();
   const appliedFixes: string[] = [];
 
   if (options.fix) {
@@ -71,8 +74,8 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
     {
       name: "runtime_bundle",
       ok: true,
-      detail: bundle.bundled
-        ? `Using packaged runtime bundle at ${bundle.runtimeRoot}`
+      detail: bundle.source.bundled
+        ? `Using packaged runtime bundle from ${bundle.source.runtimeRoot} materialized at ${bundle.runtimeRoot}`
         : `Using repo runtime bundle at ${bundle.runtimeRoot}`,
     },
     {
@@ -120,9 +123,12 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
     daemonStateFile: runtimePaths.daemonStateFile,
     runtimeBundle: {
       root: bundle.runtimeRoot,
+      sourceRoot: bundle.source.runtimeRoot,
       kernelDir: bundle.kernelDir,
       workerDir: bundle.workerDir,
-      bundled: bundle.bundled,
+      bundled: bundle.source.bundled,
+      materialized: bundle.materialized,
+      bundleVersion: bundle.bundleVersion,
     },
     tools: {
       bun: bunTool,

@@ -6,7 +6,16 @@ export interface RuntimeBundlePaths {
   runtimeRoot: string;
   kernelDir: string;
   workerDir: string;
+  manifestFile: string;
   bundled: boolean;
+}
+
+export interface RuntimeBundleManifest {
+  bundleVersion: string;
+  cliVersion: string;
+  runtimeVersion: string;
+  protocolVersion: number;
+  generatedAt: string;
 }
 
 export function resolveRuntimeBundlePaths(): RuntimeBundlePaths {
@@ -21,6 +30,7 @@ export function resolveRuntimeBundlePaths(): RuntimeBundlePaths {
       runtimeRoot: repoRoot,
       kernelDir: path.join(repoRoot, "kernel"),
       workerDir: path.join(repoRoot, "worker", "bun"),
+      manifestFile: path.join(repoRoot, "protocol", "bundle-manifest.json"),
       bundled: false,
     };
   }
@@ -28,6 +38,7 @@ export function resolveRuntimeBundlePaths(): RuntimeBundlePaths {
   const bundledRoot = path.join(cliRoot, "runtime-dist");
   const bundledKernel = path.join(bundledRoot, "kernel", "mix.exs");
   const bundledWorker = path.join(bundledRoot, "worker", "bun", "src", "cli.ts");
+  const bundledManifest = path.join(bundledRoot, "bundle-manifest.json");
 
   if (fs.existsSync(bundledKernel) && fs.existsSync(bundledWorker)) {
     return {
@@ -35,6 +46,7 @@ export function resolveRuntimeBundlePaths(): RuntimeBundlePaths {
       runtimeRoot: bundledRoot,
       kernelDir: path.join(bundledRoot, "kernel"),
       workerDir: path.join(bundledRoot, "worker", "bun"),
+      manifestFile: bundledManifest,
       bundled: true,
     };
   }

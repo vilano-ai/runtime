@@ -41,11 +41,25 @@ try {
   const version = JSON.parse((await run("bun", [cliEntry, "version", "--json"], installDir, baseEnv)).stdout) as {
     cliVersion: string;
     protocolVersion: number;
-    runtimeBundle: { bundled: boolean };
+    runtimeBundle: {
+      root: string;
+      sourceRoot: string;
+      bundled: boolean;
+      materialized: boolean;
+      bundleVersion: string;
+    };
   };
 
   if (!version.runtimeBundle.bundled) {
     throw new Error("Packaged CLI did not resolve a bundled runtime-dist");
+  }
+
+  if (!version.runtimeBundle.materialized) {
+    throw new Error("Packaged CLI did not materialize the runtime bundle under VILANO_HOME");
+  }
+
+  if (!version.runtimeBundle.root.startsWith(runtimeHome)) {
+    throw new Error(`Materialized runtime root was not created under VILANO_HOME: ${version.runtimeBundle.root}`);
   }
 
   const doctor = JSON.parse(
@@ -74,6 +88,13 @@ try {
 
   await run("bun", [cliEntry, "daemon", "stop"], installDir, env);
 
+  const packagedKernelDeps = path.join(installDir, "node_modules", "vilano", "runtime-dist", "kernel", "deps");
+  const packagedKernelBuild = path.join(installDir, "node_modules", "vilano", "runtime-dist", "kernel", "_build");
+
+  if (await exists(packagedKernelDeps) || (await exists(packagedKernelBuild))) {
+    throw new Error("Packaged runtime-dist was mutated during install smoke run");
+  }
+
   process.stdout.write(
     `${JSON.stringify({ ok: true, installDir, cliVersion: version.cliVersion, protocolVersion: version.protocolVersion }, null, 2)}\n`
   );
@@ -99,6 +120,20 @@ async function packWorkspace(workspaceDir: string): Promise<string> {
 
 async function cleanupTarball(targetPath: string): Promise<void> {
   await fs.rm(targetPath, { force: true });
+}
+
+async function exists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.stat(targetPath);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      return false;
+    }
+
+    throw error;
+  }
 }
 
 async function reservePort(): Promise<number> {

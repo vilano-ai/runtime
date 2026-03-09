@@ -5,7 +5,7 @@ import path from "node:path";
 import process from "node:process";
 
 import { ensureDir, readJsonFile, writeJsonFileAtomic } from "./json-file.ts";
-import { resolveRuntimeBundlePaths } from "./runtime-bundle.ts";
+import { prepareRuntimeBundle } from "./runtime-materializer.ts";
 import { CLI_PROTOCOL_VERSION } from "./runtime-version.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
 import type {
@@ -75,7 +75,7 @@ export async function ensureDaemonStarted(
   const runtimePaths = getRuntimePaths();
   await ensureDir(runtimePaths.homeDir);
 
-  const bundle = resolveRuntimeBundlePaths();
+  const bundle = await prepareRuntimeBundle();
   const kernelDir = bundle.kernelDir;
   const projectRoot = bundle.runtimeRoot;
   const authToken = generateDaemonAuthToken();

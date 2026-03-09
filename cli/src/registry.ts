@@ -1,27 +1,17 @@
-import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import {
+  loadGeneratedProjectManifest,
+  type BuildProjectManifestOptions,
+  writeGeneratedProjectManifest,
+} from "./project-manifest.ts";
 import type { DefinitionRecord, ProjectRecord } from "./types.ts";
-
-const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
-const IGNORED_DIRS = new Set([
-  ".git",
-  ".hg",
-  ".svn",
-  "node_modules",
-  "dist",
-  "coverage",
-  "_build",
-  "deps",
-  ".next",
-  "out",
-  "spec",
-]);
 
 export async function buildProjectManifest(
   projectName: string,
-  projectPath: string
+  projectPath: string,
+  options: BuildProjectManifestOptions = {}
 ): Promise<ProjectRecord> {
   const resolvedPath = path.resolve(projectPath);
   const stat = await fs.stat(resolvedPath);
@@ -30,15 +20,14 @@ export async function buildProjectManifest(
     throw new Error(`Project path is not a directory: ${resolvedPath}`);
   }
 
-  const manifest = await scanProjectDefinitions(resolvedPath);
+  if (!options.regenerate) {
+    const generated = await loadGeneratedProjectManifest(projectName, resolvedPath);
+    if (generated) {
+      return generated;
+    }
+  }
 
-  return {
-    name: projectName,
-    path: resolvedPath,
-    lastSyncedAt: new Date().toISOString(),
-    definitionsManifestHash: manifest.hash,
-    definitions: manifest.definitions,
-  };
+  return await writeGeneratedProjectManifest(projectName, resolvedPath);
 }
 
 export function resolveProjectForCwd(projects: ProjectRecord[], cwd: string): ProjectRecord | null {
@@ -106,107 +95,4 @@ function parseDefinitionReference(
     projectName: explicitProject ?? null,
     definitionName: reference,
   };
-}
-
-async function scanProjectDefinitions(projectPath: string): Promise<{
-  hash: string;
-  definitions: {
-    workflows: DefinitionRecord[];
-    services: DefinitionRecord[];
-  };
-}> {
-  const files = await collectSourceFiles(projectPath);
-  const workflows: DefinitionRecord[] = [];
-  const services: DefinitionRecord[] = [];
-
-  for (const filePath of files) {
-    const source = await fs.readFile(filePath, "utf8");
-    const relativeFile = path.relative(projectPath, filePath);
-
-    workflows.push(...scanDefinitionsInSource(source, relativeFile, "workflow"));
-    services.push(...scanDefinitionsInSource(source, relativeFile, "service"));
-  }
-
-  workflows.sort(compareDefinitions);
-  services.sort(compareDefinitions);
-
-  const hash = crypto
-    .createHash("sha256")
-    .update(
-      JSON.stringify({
-        workflows,
-        services,
-      })
-    )
-    .digest("hex");
-
-  return {
-    hash,
-    definitions: {
-      workflows,
-      services,
-    },
-  };
-}
-
-async function collectSourceFiles(rootPath: string): Promise<string[]> {
-  const results: string[] = [];
-
-  async function walk(currentPath: string): Promise<void> {
-    const entries = await fs.readdir(currentPath, { withFileTypes: true });
-
-    for (const entry of entries) {
-      const fullPath = path.join(currentPath, entry.name);
-
-      if (entry.isDirectory()) {
-        if (!IGNORED_DIRS.has(entry.name)) {
-          await walk(fullPath);
-        }
-        continue;
-      }
-
-      if (entry.isFile() && SOURCE_EXTENSIONS.has(path.extname(entry.name))) {
-        results.push(fullPath);
-      }
-    }
-  }
-
-  await walk(rootPath);
-  return results;
-}
-
-function scanDefinitionsInSource(
-  source: string,
-  file: string,
-  kind: "workflow" | "service"
-): DefinitionRecord[] {
-  const records: DefinitionRecord[] = [];
-  const exportPattern = new RegExp(
-    `export\\s+(?:const|let|var)\\s+(\\w+)\\s*=\\s*${kind}\\s*\\(`,
-    "g"
-  );
-
-  let match: RegExpExecArray | null;
-  while ((match = exportPattern.exec(source)) !== null) {
-    const exportName = match[1];
-    if (!exportName) {
-      continue;
-    }
-
-    const slice = source.slice(match.index, match.index + 1200);
-    const nameMatch = /name\s*:\s*["'`]([^"'`]+)["'`]/.exec(slice);
-
-    records.push({
-      kind,
-      name: nameMatch?.[1] ?? exportName,
-      exportName,
-      file,
-    });
-  }
-
-  return records;
-}
-
-function compareDefinitions(a: DefinitionRecord, b: DefinitionRecord): number {
-  return a.name.localeCompare(b.name) || a.file.localeCompare(b.file);
 }

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import type { ServiceDefinition } from "@vilano/runtime";
 import {
   addProject,
@@ -33,7 +33,7 @@ import { readJsonFile } from "./json-file.ts";
 import { runDoctor } from "./doctor.ts";
 import { buildProjectManifest, findDefinition, resolveProjectForCwd } from "./registry.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
-import { resolveRuntimeBundlePaths } from "./runtime-bundle.ts";
+import { prepareRuntimeBundle } from "./runtime-materializer.ts";
 import { CLI_PROTOCOL_VERSION, getCliVersion } from "./runtime-version.ts";
 import type {
   DefinitionRecord,
@@ -176,7 +176,7 @@ async function handleVersion(flags: Record<string, string | boolean>): Promise<n
     kernelError = error instanceof Error ? error.message : String(error);
   }
 
-  const bundle = resolveRuntimeBundlePaths();
+  const bundle = await prepareRuntimeBundle();
 
   const body = {
     ok: true,
@@ -184,7 +184,10 @@ async function handleVersion(flags: Record<string, string | boolean>): Promise<n
     protocolVersion: CLI_PROTOCOL_VERSION,
     runtimeBundle: {
       root: bundle.runtimeRoot,
-      bundled: bundle.bundled,
+      sourceRoot: bundle.source.runtimeRoot,
+      bundled: bundle.source.bundled,
+      materialized: bundle.materialized,
+      bundleVersion: bundle.bundleVersion,
     },
     kernel: daemonStatus,
     kernelError,
@@ -216,7 +219,7 @@ async function handleProject(args: string[], flags: Record<string, string | bool
         throw new CliError("Usage: vilano project add <path> --name <project>");
       }
 
-      const manifest = await buildProjectManifest(nameFlag, projectPath);
+      const manifest = await buildProjectManifest(nameFlag, projectPath, { regenerate: true });
       const response = await addProject(manifest);
       writeOutput(flags, response, (body) => renderProject(body.project));
       return 0;
@@ -247,7 +250,9 @@ async function handleProject(args: string[], flags: Record<string, string | bool
       }
 
       const existing = await inspectProject(projectName);
-      const manifest = await buildProjectManifest(existing.project.name, existing.project.path);
+      const manifest = await buildProjectManifest(existing.project.name, existing.project.path, {
+        regenerate: true,
+      });
       const response = await syncProject(manifest);
       writeOutput(flags, response, (body) => renderProject(body.project));
       return 0;
@@ -605,7 +610,8 @@ async function handleWorker(args: string[], flags: Record<string, string | boole
           : typeof flags.url === "string"
             ? flags.url
             : "http://127.0.0.1:4141";
-      const workerEntry = fileURLToPath(new URL("../../worker/bun/src/cli.ts", import.meta.url));
+      const bundle = await prepareRuntimeBundle();
+      const workerEntry = path.join(bundle.workerDir, "src", "cli.ts");
       const childArgs = [workerEntry, "--server", serverUrl];
 
       if (typeof flags["worker-id"] === "string") {
@@ -967,7 +973,13 @@ function renderDaemonStatus(body: DaemonStatusResponse): string {
 function renderVersionInfo(body: {
   cliVersion: string;
   protocolVersion: number;
-  runtimeBundle: { root: string; bundled: boolean };
+  runtimeBundle: {
+    root: string;
+    sourceRoot: string;
+    bundled: boolean;
+    materialized: boolean;
+    bundleVersion: string;
+  };
   kernel: DaemonStatusResponse | null;
   kernelError?: string | null;
 }): string {
@@ -975,6 +987,8 @@ function renderVersionInfo(body: {
     `cli_version: ${body.cliVersion}`,
     `protocol_version: ${body.protocolVersion}`,
     `runtime_bundle: ${body.runtimeBundle.root}${body.runtimeBundle.bundled ? " (packaged)" : " (repo)"}`,
+    body.runtimeBundle.bundled ? `runtime_bundle_source: ${body.runtimeBundle.sourceRoot}` : null,
+    `runtime_bundle_version: ${body.runtimeBundle.bundleVersion}`,
     body.kernelError ? `kernel_error: ${body.kernelError}` : null,
     body.kernel
       ? `kernel: running ${body.kernel.runtimeVersion} schema=${body.kernel.schemaVersion} port=${body.kernel.port}`
@@ -989,7 +1003,15 @@ function renderDoctorReport(body: {
   cliVersion: string;
   protocolVersion: number;
   runtimeHome: string;
-  runtimeBundle: { root: string; bundled: boolean; kernelDir: string; workerDir: string };
+  runtimeBundle: {
+    root: string;
+    sourceRoot: string;
+    bundled: boolean;
+    materialized: boolean;
+    bundleVersion: string;
+    kernelDir: string;
+    workerDir: string;
+  };
   tools: {
     bun: { found: boolean; path: string | null; version: string | null };
     mix: { found: boolean; path: string | null; version: string | null };
@@ -1011,6 +1033,9 @@ function renderDoctorReport(body: {
     `protocol_version: ${body.protocolVersion}`,
     `runtime_home: ${body.runtimeHome}`,
     `runtime_bundle: ${body.runtimeBundle.root}${body.runtimeBundle.bundled ? " (packaged)" : " (repo)"}`,
+    body.runtimeBundle.bundled ? `runtime_bundle_source: ${body.runtimeBundle.sourceRoot}` : null,
+    `runtime_bundle_materialized: ${body.runtimeBundle.materialized}`,
+    `runtime_bundle_version: ${body.runtimeBundle.bundleVersion}`,
     `kernel_dir: ${body.runtimeBundle.kernelDir}`,
     `worker_dir: ${body.runtimeBundle.workerDir}`,
     `bun: ${renderDoctorTool(body.tools.bun)}`,

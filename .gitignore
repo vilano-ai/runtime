@@ -4,6 +4,7 @@ dist/
 coverage/
 .direnv/
 .vilano-cache/
+**/.vilano/
 .DS_Store
 *.log
 _build/
