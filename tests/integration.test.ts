@@ -1549,6 +1549,24 @@ test("in-run service asks honor timeout options durably", async () => {
   }
 });
 
+test("service refs treat option-shaped objects as payloads", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/servicePayloadShapeCoordinator", {
+      sessionId: "shape-session",
+    });
+    const completed = await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed");
+
+    expect(completed.run.output).toEqual({
+      key: "payload-key",
+      timeout: "payload-timeout",
+    });
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("non-retryable service turn failures bypass configured retries", async () => {
   const harness = await RuntimeHarness.create();
   const keyInput = { sessionId: "service-no-retry" };

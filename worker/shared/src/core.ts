@@ -72,21 +72,25 @@ export async function startWorker(
   adapter: RuntimeAdapter,
   options: WorkerOptions = {}
 ): Promise<void> {
-  const runtimeHome =
-    process.env.VILANO_RUNTIME_HOME ?? process.env.VILANO_HOME ?? process.env.VILANO_WORKER_HOME;
-  const workerHome = process.env.VILANO_WORKER_HOME ?? runtimeHome;
+  const artifactHome =
+    process.env.VILANO_WORKER_ARTIFACT_HOME ??
+    process.env.VILANO_RUNTIME_HOME ??
+    process.env.VILANO_HOME ??
+    process.env.VILANO_WORKER_HOME;
+  const workerHome = process.env.VILANO_WORKER_HOME ?? artifactHome;
   if (workerHome) {
     await fs.mkdir(workerHome, { recursive: true });
     process.chdir(workerHome);
   }
   const workerHomePath = process.cwd();
-  setRuntimeHomeOverride(runtimeHome ? runtimeHome : null);
+  setRuntimeHomeOverride(artifactHome ? artifactHome : null);
 
   const workerId = options.workerId ?? `worker-${crypto.randomUUID()}`;
   const serverUrl = options.serverUrl ?? "http://127.0.0.1:4141";
   const authToken = options.authToken ?? process.env.VILANO_WORKER_TOKEN;
   delete process.env.VILANO_WORKER_TOKEN;
   delete process.env.VILANO_DAEMON_TOKEN;
+  delete process.env.VILANO_WORKER_ARTIFACT_HOME;
   delete process.env.VILANO_RUNTIME_HOME;
   delete process.env.VILANO_WORKER_HOME;
   delete process.env.VILANO_HOME;

@@ -680,6 +680,16 @@ export const mailboxProbe = service({
   },
 });
 
+export const optionsPayloadProbe = service({
+  name: "optionsPayloadProbe",
+  key: (input: { sessionId: string }) => input.sessionId,
+  onAsk: {
+    echo: async (payload: { key: string; timeout: string }) => ({
+      reply: payload,
+    }),
+  },
+});
+
 export const serviceTurnIsolationProbe = service({
   name: "serviceTurnIsolationProbe",
   key: (input: { sessionId: string }) => input.sessionId,
@@ -764,6 +774,14 @@ export const askTimeoutCoordinator = workflow({
   run: async (input: { sessionId: string }, ctx) => {
     const operatorRef = await ctx.connect(operator, { sessionId: input.sessionId });
     return await operatorRef.ask.awaitApproval(undefined, { timeout: "100ms" });
+  },
+});
+
+export const servicePayloadShapeCoordinator = workflow({
+  name: "servicePayloadShapeCoordinator",
+  run: async (input: { sessionId: string }, ctx) => {
+    const probe = await ctx.connect(optionsPayloadProbe, { sessionId: input.sessionId });
+    return await probe.ask.echo({ key: "payload-key", timeout: "payload-timeout" });
   },
 });
 

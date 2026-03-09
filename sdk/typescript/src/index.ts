@@ -226,15 +226,15 @@ type AskReplyOf<THandler extends (...args: any[]) => any> =
   Awaited<ReturnType<THandler>> extends { reply: infer TReply } ? TReply : never;
 
 type SendMethodArgs<TPayload> = [TPayload] extends [void]
-  ? [options?: MessageOptions]
+  ? [] | [payload: undefined, options?: MessageOptions]
   : [payload: TPayload, options?: MessageOptions];
 
 type AskMethodArgs<TPayload> = [TPayload] extends [void]
-  ? [options?: AskOptions]
+  ? [] | [payload: undefined, options?: AskOptions]
   : [payload: TPayload, options?: AskOptions];
 
 type SignalMethodArgs<TPayload> = [TPayload] extends [void]
-  ? [options?: SignalOptions]
+  ? [] | [payload: undefined, options?: SignalOptions]
   : [payload: TPayload, options?: SignalOptions];
 
 export interface ServiceRef<

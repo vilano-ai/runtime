@@ -172,6 +172,14 @@
       },
       {
         "kind": "workflow",
+        "name": "servicePayloadShapeCoordinator",
+        "exportName": "servicePayloadShapeCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "serviceStatusCoordinator",
         "exportName": "serviceStatusCoordinator",
         "file": "src/definitions.ts",
@@ -280,6 +288,14 @@
         "kind": "service",
         "name": "nonRetryingResponder",
         "exportName": "nonRetryingResponder",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "service",
+        "name": "optionsPayloadProbe",
+        "exportName": "optionsPayloadProbe",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"
