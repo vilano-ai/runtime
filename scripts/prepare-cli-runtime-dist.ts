@@ -12,6 +12,7 @@ await fs.mkdir(RUNTIME_DIST_DIR, { recursive: true });
 await copyIntoRuntimeDist("kernel", [
   ".formatter.exs",
   "README.md",
+  "_build",
   "config",
   "deps",
   "lib",

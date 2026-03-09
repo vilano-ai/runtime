@@ -68,19 +68,6 @@ defmodule VilanoKernel.Runtime do
   end
 
   defp default_execution_home_dir(home_dir) do
-    home_dir = Path.expand(home_dir)
-    parent_dir = Path.dirname(home_dir)
-    base_name = sanitize_path_segment(Path.basename(home_dir))
-
-    suffix =
-      :crypto.hash(:sha256, home_dir)
-      |> Base.encode16(case: :lower)
-      |> binary_part(0, 12)
-
-    Path.join(parent_dir, ".#{base_name}-execution-#{suffix}")
-  end
-
-  defp sanitize_path_segment(value) when is_binary(value) do
-    Regex.replace(~r/[^A-Za-z0-9._-]+/, value, "_")
+    Path.join(Path.expand(home_dir), "execution")
   end
 end

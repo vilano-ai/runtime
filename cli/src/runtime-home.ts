@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
@@ -38,12 +37,10 @@ export function getRuntimePaths(): RuntimePaths {
 }
 
 export function deriveExecutionHomeDir(homeDir: string): string {
-  const resolvedHomeDir = path.resolve(homeDir);
-  const baseName = sanitizePathSegment(path.basename(resolvedHomeDir) || "vilano");
-  const suffix = crypto.createHash("sha256").update(resolvedHomeDir).digest("hex").slice(0, 12);
-  return path.join(os.tmpdir(), "vilano-runtime", "execution", `${baseName}-${suffix}`);
-}
+  if (process.env.VILANO_EXECUTION_HOME) {
+    return path.resolve(process.env.VILANO_EXECUTION_HOME);
+  }
 
-function sanitizePathSegment(value: string): string {
-  return value.replace(/[^A-Za-z0-9._-]+/g, "_");
+  const resolvedHomeDir = path.resolve(homeDir);
+  return path.join(resolvedHomeDir, "execution");
 }

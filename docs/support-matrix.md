@@ -45,7 +45,7 @@ part of the current OSS support matrix.
 
 - Bun-first CLI entrypoint
 - local project registry
-- packaged runtime bundle materialized under `VILANO_HOME`
+- packaged runtime bundle materialized under `VILANO_HOME` when the daemon starts
 - `run inspect`, `run replay`, `doctor`, `version`, and smoke-install flow
 
 ### Operating Systems

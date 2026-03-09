@@ -40,6 +40,19 @@ interface RequestOptions {
   autoStart?: boolean;
 }
 
+async function fileExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
 type KernelStatusBody = ControlComponents["schemas"]["StatusResponse"];
 
 class KernelRequestError extends Error {
@@ -72,10 +85,12 @@ export async function ensureDaemonStarted(
   const projectRoot = bundle.runtimeRoot;
   const authToken = generateDaemonAuthToken();
   const workerAuthToken = generateDaemonAuthToken();
-  const mixArgs =
-    process.env.VILANO_KERNEL_NO_COMPILE === "1"
-      ? ["run", "--no-compile", "--no-halt"]
-      : ["run", "--no-halt"];
+  const bundledBuildReady = await fileExists(path.join(kernelDir, "_build", "dev", "lib", "vilano_kernel", "ebin", "Elixir.VilanoKernel.Application.beam"));
+  const bundledDepsReady = await fileExists(path.join(kernelDir, "deps"));
+  const noCompile =
+    process.env.VILANO_KERNEL_NO_COMPILE === "1" ||
+    (bundle.materialized && bundledBuildReady);
+  const mixArgs = noCompile ? ["run", "--no-compile", "--no-halt"] : ["run", "--no-halt"];
 
   await fs.writeFile(runtimePaths.daemonStartupLogFile, "", { mode: 0o600 });
   const startupLogFd = fsSync.openSync(runtimePaths.daemonStartupLogFile, "a");
@@ -92,6 +107,7 @@ export async function ensureDaemonStarted(
       VILANO_ROOT: projectRoot,
       VILANO_DAEMON_TOKEN: authToken,
       VILANO_WORKER_TOKEN: workerAuthToken,
+      ...(bundle.materialized && bundledDepsReady ? { MIX_NO_DEPS_CHECK: "1" } : {}),
     },
   });
   fsSync.closeSync(startupLogFd);
@@ -298,7 +314,7 @@ export async function listProjects(): Promise<ProjectListResponse> {
   return requestJson<ProjectListResponse>({
     method: "GET",
     pathname: "/v1/projects",
-    autoStart: true,
+    autoStart: false,
   });
 }
 
@@ -315,7 +331,7 @@ export async function inspectProject(name: string): Promise<ProjectResponse> {
   return requestJson<ProjectResponse>({
     method: "GET",
     pathname: `/v1/projects/${encodeURIComponent(name)}`,
-    autoStart: true,
+    autoStart: false,
   });
 }
 
@@ -343,7 +359,7 @@ export async function listReferencedProjectSnapshots(
   return requestJson<{ ok: true; project: string | null; snapshotPaths: string[] }>({
     method: "GET",
     pathname: `/v1/admin/project-snapshots${query}`,
-    autoStart: true,
+    autoStart: false,
   });
 }
 
@@ -357,7 +373,7 @@ export async function listDefinitions(
   return requestJson<DefinitionListResponse>({
     method: "GET",
     pathname,
-    autoStart: true,
+    autoStart: false,
   });
 }
 
@@ -368,7 +384,7 @@ export async function inspectWorkflowDefinition(
   return requestJson<DefinitionInspectResponse>({
     method: "GET",
     pathname: `/v1/workflows/${encodeURIComponent(project)}/${encodeURIComponent(name)}`,
-    autoStart: true,
+    autoStart: false,
   });
 }
 
@@ -394,7 +410,7 @@ export async function listRuns(project?: string): Promise<RunListResponse> {
   return requestJson<RunListResponse>({
     method: "GET",
     pathname: `/v1/runs${query}`,
-    autoStart: true,
+    autoStart: false,
   });
 }
 
@@ -402,7 +418,7 @@ export async function inspectRun(runId: string): Promise<RunInspectResponse> {
   return requestJson<RunInspectResponse>({
     method: "GET",
     pathname: `/v1/runs/${encodeURIComponent(runId)}`,
-    autoStart: true,
+    autoStart: false,
   });
 }
 
@@ -410,7 +426,7 @@ export async function replayRun(runId: string): Promise<RunReplayResponse> {
   return requestJson<RunReplayResponse>({
     method: "GET",
     pathname: `/v1/runs/${encodeURIComponent(runId)}/replay`,
-    autoStart: true,
+    autoStart: false,
   });
 }
 
@@ -449,7 +465,7 @@ export async function inspectServiceRun(
   return requestJson<RunInspectResponse>({
     method: "GET",
     pathname: `/v1/services/${encodeURIComponent(project)}/${encodeURIComponent(service)}/runs/${encodeURIComponent(serviceKey)}`,
-    autoStart: true,
+    autoStart: false,
   });
 }
 
@@ -470,7 +486,7 @@ export async function listServiceRuns(
   return requestJson<ServiceRunListResponse>({
     method: "GET",
     pathname: `/v1/service-runs${query}`,
-    autoStart: true,
+    autoStart: false,
   });
 }
 

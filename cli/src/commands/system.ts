@@ -18,7 +18,7 @@ import {
   writeOutput,
 } from "../output.ts";
 import { getRuntimePaths } from "../runtime-home.ts";
-import { prepareRuntimeBundle } from "../runtime-materializer.ts";
+import { prepareRuntimeBundle, prepareRuntimeBundleWithOptions } from "../runtime-materializer.ts";
 import { CLI_PROTOCOL_VERSION, getCliVersion } from "../runtime-version.ts";
 import type { DaemonState, DaemonStatusResponse } from "../types.ts";
 import { CliError } from "../cli-error.ts";
@@ -78,7 +78,7 @@ export async function handleVersionCommand(flags: Record<string, string | boolea
     kernelError = error instanceof Error ? error.message : String(error);
   }
 
-  const bundle = await prepareRuntimeBundle();
+  const bundle = await prepareRuntimeBundleWithOptions({ materialize: false });
 
   const body = {
     ok: true,

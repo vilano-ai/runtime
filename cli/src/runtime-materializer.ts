@@ -32,9 +32,14 @@ interface MaterializedBundleState {
 }
 
 export async function prepareRuntimeBundle(): Promise<PreparedRuntimeBundle> {
+  return await prepareRuntimeBundleWithOptions();
+}
+
+export async function prepareRuntimeBundleWithOptions(options: { materialize?: boolean } = {}): Promise<PreparedRuntimeBundle> {
+  const materialize = options.materialize ?? true;
   const source = resolveRuntimeBundlePaths();
 
-  if (!source.bundled) {
+  if (!source.bundled || !materialize) {
     return {
       source,
       runtimeRoot: source.runtimeRoot,

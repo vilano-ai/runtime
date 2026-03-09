@@ -95,19 +95,23 @@ try {
     throw new Error("Packaged CLI did not resolve a bundled runtime-dist");
   }
 
-  if (!version.runtimeBundle.materialized) {
-    throw new Error("Packaged CLI did not materialize the runtime bundle under VILANO_HOME");
+  if (version.runtimeBundle.materialized) {
+    throw new Error("Packaged CLI version command should not materialize the runtime bundle");
   }
 
-  if (!version.runtimeBundle.root.startsWith(runtimeHome)) {
-    throw new Error(`Materialized runtime root was not created under VILANO_HOME: ${version.runtimeBundle.root}`);
+  if (version.runtimeBundle.root !== version.runtimeBundle.sourceRoot) {
+    throw new Error("Packaged CLI version command should report the source runtime bundle before daemon start");
+  }
+
+  if (version.runtimeBundle.root.startsWith(runtimeHome)) {
+    throw new Error(`Packaged CLI version command should not resolve to a materialized runtime root: ${version.runtimeBundle.root}`);
   }
 
   const doctor = JSON.parse(
     (
       await run(
         cliEntry,
-        ["doctor", "--fix", "--json"],
+        ["doctor", "--json"],
         installDir,
         baseEnv,
         { allowFailure: true, timeoutMs: 240_000 }
@@ -117,7 +121,7 @@ try {
 
   if (!doctor.ok) {
     throw new Error(
-      `Packaged CLI doctor --fix did not produce a healthy install:\n${JSON.stringify(doctor, null, 2)}`
+      `Packaged CLI doctor did not produce a healthy install:\n${JSON.stringify(doctor, null, 2)}`
     );
   }
 

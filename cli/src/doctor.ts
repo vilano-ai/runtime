@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 
 import { getRunningDaemonStatus } from "./daemon-client.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
-import { prepareRuntimeBundle } from "./runtime-materializer.ts";
+import { prepareRuntimeBundleWithOptions } from "./runtime-materializer.ts";
 import { CLI_PROTOCOL_VERSION, getCliVersion } from "./runtime-version.ts";
 
 export interface DoctorCheck {
@@ -53,10 +53,19 @@ interface ToolCheck {
 
 export async function runDoctor(options: { fix?: boolean } = {}): Promise<DoctorReport> {
   const runtimePaths = getRuntimePaths();
-  const bundle = await prepareRuntimeBundle();
+  const bundle = await prepareRuntimeBundleWithOptions({ materialize: Boolean(options.fix) });
   const appliedFixes: string[] = [];
 
   if (options.fix) {
+    const requiredTools = await Promise.all([
+      inspectTool("mix", ["--version"]),
+      inspectTool("elixir", ["--version"]),
+    ]);
+
+    if (!requiredTools[0].found || !requiredTools[1].found) {
+      throw new Error("vilano doctor --fix requires both 'mix' and 'elixir' on PATH");
+    }
+
     appliedFixes.push(...(await applyDoctorFixes(bundle.kernelDir)));
   }
 
