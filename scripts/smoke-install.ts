@@ -7,10 +7,12 @@ import { spawn } from "node:child_process";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 const CLI_DIR = path.join(ROOT, "cli");
+const SDK_DIR = path.join(ROOT, "sdk", "typescript");
 
 await run("bun", ["run", "prepare:cli-package"], ROOT);
 
 const cliTarball = await packWorkspace(CLI_DIR);
+const sdkTarball = await packWorkspace(SDK_DIR);
 const installDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-install-smoke-"));
 const runtimeHome = path.join(installDir, ".vilano-home");
 
@@ -27,9 +29,9 @@ try {
     )
   );
 
-  await run("bun", ["add", cliTarball], installDir);
+  await run("bun", ["add", cliTarball, sdkTarball], installDir);
 
-  const cliEntry = path.join(installDir, "node_modules", "vilano", "bin", "vilano.ts");
+  const cliEntry = path.join(installDir, "node_modules", ".bin", "vilano");
   const baseEnv = {
     ...process.env,
     VILANO_HOME: runtimeHome,
@@ -39,7 +41,15 @@ try {
   await fs.mkdir(path.join(manifestProjectDir, "src"), { recursive: true });
   await fs.writeFile(
     path.join(manifestProjectDir, "src", "definitions.ts"),
-    "export const smokeWorkflow = { kind: 'workflow' };\n"
+    [
+      "import { workflow } from '@vilano/runtime';",
+      "",
+      "export const smokeWorkflow = workflow({",
+      "  name: 'smokeWorkflow',",
+      "  run: async (input) => ({ ok: true, value: input?.value ?? 'smoke' }),",
+      "});",
+      "",
+    ].join("\n")
   );
   await fs.writeFile(
     path.join(manifestProjectDir, "vilano.manifest.json"),
@@ -65,7 +75,7 @@ try {
     )}\n`
   );
 
-  const version = JSON.parse((await run("bun", [cliEntry, "version", "--json"], installDir, baseEnv)).stdout) as {
+  const version = JSON.parse((await run(cliEntry, ["version", "--json"], installDir, baseEnv)).stdout) as {
     cliVersion: string;
     protocolVersion: number;
     runtimeBundle: {
@@ -92,8 +102,8 @@ try {
   const doctor = JSON.parse(
     (
       await run(
-        "bun",
-        [cliEntry, "doctor", "--fix", "--json"],
+        cliEntry,
+        ["doctor", "--fix", "--json"],
         installDir,
         baseEnv,
         { allowFailure: true, timeoutMs: 240_000 }
@@ -113,9 +123,9 @@ try {
     throw new Error("Packaged CLI started a kernel with a mismatched protocol version");
   }
 
-  await run("bun", [cliEntry, "project", "add", "./manifest-project", "--name", "smoke"], installDir, env);
+  await run(cliEntry, ["project", "add", "./manifest-project", "--name", "smoke"], installDir, env);
   const projectInspect = JSON.parse(
-    (await run("bun", [cliEntry, "project", "inspect", "smoke", "--json"], installDir, env)).stdout
+    (await run(cliEntry, ["project", "inspect", "smoke", "--json"], installDir, env)).stdout
   ) as {
     project: {
       definitions: {
@@ -129,7 +139,7 @@ try {
   }
 
   const workflowList = JSON.parse(
-    (await run("bun", [cliEntry, "workflow", "list", "--project", "smoke", "--json"], installDir, env)).stdout
+    (await run(cliEntry, ["workflow", "list", "--project", "smoke", "--json"], installDir, env)).stdout
   ) as {
     definitions: Array<{ name: string }>;
   };
@@ -138,7 +148,29 @@ try {
     throw new Error("Packaged CLI did not load the explicit vilano.manifest.json project contract");
   }
 
-  await run("bun", [cliEntry, "daemon", "stop"], installDir, env);
+  const runStarted = JSON.parse(
+    (
+      await run(
+        cliEntry,
+        ["run", "start", "smoke/smokeWorkflow", "--input", '{"value":"installed"}', "--json"],
+        installDir,
+        env
+      )
+    ).stdout
+  ) as { run: { id: string } };
+
+  const completedRun = await waitForRunCompletion(cliEntry, installDir, env, runStarted.run.id);
+  if (completedRun.run.status !== "completed") {
+    throw new Error(`Packaged CLI did not complete smoke workflow: ${completedRun.run.status}`);
+  }
+
+  if ((completedRun.run.output as { value?: string } | null)?.value !== "installed") {
+    throw new Error(
+      `Packaged CLI returned unexpected smoke workflow output: ${JSON.stringify(completedRun.run.output)}`
+    );
+  }
+
+  await run(cliEntry, ["daemon", "stop"], installDir, env);
 
   const packagedKernelDeps = path.join(installDir, "node_modules", "vilano", "runtime-dist", "kernel", "deps");
   const packagedKernelBuild = path.join(installDir, "node_modules", "vilano", "runtime-dist", "kernel", "_build");
@@ -153,6 +185,7 @@ try {
 } finally {
   await fs.rm(installDir, { recursive: true, force: true });
   await cleanupTarball(cliTarball);
+  await cleanupTarball(sdkTarball);
 }
 
 async function packWorkspace(workspaceDir: string): Promise<string> {
@@ -235,12 +268,12 @@ async function startDaemonWithRetry(
     };
 
     try {
-      await run("bun", [cliEntry, "daemon", "start", "--port", String(port)], installDir, env, {
+      await run(cliEntry, ["daemon", "start", "--port", String(port)], installDir, env, {
         timeoutMs: 120_000,
       });
 
       const status = JSON.parse(
-        (await run("bun", [cliEntry, "daemon", "status", "--json"], installDir, env)).stdout
+        (await run(cliEntry, ["daemon", "status", "--json"], installDir, env)).stdout
       ) as {
         runtimeVersion: string;
         protocolVersion: number;
@@ -261,6 +294,29 @@ async function startDaemonWithRetry(
   throw new Error(
     `Packaged CLI failed to start the daemon after multiple attempts:\n${lastError?.message ?? "unknown error"}`
   );
+}
+
+async function waitForRunCompletion(
+  cliEntry: string,
+  installDir: string,
+  env: NodeJS.ProcessEnv,
+  runId: string
+): Promise<{ run: { status: string; output: unknown } }> {
+  const deadline = Date.now() + 30_000;
+
+  while (Date.now() < deadline) {
+    const body = JSON.parse(
+      (await run(cliEntry, ["run", "inspect", runId, "--json"], installDir, env)).stdout
+    ) as { run: { status: string; output: unknown } };
+
+    if (body.run.status === "completed" || body.run.status === "failed" || body.run.status === "cancelled") {
+      return body;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  throw new Error(`Timed out waiting for packaged workflow run ${runId}`);
 }
 
 async function run(
