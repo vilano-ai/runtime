@@ -13,6 +13,7 @@ await copyIntoRuntimeDist("kernel", [
   ".formatter.exs",
   "README.md",
   "config",
+  "deps",
   "lib",
   "mix.exs",
   "mix.lock",
@@ -41,7 +42,18 @@ async function copyIntoRuntimeDist(sourceRelativeDir: string, entries: string[])
   await fs.mkdir(targetDir, { recursive: true });
 
   for (const entry of entries) {
-    await fs.cp(path.join(sourceDir, entry), path.join(targetDir, entry), {
+    const sourceEntry = path.join(sourceDir, entry);
+    try {
+      await fs.access(sourceEntry);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        continue;
+      }
+
+      throw error;
+    }
+
+    await fs.cp(sourceEntry, path.join(targetDir, entry), {
       recursive: true,
       force: true,
     });

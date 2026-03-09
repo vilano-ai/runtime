@@ -34,10 +34,12 @@ try {
   await run("bun", ["add", cliTarball, sdkTarball], installDir);
 
   const cliEntry = path.join(installDir, "node_modules", ".bin", "vilano");
+  const packagedRuntimeDist = path.join(installDir, "node_modules", "vilano", "runtime-dist");
   const baseEnv = {
     ...process.env,
     VILANO_HOME: runtimeHome,
   };
+  const packagedBundleHashBefore = await hashDirectoryContents(packagedRuntimeDist);
 
   const manifestProjectDir = path.join(installDir, "manifest-project");
   await fs.mkdir(path.join(manifestProjectDir, "src"), { recursive: true });
@@ -173,12 +175,9 @@ try {
   }
 
   await run(cliEntry, ["daemon", "stop"], installDir, env);
-
-  const packagedKernelDeps = path.join(installDir, "node_modules", "vilano", "runtime-dist", "kernel", "deps");
-  const packagedKernelBuild = path.join(installDir, "node_modules", "vilano", "runtime-dist", "kernel", "_build");
-
-  if (await exists(packagedKernelDeps) || (await exists(packagedKernelBuild))) {
-    throw new Error("Packaged runtime-dist was mutated during install smoke run");
+  const packagedBundleHashAfter = await hashDirectoryContents(packagedRuntimeDist);
+  if (packagedBundleHashBefore !== packagedBundleHashAfter) {
+    throw new Error("Packaged runtime-dist contents changed during install smoke run");
   }
 
   process.stdout.write(
@@ -238,6 +237,41 @@ async function exists(targetPath: string): Promise<boolean> {
 
     throw error;
   }
+}
+
+async function hashDirectoryContents(rootPath: string): Promise<string> {
+  const crypto = await import("node:crypto");
+  const digest = crypto.createHash("sha256");
+  const files = await collectFiles(rootPath);
+
+  for (const filePath of files) {
+    const relativePath = path.relative(rootPath, filePath);
+    digest.update(relativePath);
+    digest.update("\0");
+    digest.update(await fs.readFile(filePath));
+    digest.update("\0");
+  }
+
+  return digest.digest("hex");
+}
+
+async function collectFiles(rootPath: string): Promise<string[]> {
+  const entries = await fs.readdir(rootPath, { withFileTypes: true });
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(rootPath, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await collectFiles(fullPath)));
+      continue;
+    }
+
+    if (entry.isFile()) {
+      files.push(fullPath);
+    }
+  }
+
+  return files.sort();
 }
 
 async function reservePort(): Promise<number> {

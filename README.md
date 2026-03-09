@@ -34,6 +34,9 @@ The runtime is intentionally local-first today:
 - loopback-only control plane
 - per-runtime access token under `VILANO_HOME`
 
+Vilano does not currently claim strong filesystem isolation from code running as the same OS user.
+The OSS `0.x` trust model assumes a local, single-user machine.
+
 ## Current Capabilities
 
 - workflows with replay-from-the-top semantics
@@ -107,7 +110,8 @@ bun run smoke:install
 ```
 
 That path packs `vilano`, installs it into a temporary directory, starts the daemon, runs health
-checks, and verifies the packaged bundle stays immutable and self-contained.
+checks, and verifies the packaged bundle stays immutable while the materialized runtime under
+`VILANO_HOME` remains the writable execution root.
 
 ## Programming Model
 

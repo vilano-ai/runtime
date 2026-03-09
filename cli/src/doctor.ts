@@ -175,8 +175,10 @@ async function applyDoctorFixes(kernelDir: string): Promise<string[]> {
   await runCommand("mix", ["local.rebar", "--force"], kernelDir);
   fixes.push("mix local.rebar --force");
 
-  await runCommand("mix", ["deps.get"], kernelDir);
-  fixes.push("mix deps.get");
+  if (!(await fileExists(`${kernelDir}/deps`))) {
+    await runCommand("mix", ["deps.get"], kernelDir);
+    fixes.push("mix deps.get");
+  }
 
   await runCommand("mix", ["compile"], kernelDir);
   fixes.push("mix compile");

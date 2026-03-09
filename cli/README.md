@@ -23,6 +23,9 @@ The CLI is intentionally a client of the kernel, not a second runtime authority.
 When running from an installed package, the CLI materializes the bundled runtime payload under
 `VILANO_HOME` before starting the daemon. It does not mutate the installed package tree.
 
+The current local trust model is still single-user. The CLI reduces blind localhost access, but it
+does not claim strong isolation from arbitrary code running as the same OS user.
+
 ## Important Commands
 
 ```bash

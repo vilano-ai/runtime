@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import crypto from "node:crypto";
 import path from "node:path";
 
 import { ensureDir, readJsonFile, writeJsonFileAtomic } from "./json-file.ts";
@@ -26,6 +27,7 @@ interface MaterializedBundleState {
   runtimeVersion: string;
   bundleVersion: string;
   bundleContentHash: string | null;
+  materializedContentHash: string | null;
   materializedAt: string;
 }
 
@@ -60,6 +62,7 @@ export async function prepareRuntimeBundle(): Promise<PreparedRuntimeBundle> {
       recursive: true,
       force: true,
     });
+    const materializedContentHash = await hashRuntimeBundleContents(materializedRoot);
     await writeJsonFileAtomic(stateFile, {
       sourceRoot: source.runtimeRoot,
       cliVersion: getCliVersion(),
@@ -67,6 +70,7 @@ export async function prepareRuntimeBundle(): Promise<PreparedRuntimeBundle> {
       runtimeVersion: manifest?.runtimeVersion ?? getCliVersion(),
       bundleVersion,
       bundleContentHash: manifest?.bundleContentHash ?? null,
+      materializedContentHash,
       materializedAt: new Date().toISOString(),
     } satisfies MaterializedBundleState);
   }
@@ -93,11 +97,17 @@ async function isMaterialized(
   bundleVersion: string
 ): Promise<boolean> {
   const state = await readJsonFile<MaterializedBundleState | null>(stateFile, null);
+  const sourceBundleContentHash = await readBundleContentHash(sourceRoot);
+  const materializedRoot = path.dirname(stateFile);
+  const materializedContentHash = state ? await hashRuntimeBundleContents(materializedRoot) : null;
+
   return (
     state !== null &&
     state.sourceRoot === sourceRoot &&
     state.bundleVersion === bundleVersion &&
-    state.bundleContentHash === (await readBundleContentHash(sourceRoot)) &&
+    state.bundleContentHash === sourceBundleContentHash &&
+    state.materializedContentHash === materializedContentHash &&
+    materializedContentHash === sourceBundleContentHash &&
     state.cliVersion === getCliVersion() &&
     state.protocolVersion === CLI_PROTOCOL_VERSION
   );
@@ -109,4 +119,51 @@ async function readBundleContentHash(sourceRoot: string): Promise<string | null>
     null
   );
   return manifest?.bundleContentHash ?? null;
+}
+
+async function hashRuntimeBundleContents(rootPath: string): Promise<string | null> {
+  const bundleManifest = await readJsonFile<RuntimeBundleManifest | null>(
+    path.join(rootPath, "bundle-manifest.json"),
+    null
+  );
+
+  if (!bundleManifest) {
+    return null;
+  }
+
+  const hash = crypto.createHash("sha256");
+  const files = await collectFiles(rootPath);
+
+  for (const filePath of files) {
+    const relativePath = path.relative(rootPath, filePath);
+    if (relativePath === ".materialized.json" || relativePath === "bundle-manifest.json") {
+      continue;
+    }
+
+    hash.update(relativePath);
+    hash.update("\0");
+    hash.update(await fs.readFile(filePath));
+    hash.update("\0");
+  }
+
+  return hash.digest("hex").slice(0, 16);
+}
+
+async function collectFiles(rootPath: string): Promise<string[]> {
+  const entries = await fs.readdir(rootPath, { withFileTypes: true });
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(rootPath, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await collectFiles(fullPath)));
+      continue;
+    }
+
+    if (entry.isFile()) {
+      files.push(fullPath);
+    }
+  }
+
+  return files.sort();
 }
