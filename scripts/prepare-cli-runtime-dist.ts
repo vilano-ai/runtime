@@ -17,10 +17,10 @@ await copyIntoRuntimeDist("kernel", [
   "mix.lock",
 ]);
 
-await copyIntoRuntimeDist(path.join("worker", "bun"), [
-  "package.json",
-  "src",
-  "tsconfig.json",
+await copyIntoRuntimeDist("worker", [
+  "bun",
+  "node",
+  "shared",
 ]);
 
 await writeBundleManifest();

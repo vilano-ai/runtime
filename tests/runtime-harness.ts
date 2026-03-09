@@ -22,7 +22,7 @@ import type {
 
 const ROOT = path.resolve(import.meta.dir, "..");
 const CLI_ENTRY = path.join(ROOT, "cli", "bin", "vilano.ts");
-const WORKER_ENTRY = path.join(ROOT, "worker", "bun", "src", "cli.ts");
+const WORKER_ROOT = path.join(ROOT, "worker");
 const BOOTSTRAP_DEMO_TMP = path.join(ROOT, "examples", "bootstrap-demo", "tmp");
 const ROOT_TMP = path.join(ROOT, "tmp");
 
@@ -207,8 +207,13 @@ export class RuntimeHarness {
     );
   }
 
-  async spawnWorker(options: { workerId?: string; once?: boolean } = {}): Promise<SpawnedCommand> {
-    const args = [process.execPath, WORKER_ENTRY, "--server", this.serverUrl];
+  async spawnWorker(
+    options: { workerId?: string; once?: boolean; runtime?: "bun" | "node" } = {}
+  ): Promise<SpawnedCommand> {
+    const runtime = options.runtime ?? "bun";
+    const executable = runtime === "node" ? "node" : "bun";
+    const workerEntry = path.join(WORKER_ROOT, runtime, "src", "cli.ts");
+    const args = [executable, workerEntry, "--server", this.serverUrl];
 
     if (options.workerId) {
       args.push("--worker-id", options.workerId);
@@ -227,17 +232,17 @@ export class RuntimeHarness {
     return this.spawnCommand([process.execPath, CLI_ENTRY, ...args]);
   }
 
+  async runCliJson<T>(args: string[]): Promise<T> {
+    const result = await this.runCli([...args, "--json"]);
+    return JSON.parse(result.stdout) as T;
+  }
+
   get serverUrl(): string {
     return `http://127.0.0.1:${this.port}`;
   }
 
   get homeDir(): string {
     return this.runtimeHome;
-  }
-
-  private async runCliJson<T>(args: string[]): Promise<T> {
-    const result = await this.runCli([...args, "--json"]);
-    return JSON.parse(result.stdout) as T;
   }
 
   private async runCli(

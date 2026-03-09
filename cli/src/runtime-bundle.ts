@@ -23,13 +23,14 @@ export function resolveRuntimeBundlePaths(): RuntimeBundlePaths {
   const repoRoot = path.resolve(cliRoot, "..");
   const repoKernel = path.join(repoRoot, "kernel", "mix.exs");
   const repoWorker = path.join(repoRoot, "worker", "bun", "src", "cli.ts");
+  const repoSharedWorker = path.join(repoRoot, "worker", "shared", "src", "core.ts");
 
-  if (fs.existsSync(repoKernel) && fs.existsSync(repoWorker)) {
+  if (fs.existsSync(repoKernel) && fs.existsSync(repoWorker) && fs.existsSync(repoSharedWorker)) {
     return {
       cliRoot,
       runtimeRoot: repoRoot,
       kernelDir: path.join(repoRoot, "kernel"),
-      workerDir: path.join(repoRoot, "worker", "bun"),
+      workerDir: path.join(repoRoot, "worker"),
       manifestFile: path.join(repoRoot, "protocol", "bundle-manifest.json"),
       bundled: false,
     };
@@ -38,21 +39,22 @@ export function resolveRuntimeBundlePaths(): RuntimeBundlePaths {
   const bundledRoot = path.join(cliRoot, "runtime-dist");
   const bundledKernel = path.join(bundledRoot, "kernel", "mix.exs");
   const bundledWorker = path.join(bundledRoot, "worker", "bun", "src", "cli.ts");
+  const bundledSharedWorker = path.join(bundledRoot, "worker", "shared", "src", "core.ts");
   const bundledManifest = path.join(bundledRoot, "bundle-manifest.json");
 
-  if (fs.existsSync(bundledKernel) && fs.existsSync(bundledWorker)) {
+  if (fs.existsSync(bundledKernel) && fs.existsSync(bundledWorker) && fs.existsSync(bundledSharedWorker)) {
     return {
       cliRoot,
       runtimeRoot: bundledRoot,
       kernelDir: path.join(bundledRoot, "kernel"),
-      workerDir: path.join(bundledRoot, "worker", "bun"),
+      workerDir: path.join(bundledRoot, "worker"),
       manifestFile: bundledManifest,
       bundled: true,
     };
   }
 
   throw new Error(
-    `Unable to locate the Vilano runtime bundle from ${cliRoot}. Expected kernel/mix.exs and worker/bun/src/cli.ts in either ${path.join(
+    `Unable to locate the Vilano runtime bundle from ${cliRoot}. Expected kernel/mix.exs and worker/{bun,shared}/src in either ${path.join(
       bundledRoot,
       "kernel"
     )} or ${path.join(repoRoot, "kernel")}.`

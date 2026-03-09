@@ -5,14 +5,15 @@
   "workspaces": [
     "sdk/typescript",
     "worker/bun",
+    "worker/node",
     "cli"
   ],
   "scripts": {
     "check": "bun run typecheck && bun run check:protocol && bun run test",
     "build": "bun run typecheck",
     "check:protocol": "bun scripts/check-protocol-artifact.ts",
-    "typecheck": "tsc -p cli/tsconfig.json && tsc -p sdk/typescript/tsconfig.json && tsc -p worker/bun/tsconfig.json && tsc -p tests/tsconfig.json",
-    "test": "bun test tests/integration.test.ts --timeout 30000 --max-concurrency 1",
+    "typecheck": "tsc -p cli/tsconfig.json && tsc -p sdk/typescript/tsconfig.json && tsc -p worker/bun/tsconfig.json && tsc -p worker/node/tsconfig.json && tsc -p tests/tsconfig.json",
+    "test": "bun test tests/integration.test.ts tests/node-worker.test.ts --timeout 30000 --max-concurrency 1",
     "test:integration": "bun run test",
     "test:soak": "bun test tests/soak.test.ts --timeout 360000 --max-concurrency 1",
     "prepare:cli-package": "bun scripts/prepare-cli-runtime-dist.ts",

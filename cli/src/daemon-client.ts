@@ -49,6 +49,7 @@ interface KernelStatusBody {
   projectRoot: string;
   runtimeDbPath: string;
   managedWorkerCount: number;
+  managedWorkerRuntime: string;
   leaseDurationSeconds: number;
   projectCount: number;
 }
@@ -212,6 +213,7 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
           homeDir: runtimePaths.homeDir,
           projectRoot: "",
           managedWorkerCount: 0,
+          managedWorkerRuntime: "unknown",
           leaseDurationSeconds: 0,
           projectCount: 0,
         };
@@ -632,6 +634,7 @@ function toDaemonStatus(state: DaemonState, body: KernelStatusBody): DaemonStatu
     homeDir: body.homeDir,
     projectRoot: body.projectRoot,
     managedWorkerCount: body.managedWorkerCount,
+    managedWorkerRuntime: body.managedWorkerRuntime,
     leaseDurationSeconds: body.leaseDurationSeconds,
     projectCount: body.projectCount,
   };

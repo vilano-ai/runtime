@@ -604,6 +604,8 @@ async function handleWorker(args: string[], flags: Record<string, string | boole
 
   switch (command) {
     case "start": {
+      const workerRuntime =
+        typeof flags.runtime === "string" ? flags.runtime : process.env.VILANO_WORKER_RUNTIME ?? "bun";
       const serverUrl =
         typeof flags.server === "string"
           ? flags.server
@@ -611,7 +613,8 @@ async function handleWorker(args: string[], flags: Record<string, string | boole
             ? flags.url
             : "http://127.0.0.1:4141";
       const bundle = await prepareRuntimeBundle();
-      const workerEntry = path.join(bundle.workerDir, "src", "cli.ts");
+      const workerEntry = path.join(bundle.workerDir, workerRuntime, "src", "cli.ts");
+      const executable = workerRuntime === "node" ? "node" : "bun";
       const childArgs = [workerEntry, "--server", serverUrl];
 
       if (typeof flags["worker-id"] === "string") {
@@ -624,7 +627,7 @@ async function handleWorker(args: string[], flags: Record<string, string | boole
 
       const workerAuthEnv = await resolveWorkerAuthEnv(serverUrl);
       const exitCode = await new Promise<number>((resolve, reject) => {
-        const child = spawn(process.execPath, childArgs, {
+        const child = spawn(executable, childArgs, {
           stdio: "inherit",
           env: {
             ...process.env,
@@ -639,7 +642,7 @@ async function handleWorker(args: string[], flags: Record<string, string | boole
       return exitCode;
     }
     default:
-      throw new CliError("Usage: vilano worker start [--once] [--worker-id <id>] [--server <url>]");
+      throw new CliError("Usage: vilano worker start [--runtime <bun|node>] [--once] [--worker-id <id>] [--server <url>]");
   }
 }
 
@@ -964,6 +967,7 @@ function renderDaemonStatus(body: DaemonStatusResponse): string {
     `project_root: ${body.projectRoot}`,
     `runtime_db: ${body.runtimeDbPath}`,
     `managed_workers: ${body.managedWorkerCount}`,
+    `managed_worker_runtime: ${body.managedWorkerRuntime}`,
     `lease_duration_seconds: ${body.leaseDurationSeconds}`,
     `applied_migrations: ${body.appliedMigrations.length}`,
     `projects: ${body.projectCount}`,
@@ -1014,6 +1018,7 @@ function renderDoctorReport(body: {
   };
   tools: {
     bun: { found: boolean; path: string | null; version: string | null };
+    node: { found: boolean; path: string | null; version: string | null };
     mix: { found: boolean; path: string | null; version: string | null };
     elixir: { found: boolean; path: string | null; version: string | null };
   };
@@ -1039,6 +1044,7 @@ function renderDoctorReport(body: {
     `kernel_dir: ${body.runtimeBundle.kernelDir}`,
     `worker_dir: ${body.runtimeBundle.workerDir}`,
     `bun: ${renderDoctorTool(body.tools.bun)}`,
+    `node: ${renderDoctorTool(body.tools.node)}`,
     `mix: ${renderDoctorTool(body.tools.mix)}`,
     `elixir: ${renderDoctorTool(body.tools.elixir)}`,
     `kernel_deps_ready: ${body.kernel.depsReady}`,
@@ -1090,7 +1096,13 @@ function renderDefinitionList(
   }
 
   const header = project ? `${kind} definitions in ${project}` : `${kind} definitions`;
-  return [header, ...definitions.map((definition) => `${definition.name}\t${definition.file}`)].join("\n");
+  return [
+    header,
+    ...definitions.map(
+      (definition) =>
+        `${definition.name}\t${definition.file}\t${definition.sourceLanguage}/${definition.runtimeKind}`
+    ),
+  ].join("\n");
 }
 
 function renderDefinitionInspect(project: string, definition: DefinitionRecord): string {
@@ -1100,6 +1112,8 @@ function renderDefinitionInspect(project: string, definition: DefinitionRecord):
     `name: ${definition.name}`,
     `export: ${definition.exportName}`,
     `file: ${definition.file}`,
+    `source_language: ${definition.sourceLanguage}`,
+    `runtime_kind: ${definition.runtimeKind}`,
   ].join("\n");
 }
 

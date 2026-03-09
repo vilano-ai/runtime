@@ -3,6 +3,8 @@ export interface DefinitionRecord {
   name: string;
   exportName: string;
   file: string;
+  runtimeKind: "javascript";
+  sourceLanguage: "typescript";
 }
 
 export type DefinitionKind = DefinitionRecord["kind"];
@@ -55,6 +57,7 @@ export interface DaemonStatusResponse {
   homeDir: string;
   projectRoot: string;
   managedWorkerCount: number;
+  managedWorkerRuntime: string;
   leaseDurationSeconds: number;
   projectCount: number;
 }

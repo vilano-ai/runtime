@@ -43,26 +43,37 @@ defmodule VilanoKernel.ManagedWorker do
     Process.flag(:trap_exit, true)
 
     runtime = Application.fetch_env!(:vilano_kernel, :runtime)
-    worker_source_dir = Path.join([runtime.project_root, "worker", "bun", "src"])
+    worker_runtime = runtime.managed_worker_runtime || "bun"
+    worker_root_dir = Path.join([runtime.project_root, "worker"])
+    worker_source_dir = Path.join([worker_root_dir, worker_runtime, "src"])
     worker_entry = Path.join(worker_source_dir, "cli.ts")
+    shared_source_dir = Path.join([worker_root_dir, "shared", "src"])
+    executable = runtime_executable(worker_runtime)
 
-    case {System.find_executable("bun"), File.exists?(worker_entry)} do
-      {nil, _} ->
-        Logger.warning("Managed worker #{index} not started because 'bun' is not available on PATH")
+    case {executable, File.exists?(worker_entry), File.exists?(shared_source_dir)} do
+      {nil, _, _} ->
+        Logger.warning(
+          "Managed worker #{index} not started because '#{worker_runtime}' is not available on PATH"
+        )
         :ignore
 
-      {_bun_path, false} ->
+      {_runtime_path, false, _} ->
         Logger.warning("Managed worker #{index} not started because #{worker_entry} does not exist")
         :ignore
 
-      {bun_path, true} ->
-        cached_worker_entry = materialize_worker_entry!(runtime.home_dir, worker_source_dir)
-        port = start_port(bun_path, cached_worker_entry, runtime, index)
+      {_runtime_path, _, false} ->
+        Logger.warning("Managed worker #{index} not started because #{shared_source_dir} does not exist")
+        :ignore
+
+      {runtime_path, true, true} ->
+        cached_worker_entry = materialize_worker_entry!(runtime.home_dir, worker_root_dir, worker_runtime)
+        port = start_port(runtime_path, cached_worker_entry, runtime, index)
 
         state = %{
           index: index,
           port: port,
-          os_pid: port_os_pid(port)
+          os_pid: port_os_pid(port),
+          runtime: worker_runtime
         }
 
         {:ok, state}
@@ -104,12 +115,12 @@ defmodule VilanoKernel.ManagedWorker do
 
   defp via_name(index), do: String.to_atom("vilano_managed_worker_#{index}")
 
-  defp start_port(bun_path, worker_entry, runtime, index) do
+  defp start_port(executable_path, worker_entry, runtime, index) do
     server_url = "http://127.0.0.1:#{runtime.port}"
     worker_id = "managed-local-#{index}"
 
     Port.open(
-      {:spawn_executable, String.to_charlist(bun_path)},
+      {:spawn_executable, String.to_charlist(executable_path)},
       [
         :binary,
         :use_stdio,
@@ -142,33 +153,33 @@ defmodule VilanoKernel.ManagedWorker do
     end
   end
 
-  defp materialize_worker_entry!(home_dir, worker_source_dir) do
-    version = worker_source_version(worker_source_dir)
+  defp materialize_worker_entry!(home_dir, worker_root_dir, worker_runtime) do
+    version = worker_source_version(worker_root_dir)
     cache_root = Path.join([home_dir, "runtime-cache", "managed-workers", version])
-    cached_source_dir = Path.join([cache_root, "worker", "bun", "src"])
+    cached_worker_root_dir = Path.join([cache_root, "worker"])
 
-    unless File.exists?(cached_source_dir) do
-      File.mkdir_p!(Path.dirname(cached_source_dir))
-      File.cp_r!(worker_source_dir, cached_source_dir)
+    unless File.exists?(cached_worker_root_dir) do
+      File.mkdir_p!(Path.dirname(cached_worker_root_dir))
+      File.cp_r!(worker_root_dir, cached_worker_root_dir)
     end
 
-    Path.join(cached_source_dir, "cli.ts")
+    Path.join([cached_worker_root_dir, worker_runtime, "src", "cli.ts"])
   end
 
-  defp worker_source_version(worker_source_dir) do
+  defp worker_source_version(worker_root_dir) do
     files =
-      worker_source_dir
-      |> File.ls!()
+      worker_root_dir
+      |> list_worker_files!()
       |> Enum.sort()
-      |> Enum.map(fn entry ->
-        path = Path.join(worker_source_dir, entry)
+      |> Enum.map(fn relative_path ->
+        path = Path.join(worker_root_dir, relative_path)
 
         case File.stat(path) do
           {:ok, stat} ->
-            "#{entry}:#{stat.size}:#{inspect(stat.mtime)}"
+            "#{relative_path}:#{stat.size}:#{inspect(stat.mtime)}"
 
           {:error, _reason} ->
-            "#{entry}:missing"
+            "#{relative_path}:missing"
         end
       end)
       |> Enum.join("|")
@@ -194,4 +205,39 @@ defmodule VilanoKernel.ManagedWorker do
   end
 
   defp maybe_kill_os_process(os_pid), do: maybe_kill_os_process(os_pid, "-TERM")
+
+  defp runtime_executable("bun"), do: System.find_executable("bun")
+  defp runtime_executable("node"), do: System.find_executable("node")
+  defp runtime_executable(_runtime), do: nil
+
+  defp list_worker_files!(root_dir) do
+    root_dir
+    |> do_list_worker_files!("")
+    |> Enum.reject(&String.ends_with?(&1, "/"))
+  end
+
+  defp do_list_worker_files!(root_dir, relative_dir) do
+    current_dir =
+      case relative_dir do
+        "" -> root_dir
+        _ -> Path.join(root_dir, relative_dir)
+      end
+
+    current_dir
+    |> File.ls!()
+    |> Enum.flat_map(fn entry ->
+      relative_path =
+        case relative_dir do
+          "" -> entry
+          _ -> Path.join(relative_dir, entry)
+        end
+
+      full_path = Path.join(root_dir, relative_path)
+
+      case File.dir?(full_path) do
+        true -> do_list_worker_files!(root_dir, relative_path)
+        false -> [relative_path]
+      end
+    end)
+  end
 end

@@ -36,6 +36,7 @@ defmodule VilanoKernel.Router do
       projectRoot: runtime.project_root,
       runtimeDbPath: runtime.runtime_db_path,
       managedWorkerCount: runtime.managed_worker_count,
+      managedWorkerRuntime: runtime.managed_worker_runtime,
       leaseDurationSeconds: runtime.lease_duration_seconds,
       projectCount: Storage.project_count()
     })

@@ -49,7 +49,7 @@ export async function prepareRuntimeBundle(): Promise<PreparedRuntimeBundle> {
     `cli-${getCliVersion()}-runtime-${manifest?.runtimeVersion ?? getCliVersion()}-protocol-${CLI_PROTOCOL_VERSION}`;
   const materializedRoot = path.join(runtimePaths.runtimeBundlesDir, bundleVersion);
   const kernelDir = path.join(materializedRoot, "kernel");
-  const workerDir = path.join(materializedRoot, "worker", "bun");
+  const workerDir = path.join(materializedRoot, "worker");
   const stateFile = path.join(materializedRoot, ".materialized.json");
 
   if (!(await isMaterialized(stateFile, source.runtimeRoot, bundleVersion))) {
