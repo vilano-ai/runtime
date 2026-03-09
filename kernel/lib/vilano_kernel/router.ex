@@ -5,9 +5,10 @@ defmodule VilanoKernel.Router do
   use Plug.Router
 
   alias Plug.Conn
-  alias VilanoKernel.Router.RunViews
+  alias VilanoKernel.Router.Support
   alias VilanoKernel.Storage
   alias VilanoKernel.WaitManager
+  import VilanoKernel.Router.Support
 
   plug :match
 
@@ -729,85 +730,6 @@ defmodule VilanoKernel.Router do
     send_error(conn, 404, "not_found", "Unknown endpoint: #{conn.method} #{conn.request_path}")
   end
 
-  defp project_payload(body_params) do
-    %{
-      "name" => fetch_required_string(body_params, "name"),
-      "path" => fetch_required_string(body_params, "path"),
-      "lastSyncedAt" => Map.get(body_params, "lastSyncedAt"),
-      "definitionsManifestHash" => Map.get(body_params, "definitionsManifestHash"),
-      "definitions" => %{
-        "workflows" => get_in(body_params, ["definitions", "workflows"]) || [],
-        "services" => get_in(body_params, ["definitions", "services"]) || []
-      }
-    }
-  end
-
-  defp fetch_required_string(body_params, key) do
-    case Map.get(body_params, key) do
-      value when is_binary(value) and value != "" -> value
-      _ -> raise ArgumentError, "expected '#{key}' to be a non-empty string"
-    end
-  end
-
-  defp fetch_required_integer(body_params, key) do
-    case Map.get(body_params, key) do
-      value when is_integer(value) -> value
-      _ -> raise ArgumentError, "expected '#{key}' to be an integer"
-    end
-  end
-
-  defp list_definitions(kind, nil), do: {:ok, Storage.list_definitions(kind)}
-
-  defp list_definitions(kind, project_name) do
-    case Storage.list_definitions(kind, project_name) do
-      nil -> {:error, "Unknown project: #{project_name}"}
-      definitions -> {:ok, definitions}
-    end
-  end
-
-  defp send_run_inspect(conn, run_id) do
-    case Storage.get_run_for_inspect(run_id) do
-      nil ->
-        send_error(conn, 404, "not_found", "Unknown run: #{run_id}")
-
-      run ->
-        send_json(conn, 200, RunViews.build_run_inspect_body(run, run_id))
-    end
-  end
-
-  defp send_run_replay(conn, run_id) do
-    case Storage.get_run_for_inspect(run_id) do
-      nil ->
-        send_error(conn, 404, "not_found", "Unknown run: #{run_id}")
-
-      run ->
-        send_json(conn, 200, RunViews.build_run_replay_body(run, run_id))
-    end
-  end
-
-  defp maybe_kill_managed_worker(result) do
-    case Map.get(result, "activeLeaseWorkerId") do
-      worker_id when is_binary(worker_id) ->
-        _ = VilanoKernel.ManagedWorker.kill_worker(worker_id, :activation_cancelled)
-        :ok
-
-      _ ->
-        :ok
-    end
-  end
-
-  defp send_json(conn, status, body) do
-    body = Jason.encode!(body)
-
-    conn
-    |> Conn.put_resp_content_type("application/json")
-    |> Conn.send_resp(status, body <> "\n")
-  end
-
-  defp send_error(conn, status, code, message) do
-    send_json(conn, status, %{ok: false, error: %{code: code, message: message}})
-  end
-
   @impl Plug.ErrorHandler
   def handle_errors(conn, %{reason: reason}) do
     message =
@@ -816,6 +738,6 @@ defmodule VilanoKernel.Router do
         true -> inspect(reason)
       end
 
-    send_json(conn, conn.status || 500, %{ok: false, error: %{code: "internal_error", message: message}})
+    Support.send_json(conn, conn.status || 500, %{ok: false, error: %{code: "internal_error", message: message}})
   end
 end
