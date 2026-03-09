@@ -643,6 +643,25 @@ export const mailboxProbe = service({
   },
 });
 
+export const serviceTurnIsolationProbe = service({
+  name: "serviceTurnIsolationProbe",
+  key: (input: { sessionId: string }) => input.sessionId,
+  onAsk: {
+    sequence: async (payload: { token: string }, _state, ctx) => {
+      const markerPath = `tmp/service-turn-isolation-${payload.token}.txt`;
+
+      const first = await ctx.step("repeat-step", async () => await bumpMarkerAttempt(markerPath));
+      const second = await ctx.step("repeat-step", async () => await bumpMarkerAttempt(markerPath));
+
+      return {
+        reply: {
+          attempts: [first, second],
+        },
+      };
+    },
+  },
+});
+
 export const timeoutOnlyResponder = service({
   name: "timeoutOnlyResponder",
   retry: {
@@ -836,6 +855,27 @@ export const nonRetryingExec = workflow({
       },
       parse: (_stdout) => {
         throw nonRetryable(new Error(`non-retryable exec parse failure for ${input.token}`));
+      },
+    });
+  },
+});
+
+export const signaledExec = workflow({
+  name: "signaledExec",
+  run: async (input: { token: string }, ctx) => {
+    return await ctx.exec({
+      name: "signaled-exec",
+      key: `signaled-exec:${input.token}`,
+      cmd: "bash",
+      args: [
+        "-lc",
+        [
+          "kill -TERM $$",
+        ].join(" "),
+      ],
+      capture: {
+        stdout: true,
+        stderr: true,
       },
     });
   },

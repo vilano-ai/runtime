@@ -206,11 +206,14 @@ function createTurnContext(
       input: TInput,
       options: SpawnOptions = {}
     ): WorkflowHandle<TOutput> {
-      const key = nextImplicitActivationOpKey(
+      const key = scopeActivationOpKey(
+        activation,
+        nextImplicitActivationOpKey(
         implicitActivationOpCounters,
         "spawn",
         definition.name,
         options.key
+        )
       );
       const childRunId = deterministicChildRunId(activation.run.id, key);
       const spawnPromise = client.resolveSpawn(activation.leaseId, {
@@ -284,11 +287,14 @@ function createTurnContext(
       fn: (step: StepContext) => Promise<TOutput> | TOutput,
       options: StepOptions = {}
     ) {
-      const key = nextImplicitActivationOpKey(
+      const key = scopeActivationOpKey(
+        activation,
+        nextImplicitActivationOpKey(
         implicitActivationOpCounters,
         "step",
         name,
         options.key
+        )
       );
       const timeoutMs = parseDurationToMs(options.timeout);
       const retryPolicy = toRetryPolicy(options.retry, {
@@ -372,11 +378,14 @@ function createTurnContext(
       }
     },
     async exec<TOutput = ExecResult>(spec: ExecSpec<TOutput>) {
-      const key = nextImplicitActivationOpKey(
+      const key = scopeActivationOpKey(
+        activation,
+        nextImplicitActivationOpKey(
         implicitActivationOpCounters,
         "exec",
         spec.name,
         spec.key
+        )
       );
       const cwd = resolveExecCwd(activation.project.path, spec.cwd);
       const timeoutMs = parseDurationToMs(spec.timeout);
@@ -451,11 +460,14 @@ function createTurnContext(
         throw new Error("ctx.sleep() requires a duration");
       }
 
-      const key = nextImplicitActivationOpKey(
+      const key = scopeActivationOpKey(
+        activation,
+        nextImplicitActivationOpKey(
         implicitActivationOpCounters,
         "sleep",
         duration,
         options?.key
+        )
       );
       const resolved = await client.resolveSleepWait(activation.leaseId, { key, durationMs });
       if (resolved.status === "completed") {
@@ -465,11 +477,14 @@ function createTurnContext(
       throw new RunSuspendedError("sleep", key);
     },
     async waitForSignal(name: string, options?: { key?: string }) {
-      const key = nextImplicitActivationOpKey(
+      const key = scopeActivationOpKey(
+        activation,
+        nextImplicitActivationOpKey(
         implicitActivationOpCounters,
         "wait_for_signal",
         name,
         options?.key
+        )
       );
       const resolved = await client.resolveSignalWait(activation.leaseId, { name, key });
       if (resolved.status === "completed") {
@@ -499,10 +514,11 @@ function createServiceRef(
         name,
         options?.key
       );
+      const scopedKey = scopeActivationOpKey(activation, key);
       const resolved = await client.resolveServiceSend(activation.leaseId, {
         serviceRunId,
         name,
-        key,
+        key: scopedKey,
         payload: payload ?? null,
       });
 
@@ -523,10 +539,11 @@ function createServiceRef(
         name,
         options?.key
       );
+      const scopedKey = scopeActivationOpKey(activation, key);
       const resolved = await client.resolveServiceAsk(activation.leaseId, {
         serviceRunId,
         name,
-        key,
+        key: scopedKey,
         payload: payload ?? null,
       });
 
@@ -538,7 +555,7 @@ function createServiceRef(
         throw toServiceAskError(serviceRunId, name, resolved.error);
       }
 
-      throw new RunSuspendedError("ask_reply", `ask_reply:ask:${key}`);
+      throw new RunSuspendedError("ask_reply", `ask_reply:ask:${scopedKey}`);
     },
   ]);
 
@@ -553,10 +570,11 @@ function createServiceRef(
         name,
         options?.key
       );
+      const scopedKey = scopeActivationOpKey(activation, key);
       const resolved = await client.resolveServiceSignal(activation.leaseId, {
         serviceRunId,
         name,
-        key,
+        key: scopedKey,
         payload: payload ?? null,
       });
 
@@ -701,6 +719,14 @@ function nextImplicitServiceOpKey(
   const nextCount = (counters.get(counterKey) ?? 0) + 1;
   counters.set(counterKey, nextCount);
   return `${opKind}:${serviceRunId}:${messageName}:${nextCount}`;
+}
+
+function scopeActivationOpKey(activation: Activation, key: string): string {
+  if (activation.kind !== "service_turn") {
+    return key;
+  }
+
+  return `turn:${activation.envelope.id}:${key}`;
 }
 
 function nextImplicitActivationOpKey(

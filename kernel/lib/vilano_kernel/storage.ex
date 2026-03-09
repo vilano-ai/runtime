@@ -819,143 +819,185 @@ defmodule VilanoKernel.Storage do
     |> unwrap_transaction_result()
   end
 
-  def lease_next_run(worker_id) do
+  def lease_next_run(worker_id), do: do_lease_next_run(worker_id, 3)
+
+  defp do_lease_next_run(_worker_id, 0), do: nil
+
+  defp do_lease_next_run(worker_id, attempts_remaining) do
     now = Infrastructure.now_iso8601()
     expires_at = shift_seconds(now, Infrastructure.lease_duration_seconds())
 
-    Repo.transaction(fn ->
-      case next_activation_candidate(now) do
-        nil ->
-          nil
+    case Repo.transaction(fn ->
+           case next_activation_candidate(now) do
+             nil ->
+               nil
 
-        {:workflow, candidate} ->
-          lease_id = "lease_" <> Ecto.UUID.generate()
-          run_id = candidate["id"]
+             {:workflow, candidate} ->
+               lease_id = "lease_" <> Ecto.UUID.generate()
+               run_id = candidate["id"]
 
-          SQL.query!(
-            Repo,
-            """
-            update runs
-            set
-              status = 'running',
-              lease_id = ?,
-              lease_worker_id = ?,
-              lease_expires_at = ?,
-              updated_at = ?
-            where id = ?
-            """,
-            [lease_id, worker_id, expires_at, now, run_id]
-          )
+               claimed_rows =
+                 write_changes!(
+                   """
+                   update runs
+                   set
+                     status = 'running',
+                     lease_id = ?,
+                     lease_worker_id = ?,
+                     lease_expires_at = ?,
+                     updated_at = ?
+                   where
+                     id = ?
+                     and definition_kind = 'workflow'
+                     and status in ('pending', 'running')
+                     and (lease_expires_at is null or lease_expires_at < ?)
+                   """,
+                   [lease_id, worker_id, expires_at, now, run_id, now]
+                 )
 
-          append_event!(
-            run_id,
-            "RunLeaseGranted",
-            %{
-              leaseId: lease_id,
-              workerId: worker_id,
-              leaseExpiresAt: expires_at
-            },
-            now
-          )
+               if claimed_rows != 1 do
+                 Repo.rollback(:stale_candidate)
+               end
 
-          %{lease_id: lease_id, lease_expires_at: expires_at, activation_kind: "workflow", run: get_run(run_id)}
+               append_event!(
+                 run_id,
+                 "RunLeaseGranted",
+                 %{
+                   leaseId: lease_id,
+                   workerId: worker_id,
+                   leaseExpiresAt: expires_at
+                 },
+                 now
+               )
 
-        {:service_turn, candidate} ->
-          lease_id = "lease_" <> Ecto.UUID.generate()
-          run_id = candidate["service_run_id"]
-          envelope_id = candidate["id"]
-          attempt =
-            cond do
-              candidate["envelope_status"] == "queued" ->
-                candidate["attempt"] || 1
+               %{
+                 lease_id: lease_id,
+                 lease_expires_at: expires_at,
+                 activation_kind: "workflow",
+                 run: get_run(run_id)
+               }
 
-              candidate["run_status"] == "active" and not is_nil(candidate["run_lease_expires_at"]) ->
-                (candidate["attempt"] || 0) + 1
+             {:service_turn, candidate} ->
+               lease_id = "lease_" <> Ecto.UUID.generate()
+               run_id = candidate["service_run_id"]
+               envelope_id = candidate["id"]
 
-              true ->
-                candidate["attempt"] || 1
-            end
+               attempt =
+                 cond do
+                   candidate["envelope_status"] == "queued" ->
+                     candidate["attempt"] || 1
 
-          SQL.query!(
-            Repo,
-            """
-            update runs
-            set
-              status = 'active',
-              lease_id = ?,
-              lease_worker_id = ?,
-              lease_expires_at = ?,
-              updated_at = ?
-            where id = ?
-            """,
-            [lease_id, worker_id, expires_at, now, run_id]
-          )
+                   candidate["run_status"] == "active" and
+                       not is_nil(candidate["run_lease_expires_at"]) ->
+                     (candidate["attempt"] || 0) + 1
 
-          if candidate["envelope_status"] == "queued" do
-            SQL.query!(
-              Repo,
-              """
-              update service_envelopes
-              set
-                status = 'processing',
-                attempt = ?,
-                updated_at = ?
-              where id = ?
-              """,
-              [attempt, now, envelope_id]
-            )
+                   true ->
+                     candidate["attempt"] || 1
+                 end
 
-            append_event!(
-              run_id,
-              "TurnStarted",
-              %{
-                "envelopeId" => envelope_id,
-                "kind" => candidate["kind"],
-                "name" => candidate["name"],
-                "correlationId" => candidate["correlation_id"],
-                "attempt" => attempt
-              },
-              now
-            )
-          else
-            SQL.query!(
-              Repo,
-              """
-              update service_envelopes
-              set
-                attempt = ?,
-                updated_at = ?
-              where id = ?
-              """,
-              [attempt, now, envelope_id]
-            )
+               envelope_rows =
+                 case candidate["envelope_status"] do
+                   "queued" ->
+                     write_changes!(
+                       """
+                       update service_envelopes
+                       set
+                         status = 'processing',
+                         attempt = ?,
+                         updated_at = ?
+                       where id = ? and status = 'queued'
+                       """,
+                       [attempt, now, envelope_id]
+                     )
 
-            append_event!(
-              run_id,
-              "TurnResumed",
-              %{
-                "envelopeId" => envelope_id,
-                "kind" => candidate["kind"],
-                "name" => candidate["name"],
-                "correlationId" => candidate["correlation_id"],
-                "reason" => ServiceLifecycle.resume_reason(candidate),
-                "attempt" => attempt
-              },
-              now
-            )
-          end
+                   _ ->
+                     write_changes!(
+                       """
+                       update service_envelopes
+                       set
+                         attempt = ?,
+                         updated_at = ?
+                       where id = ? and status = 'processing'
+                       """,
+                       [attempt, now, envelope_id]
+                     )
+                 end
 
-          %{
-            lease_id: lease_id,
-            lease_expires_at: expires_at,
-            activation_kind: "service_turn",
-            run: get_run(run_id),
-            service: get_service_run_by_id(run_id),
-            envelope: service_envelope_from_row(get_service_envelope(envelope_id))
-          }
-      end
-    end)
-    |> unwrap_transaction_result()
+               if envelope_rows != 1 do
+                 Repo.rollback(:stale_candidate)
+               end
+
+               claimed_rows =
+                 write_changes!(
+                   """
+                   update runs
+                   set
+                     status = 'active',
+                     lease_id = ?,
+                     lease_worker_id = ?,
+                     lease_expires_at = ?,
+                     updated_at = ?
+                   where
+                     id = ?
+                     and definition_kind = 'service'
+                     and status in ('idle', 'pending', 'active')
+                     and (lease_expires_at is null or lease_expires_at < ?)
+                   """,
+                   [lease_id, worker_id, expires_at, now, run_id, now]
+                 )
+
+               if claimed_rows != 1 do
+                 Repo.rollback(:stale_candidate)
+               end
+
+               if candidate["envelope_status"] == "queued" do
+                 append_event!(
+                   run_id,
+                   "TurnStarted",
+                   %{
+                     "envelopeId" => envelope_id,
+                     "kind" => candidate["kind"],
+                     "name" => candidate["name"],
+                     "correlationId" => candidate["correlation_id"],
+                     "attempt" => attempt
+                   },
+                   now
+                 )
+               else
+                 append_event!(
+                   run_id,
+                   "TurnResumed",
+                   %{
+                     "envelopeId" => envelope_id,
+                     "kind" => candidate["kind"],
+                     "name" => candidate["name"],
+                     "correlationId" => candidate["correlation_id"],
+                     "reason" => ServiceLifecycle.resume_reason(candidate),
+                     "attempt" => attempt
+                   },
+                   now
+                 )
+               end
+
+               %{
+                 lease_id: lease_id,
+                 lease_expires_at: expires_at,
+                 activation_kind: "service_turn",
+                 run: get_run(run_id),
+                 service: get_service_run_by_id(run_id),
+                 envelope: service_envelope_from_row(get_service_envelope(envelope_id))
+               }
+           end
+         end) do
+      {:ok, value} ->
+        value
+
+      {:error, :stale_candidate} ->
+        do_lease_next_run(worker_id, attempts_remaining - 1)
+
+      {:error, reason} ->
+        raise(reason)
+    end
   end
 
   def heartbeat_lease(lease_id, worker_id) do
@@ -963,15 +1005,19 @@ defmodule VilanoKernel.Storage do
     expires_at = shift_seconds(now, Infrastructure.lease_duration_seconds())
 
     updated_rows =
-      SQL.query!(
-        Repo,
+      write_changes!(
         """
         update runs
         set lease_expires_at = ?, updated_at = ?
-        where lease_id = ? and lease_worker_id = ? and status in ('running', 'active')
+        where
+          lease_id = ?
+          and lease_worker_id = ?
+          and status in ('running', 'active')
+          and lease_expires_at is not null
+          and lease_expires_at >= ?
         """,
-        [expires_at, now, lease_id, worker_id]
-      ).num_rows
+        [expires_at, now, lease_id, worker_id, now]
+      )
 
     if updated_rows > 0, do: %{"leaseExpiresAt" => expires_at}, else: nil
   end
@@ -2345,6 +2391,11 @@ defmodule VilanoKernel.Storage do
     end)
   end
 
+  defp write_changes!(query, params) do
+    SQL.query!(Repo, query, params)
+    SQL.query!(Repo, "select changes()", []) |> first_integer()
+  end
+
   defp first_integer(%{rows: [[value]]}) when is_integer(value), do: value
   defp first_integer(_), do: 0
 
@@ -2584,13 +2635,13 @@ defmodule VilanoKernel.Storage do
 
     case get_service_run(project_name, definition_name, service_key) do
       nil ->
-        run_id = "run_" <> Ecto.UUID.generate()
+        run_id = deterministic_service_run_id(project_name, definition_name, service_key)
         definitions_json = Jason.encode!(Map.fetch!(project, "definitions"))
 
         SQL.query!(
           Repo,
           """
-          insert into runs (
+          insert or ignore into runs (
             id,
             project_name,
             definition_kind,
@@ -2628,31 +2679,33 @@ defmodule VilanoKernel.Storage do
           ]
         )
 
-        SQL.query!(
-          Repo,
-          """
-          insert into service_runs (
-            run_id,
-            service_key,
-            key_input_json,
-            state_json,
-            created_at,
-            updated_at
-          ) values (?, ?, ?, null, ?, ?)
-          """,
-          [run_id, service_key, Jason.encode!(key_input || %{}), now, now]
-        )
+        inserted_service_rows =
+          write_changes!(
+            """
+            insert or ignore into service_runs (
+              run_id,
+              service_key,
+              key_input_json,
+              state_json,
+              created_at,
+              updated_at
+            ) values (?, ?, ?, null, ?, ?)
+            """,
+            [run_id, service_key, Jason.encode!(key_input || %{}), now, now]
+          )
 
-        append_event!(
-          run_id,
-          "ServiceInstantiated",
-          %{
-            "serviceKey" => service_key,
-            "definitionName" => definition_name,
-            "keyInput" => key_input || %{}
-          },
-          now
-        )
+        if inserted_service_rows == 1 do
+          append_event!(
+            run_id,
+            "ServiceInstantiated",
+            %{
+              "serviceKey" => service_key,
+              "definitionName" => definition_name,
+              "keyInput" => key_input || %{}
+            },
+            now
+          )
+        end
 
         get_service_run(project_name, definition_name, service_key)
 
@@ -2699,6 +2752,15 @@ defmodule VilanoKernel.Storage do
       """,
       [project_name, definition_name, service_key]
     )
+  end
+
+  defp deterministic_service_run_id(project_name, definition_name, service_key) do
+    digest =
+      :crypto.hash(:sha256, "#{project_name}:#{definition_name}:#{service_key}")
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 32)
+
+    "run_" <> digest
   end
 
   defp get_service_run_by_id(run_id) do

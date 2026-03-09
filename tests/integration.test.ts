@@ -1162,6 +1162,34 @@ test("service stop fails queued backlog behind an active turn", async () => {
   }
 });
 
+test("service turns isolate implicit durable ops across envelopes", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const keyInput = { sessionId: "turn-isolation" };
+    await harness.ensureService("demo/serviceTurnIsolationProbe", keyInput);
+
+    const first = (await harness.askService(
+      "demo/serviceTurnIsolationProbe",
+      "sequence",
+      keyInput,
+      { token: "same-token" }
+    )) as { attempts: number[] };
+
+    const second = (await harness.askService(
+      "demo/serviceTurnIsolationProbe",
+      "sequence",
+      keyInput,
+      { token: "same-token" }
+    )) as { attempts: number[] };
+
+    expect(first).toEqual({ attempts: [1, 2] });
+    expect(second).toEqual({ attempts: [3, 4] });
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("non-retryable service turn failures bypass configured retries", async () => {
   const harness = await RuntimeHarness.create();
   const keyInput = { sessionId: "service-no-retry" };
@@ -1960,6 +1988,22 @@ test("non-retryable exec failures bypass configured retries", async () => {
     expect(exec?.retryable).toBe(false);
     expect(exec?.willRetry).toBe(false);
     expect(failed.events.map((event) => event.type)).not.toContain("RetryScheduled");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("signal-terminated execs fail durably instead of completing", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/signaledExec", { token: "sigterm" });
+    const inspect = await harness.waitForRun(run.run.id, (body) => body.run.status === "failed");
+
+    expect(inspect.run.status).toBe("failed");
+    expect(inspect.execs).toHaveLength(1);
+    expect(inspect.execs[0]?.status).toBe("failed");
+    expect(inspect.execs[0]?.signalCode).toBe("SIGTERM");
   } finally {
     await harness.dispose();
   }

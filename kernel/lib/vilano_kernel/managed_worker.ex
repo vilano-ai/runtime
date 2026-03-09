@@ -198,6 +198,13 @@ defmodule VilanoKernel.ManagedWorker do
 
   defp maybe_kill_os_process(nil, _signal), do: :ok
   defp maybe_kill_os_process(os_pid, signal) when is_integer(os_pid) do
+    os_pid
+    |> process_tree_pids()
+    |> Enum.reverse()
+    |> Enum.each(fn pid ->
+      System.cmd("kill", [signal, Integer.to_string(pid)], stderr_to_stdout: true)
+    end)
+
     System.cmd("kill", [signal, Integer.to_string(os_pid)], stderr_to_stdout: true)
     :ok
   rescue
@@ -205,6 +212,25 @@ defmodule VilanoKernel.ManagedWorker do
   end
 
   defp maybe_kill_os_process(os_pid), do: maybe_kill_os_process(os_pid, "-TERM")
+
+  defp process_tree_pids(os_pid) when is_integer(os_pid) do
+    case System.cmd("pgrep", ["-P", Integer.to_string(os_pid)], stderr_to_stdout: true) do
+      {output, 0} ->
+        output
+        |> String.split("\n", trim: true)
+        |> Enum.map(&String.trim/1)
+        |> Enum.map(&Integer.parse/1)
+        |> Enum.flat_map(fn
+          {pid, ""} when pid > 0 -> [pid | process_tree_pids(pid)]
+          _ -> []
+        end)
+
+      _ ->
+        []
+    end
+  rescue
+    _ -> []
+  end
 
   defp runtime_executable("bun"), do: System.find_executable("bun")
   defp runtime_executable("node"), do: System.find_executable("node")

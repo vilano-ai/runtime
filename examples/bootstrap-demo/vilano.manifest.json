@@ -140,6 +140,14 @@
       },
       {
         "kind": "workflow",
+        "name": "signaledExec",
+        "exportName": "signaledExec",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "sleeper",
         "exportName": "sleeper",
         "file": "src/definitions.ts",
@@ -216,6 +224,14 @@
         "kind": "service",
         "name": "retryingResponder",
         "exportName": "retryingResponder",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "service",
+        "name": "serviceTurnIsolationProbe",
+        "exportName": "serviceTurnIsolationProbe",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"

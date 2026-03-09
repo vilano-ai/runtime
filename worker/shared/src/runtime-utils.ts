@@ -161,12 +161,42 @@ export async function executeProcess<TOutput>(
       });
   }, 250);
 
-  const exitCode = await subprocess.exited;
+  let exitStatus: Awaited<typeof subprocess.exited>;
+
+  try {
+    exitStatus = await subprocess.exited;
+  } catch (error) {
+    if (timer) {
+      clearTimeout(timer);
+    }
+    clearInterval(leaseStatusPoller);
+
+    return {
+      ok: false,
+      error: buildExecError({
+        name: spec.name,
+        message: error instanceof Error ? error.message : String(error),
+        exitCode: null,
+        signalCode: null,
+        timedOut: false,
+        artifacts: [],
+        stderr: "",
+        retryable: true,
+        family: "process_spawn",
+      }),
+      exitCode: null,
+      signalCode: null,
+      artifacts: [],
+    };
+  }
+
   if (timer) {
     clearTimeout(timer);
   }
   clearInterval(leaseStatusPoller);
 
+  const exitCode = exitStatus.exitCode;
+  const signalCode = exitStatus.signalCode;
   const stdout = await stdoutPromise;
   const stderr = await stderrPromise;
 
@@ -185,7 +215,6 @@ export async function executeProcess<TOutput>(
 
   try {
     captures = await persistExecCaptures(activation, execution, spec, stdout, stderr);
-    const signalCode = subprocess.getSignalCode();
 
     if (timedOut) {
       return {
@@ -202,6 +231,30 @@ export async function executeProcess<TOutput>(
           stderr,
           retryable: true,
           family: "timeout",
+        }),
+        exitCode,
+        signalCode,
+        stdoutRef: captures.stdoutRef,
+        stderrRef: captures.stderrRef,
+        artifacts: captures.artifacts,
+      };
+    }
+
+    if (signalCode) {
+      return {
+        ok: false,
+        error: buildExecError({
+          name: spec.name,
+          message: `Process terminated by signal ${signalCode}`,
+          exitCode,
+          signalCode,
+          timedOut: false,
+          stdoutRef: captures.stdoutRef,
+          stderrRef: captures.stderrRef,
+          artifacts: captures.artifacts,
+          stderr,
+          retryable: true,
+          family: "process_exit",
         }),
         exitCode,
         signalCode,
@@ -236,7 +289,7 @@ export async function executeProcess<TOutput>(
     }
 
     const defaultOutput: ExecResult = {
-      exitCode,
+      exitCode: exitCode ?? 0,
       signalCode,
       stdout,
       stderr,
@@ -259,21 +312,21 @@ export async function executeProcess<TOutput>(
   } catch (error) {
     return {
       ok: false,
-      error: buildExecError({
-        name: spec.name,
-        message: error instanceof Error ? error.message : String(error),
-        exitCode,
-        signalCode: subprocess.getSignalCode(),
-        timedOut: false,
-        stdoutRef: captures.stdoutRef,
-        stderrRef: captures.stderrRef,
+        error: buildExecError({
+          name: spec.name,
+          message: error instanceof Error ? error.message : String(error),
+          exitCode,
+          signalCode,
+          timedOut: false,
+          stdoutRef: captures.stdoutRef,
+          stderrRef: captures.stderrRef,
         artifacts: captures.artifacts,
         stderr,
         retryable: isRetryableError(error),
         family: "application",
       }),
       exitCode,
-      signalCode: subprocess.getSignalCode(),
+      signalCode,
       stdoutRef: captures.stdoutRef,
       stderrRef: captures.stderrRef,
       artifacts: captures.artifacts,
