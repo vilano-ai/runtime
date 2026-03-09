@@ -1,15 +1,11 @@
-import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import type { ServiceDefinition } from "@vilano/runtime";
 import {
-  addProject,
   askService,
   cancelRun,
-  ensureDaemonStarted,
   ensureServiceRun,
-  getRunningDaemonStatus,
   inspectProject,
   inspectRun,
   inspectServiceEnvelope,
@@ -19,26 +15,25 @@ import {
   listProjects,
   listRuns,
   listServiceRuns,
-  removeProject,
   replayRun,
   sendRunSignal,
   sendServiceMessage,
   sendServiceSignal,
   startWorkflowRun,
   stopServiceRun,
-  stopDaemon,
   syncProject,
 } from "./daemon-client.ts";
-import { readJsonFile } from "./json-file.ts";
-import { runDoctor } from "./doctor.ts";
+import { CliError } from "./cli-error.ts";
+import { handleProjectCommand } from "./commands/project.ts";
 import {
-  renderDaemonStatus,
+  handleDaemonCommand,
+  handleDoctorCommand,
+  handleVersionCommand,
+  handleWorkerCommand,
+} from "./commands/system.ts";
+import {
   renderDefinitionInspect,
   renderDefinitionList,
-  renderDoctorReport,
-  renderProject,
-  renderProjectSummary,
-  renderVersionInfo,
   writeOutput,
 } from "./output.ts";
 import { buildProjectManifest, findDefinition, resolveProjectForCwd } from "./registry.ts";
@@ -51,24 +46,14 @@ import {
   renderServiceRunList,
 } from "./run-views.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
-import { prepareRuntimeBundle } from "./runtime-materializer.ts";
-import { CLI_PROTOCOL_VERSION, getCliVersion } from "./runtime-version.ts";
 import type {
   DefinitionRecord,
   DaemonState,
-  DaemonStatusResponse,
   ProjectRecord,
   RunChildRecord,
   RunEnvelopeRecord,
   RunRecord,
 } from "./types.ts";
-
-class CliError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "CliError";
-  }
-}
 
 interface ParsedArgs {
   positionals: string[];
@@ -106,19 +91,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
     switch (group) {
       case "version":
-        return handleVersion(parsed.flags);
+        return handleVersionCommand(parsed.flags);
       case "doctor":
-        return handleDoctor(parsed.flags);
+        return handleDoctorCommand(parsed.flags);
       case "daemon":
-        return handleDaemon(rest, parsed.flags);
+        return handleDaemonCommand(rest, parsed.flags);
       case "project":
-        return handleProject(rest, parsed.flags);
+        return handleProjectCommand(rest, parsed.flags);
       case "workflow":
         return handleWorkflow(rest, parsed.flags);
       case "run":
         return handleRun(rest, parsed.flags);
       case "worker":
-        return handleWorker(rest, parsed.flags);
+        return handleWorkerCommand(rest, parsed.flags);
       case "service":
         return handleService(rest, parsed.flags);
       case "signal":
@@ -134,152 +119,6 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 if (import.meta.main) {
   const code = await main(process.argv.slice(2));
   process.exitCode = code;
-}
-
-async function handleDaemon(args: string[], flags: Record<string, string | boolean>): Promise<number> {
-  const command = args[0];
-
-  switch (command) {
-    case "start": {
-      const portFlag = flags.port;
-      const port = typeof portFlag === "string" ? Number.parseInt(portFlag, 10) : 4141;
-      const status = await ensureDaemonStarted(Number.isFinite(port) ? port : 4141);
-      writeOutput(flags, status, renderDaemonStatus);
-      return 0;
-    }
-    case "status": {
-      const status = await getRunningDaemonStatus();
-      if (!status) {
-        writeOutput(flags, { ok: true, running: false }, () => "Vilano kernel is not running");
-        return 0;
-      }
-
-      writeOutput(flags, status, renderDaemonStatus);
-      return 0;
-    }
-    case "stop": {
-      const stopped = await stopDaemon();
-      if (!stopped) {
-        writeOutput(flags, { ok: true, running: false }, () => "Vilano kernel is not running");
-        return 0;
-      }
-
-      writeOutput(
-        flags,
-        { ok: true, stopped: true, pid: stopped.pid, port: stopped.port },
-        (body) => `Vilano kernel stopped\npid: ${body.pid}\nport: ${body.port}`
-      );
-      return 0;
-    }
-    default:
-      throw new CliError("Usage: vilano daemon start|status|stop");
-  }
-}
-
-async function handleVersion(flags: Record<string, string | boolean>): Promise<number> {
-  let daemonStatus: DaemonStatusResponse | null = null;
-  let kernelError: string | null = null;
-
-  try {
-    daemonStatus = await getRunningDaemonStatus();
-  } catch (error) {
-    kernelError = error instanceof Error ? error.message : String(error);
-  }
-
-  const bundle = await prepareRuntimeBundle();
-
-  const body = {
-    ok: true,
-    cliVersion: getCliVersion(),
-    protocolVersion: CLI_PROTOCOL_VERSION,
-    runtimeBundle: {
-      root: bundle.runtimeRoot,
-      sourceRoot: bundle.source.runtimeRoot,
-      bundled: bundle.source.bundled,
-      materialized: bundle.materialized,
-      bundleVersion: bundle.bundleVersion,
-    },
-    kernel: daemonStatus,
-    kernelError,
-  };
-
-  writeOutput(flags, body, (payload) => renderVersionInfo(payload));
-  return 0;
-}
-
-async function handleDoctor(flags: Record<string, string | boolean>): Promise<number> {
-  const report = await runDoctor({ fix: Boolean(flags.fix) });
-  writeOutput(flags, report, renderDoctorReport);
-  return report.ok ? 0 : 1;
-}
-
-async function handleProject(args: string[], flags: Record<string, string | boolean>): Promise<number> {
-  const command = args[0];
-
-  switch (command) {
-    case "add": {
-      const projectPath = args[1];
-      const nameFlag = flags.name;
-
-      if (!projectPath) {
-        throw new CliError("Usage: vilano project add <path> --name <project>");
-      }
-
-      if (typeof nameFlag !== "string" || nameFlag.trim() === "") {
-        throw new CliError("Usage: vilano project add <path> --name <project>");
-      }
-
-      const manifest = await buildProjectManifest(nameFlag, projectPath, { regenerate: true });
-      const response = await addProject(manifest);
-      writeOutput(flags, response, (body) => renderProject(body.project));
-      return 0;
-    }
-    case "list": {
-      const response = await listProjects();
-      writeOutput(flags, response, (body) =>
-        body.projects.length === 0
-          ? "No Vilano projects registered."
-          : body.projects.map(renderProjectSummary).join("\n")
-      );
-      return 0;
-    }
-    case "inspect": {
-      const projectName = args[1];
-      if (!projectName) {
-        throw new CliError("Usage: vilano project inspect <project>");
-      }
-
-      const response = await inspectProject(projectName);
-      writeOutput(flags, response, (body) => renderProject(body.project));
-      return 0;
-    }
-    case "sync": {
-      const projectName = args[1];
-      if (!projectName) {
-        throw new CliError("Usage: vilano project sync <project>");
-      }
-
-      const existing = await inspectProject(projectName);
-      const manifest = await buildProjectManifest(existing.project.name, existing.project.path, {
-        regenerate: true,
-      });
-      const response = await syncProject(manifest);
-      writeOutput(flags, response, (body) => renderProject(body.project));
-      return 0;
-    }
-    case "remove": {
-      const projectName = args[1];
-      if (!projectName) {
-        throw new CliError("Usage: vilano project remove <project>");
-      }
-
-      const response = await removeProject(projectName);
-      writeOutput(flags, response, (body) => `Removed project ${body.project.name}`);
-      return 0;
-    }
-    default:
-      throw new CliError("Usage: vilano project add|list|inspect|sync|remove");
-  }
 }
 
 async function handleWorkflow(
@@ -607,76 +446,6 @@ async function handleService(
     default:
       throw new CliError("Usage: vilano service list|ensure|inspect|send|ask|signal|stop");
   }
-}
-
-async function handleWorker(args: string[], flags: Record<string, string | boolean>): Promise<number> {
-  const command = args[0];
-
-  switch (command) {
-    case "start": {
-      const workerRuntime =
-        typeof flags.runtime === "string" ? flags.runtime : process.env.VILANO_WORKER_RUNTIME ?? "bun";
-      const serverUrl =
-        typeof flags.server === "string"
-          ? flags.server
-          : typeof flags.url === "string"
-            ? flags.url
-            : "http://127.0.0.1:4141";
-      const bundle = await prepareRuntimeBundle();
-      const workerEntry = path.join(bundle.workerDir, workerRuntime, "src", "cli.ts");
-      const executable = workerRuntime === "node" ? "node" : "bun";
-      const childArgs = [workerEntry, "--server", serverUrl];
-
-      if (typeof flags["worker-id"] === "string") {
-        childArgs.push("--worker-id", flags["worker-id"]);
-      }
-
-      if (flags.once) {
-        childArgs.push("--once");
-      }
-
-      const workerAuthEnv = await resolveWorkerAuthEnv(serverUrl);
-      const exitCode = await new Promise<number>((resolve, reject) => {
-        const child = spawn(executable, childArgs, {
-          stdio: "inherit",
-          env: {
-            ...process.env,
-            ...workerAuthEnv,
-          },
-        });
-
-        child.once("error", reject);
-        child.once("exit", (code) => resolve(code ?? 1));
-      });
-
-      return exitCode;
-    }
-    default:
-      throw new CliError("Usage: vilano worker start [--runtime <bun|node>] [--once] [--worker-id <id>] [--server <url>]");
-  }
-}
-
-async function resolveWorkerAuthEnv(serverUrl: string): Promise<Record<string, string>> {
-  const daemonState = await readJsonFile<DaemonState | null>(getRuntimePaths().daemonStateFile, null);
-  if (!daemonState?.authToken) {
-    return {};
-  }
-
-  try {
-    const parsed = new URL(serverUrl);
-    const port = Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
-    const isLoopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
-
-    if (isLoopback && port === daemonState.port) {
-      return {
-        VILANO_DAEMON_TOKEN: daemonState.authToken,
-      };
-    }
-  } catch {
-    return {};
-  }
-
-  return {};
 }
 
 async function handleSignal(args: string[], flags: Record<string, string | boolean>): Promise<number> {

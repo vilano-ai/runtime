@@ -4,7 +4,7 @@ defmodule VilanoKernel.Storage do
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
   alias VilanoKernel.Storage.{
-    Migrations,
+    Infrastructure,
     Projects,
     ReadModels,
     RetryPolicy,
@@ -13,11 +13,7 @@ defmodule VilanoKernel.Storage do
   }
 
   def init! do
-    configure_database!()
-    bootstrap_schema!()
-    Migrations.ensure_tracking_table!()
-    Migrations.run_pending!()
-    RuntimeMetadata.sync_runtime_metadata!()
+    Infrastructure.init!()
   end
 
   def project_count, do: Projects.project_count()
@@ -40,7 +36,7 @@ defmodule VilanoKernel.Storage do
     do: Projects.get_definition(project_name, kind, definition_name)
 
   def create_workflow_run!(project_name, definition_name, input) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
     run_id = "run_" <> Ecto.UUID.generate()
 
     Repo.transaction(fn ->
@@ -51,9 +47,9 @@ defmodule VilanoKernel.Storage do
   end
 
   def ensure_service_run!(project_name, definition_name, service_key, key_input) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
-    transaction_with_busy_retry(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       ensure_service_run_in_tx!(project_name, definition_name, service_key, key_input, now)
     end)
     |> unwrap_transaction_result()
@@ -64,9 +60,9 @@ defmodule VilanoKernel.Storage do
   end
 
   def enqueue_service_envelope!(project_name, definition_name, service_key, key_input, kind, name, payload) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
-    transaction_with_busy_retry(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       service_run =
         ensure_service_run_in_tx!(
           project_name,
@@ -98,7 +94,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def stop_service_run(project_name, definition_name, service_key) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
       case get_service_run(project_name, definition_name, service_key) do
@@ -118,7 +114,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def cancel_run(run_id, reason \\ "cli_cancel") do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
       case get_run(run_id) do
@@ -186,7 +182,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def resolve_spawn(lease_id, definition_name, op_key, child_run_id, input) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
       case get_run_by_lease(lease_id) do
@@ -243,7 +239,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def resolve_child_result_wait(lease_id, child_run_id, op_key) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
     wait_key = "child_result:" <> child_run_id
 
     Repo.transaction(fn ->
@@ -377,7 +373,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def resolve_service_send(lease_id, service_run_id, name, op_key, payload) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
       case {get_run_by_lease(lease_id), get_service_run_by_id(service_run_id)} do
@@ -443,7 +439,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def resolve_service_signal(lease_id, service_run_id, name, op_key, payload) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
       case {get_run_by_lease(lease_id), get_service_run_by_id(service_run_id)} do
@@ -509,7 +505,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def resolve_service_ask(lease_id, service_run_id, name, op_key, payload) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
       case {get_run_by_lease(lease_id), get_service_run_by_id(service_run_id)} do
@@ -694,7 +690,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def complete_service_turn(lease_id, envelope_id, body) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
       case {get_run_by_lease(lease_id), get_service_envelope(envelope_id)} do
@@ -801,7 +797,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def fail_service_turn(lease_id, envelope_id, error_body, retry_options \\ %{}) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
       case {get_run_by_lease(lease_id), get_service_envelope(envelope_id)} do
@@ -823,8 +819,8 @@ defmodule VilanoKernel.Storage do
   end
 
   def lease_next_run(worker_id) do
-    now = now_iso8601()
-    expires_at = shift_seconds(now, lease_duration_seconds())
+    now = Infrastructure.now_iso8601()
+    expires_at = shift_seconds(now, Infrastructure.lease_duration_seconds())
 
     Repo.transaction(fn ->
       case next_activation_candidate(now) do
@@ -962,8 +958,8 @@ defmodule VilanoKernel.Storage do
   end
 
   def heartbeat_lease(lease_id, worker_id) do
-    now = now_iso8601()
-    expires_at = shift_seconds(now, lease_duration_seconds())
+    now = Infrastructure.now_iso8601()
+    expires_at = shift_seconds(now, Infrastructure.lease_duration_seconds())
 
     updated_rows =
       SQL.query!(
@@ -980,7 +976,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def lease_status(lease_id) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     row =
       Repo
@@ -1031,7 +1027,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def complete_run_lease(lease_id, result) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
       case get_run_by_lease(lease_id) do
@@ -1065,7 +1061,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def fail_run_lease(lease_id, error_body) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
       case get_run_by_lease(lease_id) do
@@ -1106,7 +1102,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def resolve_step(lease_id, name, op_key, timeout_ms, retry_policy) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     result =
       Repo.transaction(fn ->
@@ -1391,7 +1387,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def complete_step(lease_id, name, op_key, output) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     result =
       Repo.transaction(fn ->
@@ -1441,7 +1437,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def fail_step(lease_id, name, op_key, error_body) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     result =
       Repo.transaction(fn ->
@@ -1469,7 +1465,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def timeout_step(lease_id, op_key, error_body) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     result =
       Repo.transaction(fn ->
@@ -1512,7 +1508,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def resolve_exec(lease_id, name, op_key, exec_spec) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
       case get_run_by_lease(lease_id) do
@@ -1621,7 +1617,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def complete_exec(lease_id, name, op_key, body) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
       case get_run_by_lease(lease_id) do
@@ -1690,7 +1686,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def fail_exec(lease_id, name, op_key, body) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
       case get_run_by_lease(lease_id) do
@@ -1711,7 +1707,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def resolve_sleep_wait(lease_id, op_key, duration_ms) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
     wake_at = shift_milliseconds(now, duration_ms)
 
     Repo.transaction(fn ->
@@ -1811,7 +1807,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def satisfy_timed_wait(run_id, op_key) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
       case get_run_wait(run_id, op_key) do
@@ -1897,7 +1893,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def resolve_signal_wait(lease_id, name, op_key) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo.transaction(fn ->
       case get_run_by_lease(lease_id) do
@@ -2064,7 +2060,7 @@ defmodule VilanoKernel.Storage do
   end
 
   def send_run_signal(run_id, signal_name, payload) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
     signal_id = "sig_" <> Ecto.UUID.generate()
     payload_json = Jason.encode!(payload)
 
@@ -2344,7 +2340,7 @@ defmodule VilanoKernel.Storage do
   end
 
   defp get_run_by_lease(lease_id) do
-    now = now_iso8601()
+    now = Infrastructure.now_iso8601()
 
     Repo
     |> SQL.query!(
@@ -4456,308 +4452,4 @@ defmodule VilanoKernel.Storage do
   defp unwrap_transaction_result({:ok, value}), do: value
   defp unwrap_transaction_result({:error, reason}), do: raise(reason)
 
-  defp transaction_with_busy_retry(fun, attempts_left \\ 4)
-
-  defp transaction_with_busy_retry(fun, attempts_left) do
-    case Repo.transaction(fun) do
-      {:error, reason} = result ->
-        if attempts_left > 1 and busy_reason?(reason) do
-          Process.sleep(busy_retry_delay_ms(attempts_left))
-          transaction_with_busy_retry(fun, attempts_left - 1)
-        else
-          result
-        end
-
-      result ->
-        result
-    end
-  rescue
-    error ->
-      if attempts_left > 1 and busy_reason?(error) do
-        Process.sleep(busy_retry_delay_ms(attempts_left))
-        transaction_with_busy_retry(fun, attempts_left - 1)
-      else
-        reraise error, __STACKTRACE__
-      end
-  end
-
-  defp busy_reason?(reason) when is_exception(reason) do
-    reason
-    |> Exception.message()
-    |> String.downcase()
-    |> busy_message?()
-  end
-
-  defp busy_reason?(reason) when is_binary(reason) do
-    reason
-    |> String.downcase()
-    |> busy_message?()
-  end
-
-  defp busy_reason?(_reason), do: false
-
-  defp busy_message?(message) do
-    String.contains?(message, "database busy") or
-      String.contains?(message, "database is locked") or
-      String.contains?(message, "busy")
-  end
-
-  defp busy_retry_delay_ms(attempts_left), do: 25 * (5 - attempts_left + 1)
-
-  defp configure_database! do
-    SQL.query!(Repo, "pragma journal_mode = wal", [])
-    SQL.query!(Repo, "pragma foreign_keys = on", [])
-    SQL.query!(Repo, "pragma busy_timeout = 5000", [])
-  end
-
-  defp bootstrap_schema! do
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists projects (
-        name text primary key,
-        path text not null,
-        last_synced_at text,
-        definitions_manifest_hash text,
-        workflows_json text not null,
-        services_json text not null
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists runs (
-        id text primary key,
-        project_name text not null,
-        definition_kind text not null,
-        definition_name text not null,
-        status text not null,
-        lease_id text,
-        lease_worker_id text,
-        lease_expires_at text,
-        input_json text not null,
-        output_json text,
-        error_json text,
-        created_at text not null,
-        updated_at text not null
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists run_events (
-        id text primary key,
-        run_id text not null,
-        seq integer not null,
-        event_type text not null,
-        body_json text not null,
-        created_at text not null,
-        unique (run_id, seq)
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists run_steps (
-        run_id text not null,
-        op_key text not null,
-        name text not null,
-        status text not null,
-        attempt integer,
-        max_attempts integer,
-        backoff_kind text,
-        backoff_ms integer,
-        backoff_step_ms integer,
-        backoff_factor real,
-        max_backoff_ms integer,
-        backoff_jitter_kind text,
-        backoff_jitter_ratio real,
-        retry_on_json text,
-        timeout_ms integer,
-        output_json text,
-        error_json text,
-        created_at text not null,
-        updated_at text not null,
-        primary key (run_id, op_key)
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists run_execs (
-        run_id text not null,
-        op_key text not null,
-        name text not null,
-        status text not null,
-        cmd text not null,
-        args_json text not null,
-        cwd text,
-        env_json text,
-        timeout_ms integer,
-        attempt integer not null,
-        exit_code integer,
-        signal_code text,
-        stdout_ref text,
-        stderr_ref text,
-        artifacts_json text,
-        output_json text,
-        error_json text,
-        created_at text not null,
-        updated_at text not null,
-        primary key (run_id, op_key)
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists run_waits (
-        run_id text not null,
-        op_key text not null,
-        wait_kind text not null,
-        wait_name text not null,
-        status text not null,
-        wake_at text,
-        output_json text,
-        created_at text not null,
-        updated_at text not null,
-        primary key (run_id, op_key)
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists run_children (
-        parent_run_id text not null,
-        op_key text not null,
-        child_run_id text not null,
-        definition_name text not null,
-        status text not null,
-        created_at text not null,
-        updated_at text not null,
-        primary key (parent_run_id, op_key),
-        unique (child_run_id)
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists service_runs (
-        run_id text primary key,
-        service_key text not null,
-        key_input_json text not null,
-        state_json text,
-        created_at text not null,
-        updated_at text not null,
-        unique (run_id)
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists service_envelopes (
-        id text primary key,
-        service_run_id text not null,
-        kind text not null,
-        name text not null,
-        attempt integer,
-        payload_json text,
-        correlation_id text,
-        sender_run_id text,
-        status text not null,
-        reply_json text,
-        error_json text,
-        created_at text not null,
-        updated_at text not null
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists run_service_ops (
-        caller_run_id text not null,
-        op_key text not null,
-        service_run_id text not null,
-        op_kind text not null,
-        message_name text not null,
-        correlation_id text,
-        status text not null,
-        payload_json text not null,
-        response_json text,
-        error_json text,
-        created_at text not null,
-        updated_at text not null,
-        primary key (caller_run_id, op_key)
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create table if not exists run_signals (
-        id text primary key,
-        run_id text not null,
-        signal_name text not null,
-        payload_json text,
-        consumed_at text,
-        created_at text not null
-      )
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create index if not exists runs_project_created_at_idx
-      on runs(project_name, created_at desc)
-      """,
-      []
-    )
-
-    SQL.query!(
-      Repo,
-      """
-      create index if not exists run_events_run_seq_idx
-      on run_events(run_id, seq)
-      """,
-      []
-    )
-  end
-
-  defp now_iso8601 do
-    DateTime.utc_now() |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()
-  end
-
-  defp lease_duration_seconds do
-    Application.fetch_env!(:vilano_kernel, :runtime).lease_duration_seconds
-  end
 end

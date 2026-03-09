@@ -1,0 +1,82 @@
+import {
+  addProject,
+  inspectProject,
+  listProjects,
+  removeProject,
+  syncProject,
+} from "../daemon-client.ts";
+import { renderProject, renderProjectSummary, writeOutput } from "../output.ts";
+import { buildProjectManifest } from "../registry.ts";
+import { CliError } from "../cli-error.ts";
+
+export async function handleProjectCommand(
+  args: string[],
+  flags: Record<string, string | boolean>
+): Promise<number> {
+  const command = args[0];
+
+  switch (command) {
+    case "add": {
+      const projectPath = args[1];
+      const nameFlag = flags.name;
+
+      if (!projectPath) {
+        throw new CliError("Usage: vilano project add <path> --name <project>");
+      }
+
+      if (typeof nameFlag !== "string" || nameFlag.trim() === "") {
+        throw new CliError("Usage: vilano project add <path> --name <project>");
+      }
+
+      const manifest = await buildProjectManifest(nameFlag, projectPath, { regenerate: true });
+      const response = await addProject(manifest);
+      writeOutput(flags, response, (body) => renderProject(body.project));
+      return 0;
+    }
+    case "list": {
+      const response = await listProjects();
+      writeOutput(flags, response, (body) =>
+        body.projects.length === 0
+          ? "No Vilano projects registered."
+          : body.projects.map(renderProjectSummary).join("\n")
+      );
+      return 0;
+    }
+    case "inspect": {
+      const projectName = args[1];
+      if (!projectName) {
+        throw new CliError("Usage: vilano project inspect <project>");
+      }
+
+      const response = await inspectProject(projectName);
+      writeOutput(flags, response, (body) => renderProject(body.project));
+      return 0;
+    }
+    case "sync": {
+      const projectName = args[1];
+      if (!projectName) {
+        throw new CliError("Usage: vilano project sync <project>");
+      }
+
+      const existing = await inspectProject(projectName);
+      const manifest = await buildProjectManifest(existing.project.name, existing.project.path, {
+        regenerate: true,
+      });
+      const response = await syncProject(manifest);
+      writeOutput(flags, response, (body) => renderProject(body.project));
+      return 0;
+    }
+    case "remove": {
+      const projectName = args[1];
+      if (!projectName) {
+        throw new CliError("Usage: vilano project remove <project>");
+      }
+
+      const response = await removeProject(projectName);
+      writeOutput(flags, response, (body) => `Removed project ${body.project.name}`);
+      return 0;
+    }
+    default:
+      throw new CliError("Usage: vilano project add|list|inspect|sync|remove");
+  }
+}
