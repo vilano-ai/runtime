@@ -1,0 +1,296 @@
+openapi: 3.1.0
+info:
+  title: Vilano Control Protocol
+  version: 1.0.0
+  description: Operator-facing local control-plane contract used by the CLI.
+servers:
+  - url: http://127.0.0.1:4141
+components:
+  securitySchemes:
+    daemonToken:
+      type: apiKey
+      in: header
+      name: X-Vilano-Token
+security:
+  - daemonToken: []
+paths:
+  /v1/status:
+    get:
+      summary: Read daemon, runtime, and schema status.
+      responses:
+        '200':
+          description: Kernel status
+  /v1/admin/shutdown:
+    post:
+      summary: Gracefully stop the local kernel.
+      responses:
+        '200':
+          description: Shutdown accepted
+  /v1/projects:
+    get:
+      summary: List registered projects.
+      responses:
+        '200':
+          description: Project list
+    post:
+      summary: Add or replace a registered project manifest.
+      responses:
+        '200':
+          description: Project upserted
+  /v1/projects/{name}:
+    get:
+      summary: Inspect a registered project.
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Project record
+    delete:
+      summary: Remove a registered project.
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Project removed
+  /v1/projects/{name}/sync:
+    post:
+      summary: Replace a project manifest after regeneration.
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Project synced
+  /v1/workflows:
+    get:
+      summary: List known workflow definitions.
+      responses:
+        '200':
+          description: Workflow list
+  /v1/services:
+    get:
+      summary: List known service definitions.
+      responses:
+        '200':
+          description: Service list
+  /v1/service-runs:
+    get:
+      summary: List service run instances.
+      responses:
+        '200':
+          description: Service run list
+  /v1/workflows/{project}/{name}:
+    get:
+      summary: Inspect a workflow definition.
+      parameters:
+        - in: path
+          name: project
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Workflow definition
+  /v1/services/{project}/{name}/runs/{serviceKey}:
+    get:
+      summary: Inspect a concrete service instance.
+      parameters:
+        - in: path
+          name: project
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: serviceKey
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service run inspect payload
+  /v1/service-envelopes/{id}:
+    get:
+      summary: Inspect a specific service envelope.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Envelope record
+  /v1/services/ensure:
+    post:
+      summary: Resolve or create a durable service instance.
+      responses:
+        '200':
+          description: Service ensured
+  /v1/services/{project}/{name}/runs/{serviceKey}/send:
+    post:
+      summary: Send an external one-way service message.
+      parameters:
+        - in: path
+          name: project
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: serviceKey
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Message enqueued
+  /v1/services/{project}/{name}/runs/{serviceKey}/ask:
+    post:
+      summary: Send an external request/response service ask.
+      parameters:
+        - in: path
+          name: project
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: serviceKey
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Ask accepted or completed
+  /v1/services/{project}/{name}/runs/{serviceKey}/signal:
+    post:
+      summary: Send an external service signal.
+      parameters:
+        - in: path
+          name: project
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: serviceKey
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Signal enqueued
+  /v1/services/{project}/{name}/runs/{serviceKey}/stop:
+    post:
+      summary: Stop a service instance and fail queued/in-flight envelopes.
+      parameters:
+        - in: path
+          name: project
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: serviceKey
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service stopped
+  /v1/runs:
+    post:
+      summary: Start a workflow run.
+      responses:
+        '200':
+          description: Run created
+    get:
+      summary: List runs.
+      responses:
+        '200':
+          description: Run list
+  /v1/runs/{id}:
+    get:
+      summary: Inspect a workflow or service run.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Run inspect payload
+  /v1/runs/{id}/replay:
+    get:
+      summary: Read replay timeline for a run.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Replay timeline
+  /v1/runs/{id}/cancel:
+    post:
+      summary: Cancel a workflow run.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Run cancelled
+  /v1/runs/{id}/signals:
+    post:
+      summary: Send a signal to a workflow or service run.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Signal accepted

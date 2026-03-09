@@ -1,0 +1,7 @@
+{
+  "protocolVersion": 1,
+  "transport": "http+json",
+  "workerSpec": "worker.openapi.yaml",
+  "controlSpec": "control.openapi.yaml",
+  "semantics": "semantics.md"
+}

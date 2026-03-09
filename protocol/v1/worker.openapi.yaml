@@ -1,0 +1,399 @@
+openapi: 3.1.0
+info:
+  title: Vilano Worker Protocol
+  version: 1.0.0
+  description: >
+    Kernel-to-worker control-plane contract for activation leasing and durable
+    operation resolution.
+servers:
+  - url: http://127.0.0.1:4141
+components:
+  securitySchemes:
+    daemonToken:
+      type: apiKey
+      in: header
+      name: X-Vilano-Token
+  schemas:
+    JsonValue:
+      description: Arbitrary JSON payload.
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+    StatusResponse:
+      type: object
+      required: [ok, runtimeVersion, protocolVersion, schemaVersion]
+      properties:
+        ok:
+          const: true
+        runtimeVersion:
+          type: string
+        protocolVersion:
+          type: integer
+        schemaVersion:
+          type: integer
+    WaitRef:
+      type: object
+      required: [key, kind, name]
+      properties:
+        key:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+    WorkflowActivation:
+      type: object
+      required: [kind, leaseId, leaseExpiresAt, run, project, definition]
+      properties:
+        kind:
+          const: workflow
+        leaseId:
+          type: string
+        leaseExpiresAt:
+          type: string
+          format: date-time
+        run:
+          type: object
+          required: [id, input]
+          properties:
+            id:
+              type: string
+            input: {}
+        project:
+          type: object
+          required: [name, path]
+          properties:
+            name:
+              type: string
+            path:
+              type: string
+        definition:
+          $ref: '#/components/schemas/DefinitionRef'
+    ServiceTurnActivation:
+      type: object
+      required: [kind, leaseId, leaseExpiresAt, run, project, definition, service, envelope]
+      properties:
+        kind:
+          const: service_turn
+        leaseId:
+          type: string
+        leaseExpiresAt:
+          type: string
+          format: date-time
+        run:
+          type: object
+          required: [id]
+          properties:
+            id:
+              type: string
+        project:
+          type: object
+          required: [name, path]
+          properties:
+            name:
+              type: string
+            path:
+              type: string
+        definition:
+          $ref: '#/components/schemas/DefinitionRef'
+        service:
+          type: object
+          required: [key, keyInput, state]
+          properties:
+            key:
+              type: string
+            keyInput: {}
+            state: {}
+        envelope:
+          type: object
+          required: [id, kind, name, payload]
+          properties:
+            id:
+              type: string
+            kind:
+              enum: [send, ask, signal]
+            name:
+              type: string
+            payload: {}
+            correlationId:
+              type: [string, "null"]
+            senderRunId:
+              type: [string, "null"]
+    DefinitionRef:
+      type: object
+      required: [kind, name, exportName, file]
+      properties:
+        kind:
+          enum: [workflow, service]
+        name:
+          type: string
+        exportName:
+          type: string
+        file:
+          type: string
+security:
+  - daemonToken: []
+paths:
+  /v1/status:
+    get:
+      summary: Read kernel compatibility metadata.
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+  /v1/activations/lease:
+    post:
+      summary: Lease the next workflow or service-turn activation.
+      responses:
+        '200':
+          description: Activation lease result
+  /v1/leases/{leaseId}/heartbeat:
+    post:
+      summary: Renew an activation lease.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Lease heartbeat accepted
+  /v1/leases/{leaseId}/status:
+    get:
+      summary: Inspect whether a lease is still active.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Lease status
+  /v1/leases/{leaseId}/complete:
+    post:
+      summary: Complete a workflow activation.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Workflow completed
+  /v1/leases/{leaseId}/fail:
+    post:
+      summary: Fail a workflow activation.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Workflow failed
+  /v1/leases/{leaseId}/steps/resolve:
+    post:
+      summary: Resolve or create a durable step boundary.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Step state
+  /v1/leases/{leaseId}/steps/complete:
+    post:
+      summary: Complete a durable step.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Step completed
+  /v1/leases/{leaseId}/steps/fail:
+    post:
+      summary: Fail a durable step.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Step failed or entered retry wait
+  /v1/leases/{leaseId}/execs/resolve:
+    post:
+      summary: Resolve or create a durable exec boundary.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Exec state
+  /v1/leases/{leaseId}/execs/complete:
+    post:
+      summary: Complete a durable exec.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Exec completed
+  /v1/leases/{leaseId}/execs/fail:
+    post:
+      summary: Fail a durable exec.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Exec failed or entered retry wait
+  /v1/leases/{leaseId}/waits/sleep:
+    post:
+      summary: Resolve or suspend on a sleep wait.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Wait state
+  /v1/leases/{leaseId}/waits/signal:
+    post:
+      summary: Resolve or suspend on a signal wait.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Wait state
+  /v1/leases/{leaseId}/spawns/resolve:
+    post:
+      summary: Resolve or create a child workflow run.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Spawn state
+  /v1/leases/{leaseId}/children/result:
+    post:
+      summary: Resolve or suspend on a child workflow result.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Child result state
+  /v1/leases/{leaseId}/services/send:
+    post:
+      summary: Resolve a workflow-or-service send to another service.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Send state
+  /v1/leases/{leaseId}/services/ask:
+    post:
+      summary: Resolve or suspend on a service ask.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Ask state
+  /v1/leases/{leaseId}/services/signal:
+    post:
+      summary: Resolve a service-directed signal.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Signal state
+  /v1/leases/{leaseId}/service-turns/{envelopeId}/complete:
+    post:
+      summary: Complete a service turn.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: envelopeId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service turn completed
+  /v1/leases/{leaseId}/service-turns/{envelopeId}/fail:
+    post:
+      summary: Fail a service turn.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: envelopeId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service turn failed or entered retry wait
