@@ -5,6 +5,7 @@ This directory holds Bun-driven integration coverage for the local runtime.
 There are two main test modes:
 
 - `bun run test` for the normal integration suite
+- `bun run test:kernel` for kernel-level invariant tests
 - `bun run test:soak` for the longer mixed-traffic churn run
 - `bun run smoke:install` for package/install verification outside the repo layout
 
@@ -54,6 +55,7 @@ Current coverage:
 Run it from the dev shell:
 
 - `bun run test`
+- `bun run test:kernel`
 - `VILANO_KERNEL_NO_COMPILE=1 bun test tests/integration.test.ts --timeout 30000 --max-concurrency 1`
 - `VILANO_TEST_TIMING=1 bun test tests/integration.test.ts -t "<test name>" --timeout 30000 --max-concurrency 1`
 - `bun run test:soak`

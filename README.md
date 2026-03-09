@@ -225,6 +225,9 @@ If a failure should never retry, throw `nonRetryable(...)`.
 - [Support matrix](./docs/support-matrix.md)
 - [Development guide](./docs/development.md)
 - [Operations guide](./docs/operations.md)
+- [Manifest guide](./docs/manifests.md)
+- [Protocol guide](./docs/protocol.md)
+- [Release notes guide](./docs/releases.md)
 - [Protocol artifacts](./protocol/README.md)
 - [Test coverage](./tests/README.md)
 
@@ -242,6 +245,7 @@ If a failure should never retry, throw `nonRetryable(...)`.
 
 ```bash
 bun run typecheck
+direnv exec . bun run test:kernel
 direnv exec . bash -lc 'cd kernel && mix compile'
 direnv exec . bun run test
 direnv exec . bun run smoke:install

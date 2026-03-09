@@ -9,6 +9,16 @@ and external JavaScript/TypeScript workers.
 
 ## Supported Today
 
+### Canonical OSS v1 Path
+
+The canonical path for the first OSS release is:
+
+- Bun CLI
+- TypeScript SDK
+- BEAM kernel
+- Bun managed worker
+- local SQLite-backed runtime home
+
 ### Kernel
 
 - Elixir / BEAM kernel
@@ -25,8 +35,8 @@ and external JavaScript/TypeScript workers.
 
 ### Worker Runtimes
 
-- Bun worker runtime
-- Node worker runtime on the `node-worker` line of development
+- Bun worker runtime: supported
+- Node worker runtime: preview
 
 Both currently share the same JS/TS worker core and protocol.
 
@@ -37,10 +47,29 @@ Both currently share the same JS/TS worker core and protocol.
 - packaged runtime bundle materialized under `VILANO_HOME`
 - `run inspect`, `run replay`, `doctor`, `version`, and smoke-install flow
 
+### Operating Systems
+
+Supported for the canonical OSS v1 path:
+
+- macOS
+- Linux
+
+Windows is not part of the supported matrix today.
+
+## CI Enforcement
+
+The repo CI is expected to enforce this matrix directly:
+
+- supported path jobs run on `ubuntu-latest` and `macos-latest`
+- Bun CLI + TypeScript SDK + BEAM kernel + Bun worker is the required passing path
+- Node worker coverage runs as a separate preview job
+
+If the support matrix changes, the CI matrix should change with it.
+
 ## Preview / Evolving
 
-- Node worker support should still be treated as preview until it has the same release/CI posture as
-  the Bun path.
+- Node worker support should still be treated as preview until it has the same release and support
+  posture as the Bun path.
 - Protocol artifacts exist and are versioned, but generated clients/types are not yet the primary
   implementation path.
 - Project manifests are generated and cached, but generation still depends on JS/TS source scanning.

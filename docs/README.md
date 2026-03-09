@@ -17,8 +17,15 @@ ignored by git.
   - Repo layout, local commands, manifest/protocol boundaries, and contributor expectations.
 - [Operations Guide](./operations.md)
   - Runtime home layout, daemon lifecycle, health checks, and operator-facing commands.
-- [Protocol](../protocol/README.md)
-  - Versioned transport artifacts for the kernel control plane and worker protocol.
+- [Manifest Guide](./manifests.md)
+  - Explicit project manifest contract, generated cache behavior, and the path away from source
+    scanning.
+- [Protocol Guide](./protocol.md)
+  - Versioned transport artifacts, generated transport types, and contributor workflow for
+    protocol changes.
+- [Release Notes Guide](./releases.md)
+  - What each release note should say about support matrix, protocol version, and manifest
+    compatibility.
 - [Tests](../tests/README.md)
   - Integration and soak coverage, including restart/churn expectations.
 
@@ -32,5 +39,8 @@ ignored by git.
    contributor workflow.
 5. Read [Operations Guide](./operations.md) before changing daemon, runtime-home, or install
    behavior.
-6. Read [Protocol](../protocol/README.md) before changing kernel/worker or CLI/kernel wire
+6. Read [Manifest Guide](./manifests.md) before changing project registration or discovery.
+7. Read [Protocol Guide](./protocol.md) before changing kernel/worker or CLI/kernel wire
    contracts.
+8. Read [Release Notes Guide](./releases.md) before cutting a release or changing compatibility
+   expectations.

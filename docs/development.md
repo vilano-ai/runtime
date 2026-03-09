@@ -24,6 +24,7 @@ The shell provides:
 
 ```bash
 bun run typecheck
+direnv exec . bun run test:kernel
 direnv exec . bash -lc 'cd kernel && mix compile'
 direnv exec . bun run test
 direnv exec . bun run smoke:install
@@ -34,6 +35,7 @@ Other useful checks:
 ```bash
 bun run check
 bun run check:protocol
+bun run check:manifest
 bun run pack
 ```
 
@@ -88,16 +90,12 @@ truth.
 
 ## Manifest and Protocol
 
-Project registration now uses a generated manifest under `.vilano/project-manifest.json`.
+Project registration now prefers an explicit `vilano.manifest.json` contract and falls back to the
+generated cache under `.vilano/project-manifest.json`.
 
-That manifest is:
-
-- generated during `project add` / `project sync`
-- consumed by the runtime during normal operation
-- still produced by JS/TS-oriented scanning today
-
-The worker/kernel and CLI/kernel contracts are documented under [protocol/](../protocol/README.md).
-Treat those artifacts as release-facing contracts.
+- The tracked manifest contract is documented in [Manifest Guide](./manifests.md).
+- The worker/kernel and CLI/kernel contracts are documented in [Protocol Guide](./protocol.md).
+- Both should be treated as release-facing contracts.
 
 ## Testing Expectations
 
