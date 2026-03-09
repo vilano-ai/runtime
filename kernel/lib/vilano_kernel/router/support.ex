@@ -2,6 +2,7 @@ defmodule VilanoKernel.Router.Support do
   @moduledoc false
 
   alias Plug.Conn
+  alias VilanoKernel.ProjectContract
   alias VilanoKernel.Router.RunViews
   alias VilanoKernel.Storage
 
@@ -17,6 +18,12 @@ defmodule VilanoKernel.Router.Support do
         "services" => get_in(body_params, ["definitions", "services"]) || []
       }
     }
+  end
+
+  def validate_project_payload(body_params) do
+    body_params
+    |> project_payload()
+    |> ProjectContract.validate()
   end
 
   def fetch_required_string(body_params, key) do

@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 import type { components as ControlComponents } from "../protocol/v1/generated/control.ts";
 import type { components as WorkerComponents } from "../protocol/v1/generated/worker.ts";
@@ -41,10 +43,17 @@ test("worker activation and step resolution endpoints match the published contra
   try {
     await harness.startWorkflow("demo/planner", { topic: "Protocol contract" });
 
-    const leaseResponse = await harness.requestKernel("/v1/activations/lease", {
+    const daemonState = JSON.parse(
+      await fs.readFile(path.join(harness.homeDir, "daemon.json"), "utf8")
+    ) as { workerAuthToken?: string };
+    const workerToken = daemonState.workerAuthToken;
+    expect(workerToken).toBeTruthy();
+
+    const leaseResponse = await fetch(`${harness.serverUrl}/v1/activations/lease`, {
       method: "POST",
       headers: {
         "content-type": "application/json; charset=utf-8",
+        ...(workerToken ? { "x-vilano-token": workerToken } : {}),
       },
       body: JSON.stringify({
         workerId: "protocol-contract-worker",
@@ -63,9 +72,25 @@ test("worker activation and step resolution endpoints match the published contra
     }
 
     const leaseId = leased.activation.leaseId;
+    expect(typeof leased.activation.leaseToken).toBe("string");
 
-    const leaseStatusResponse = await harness.requestKernel(
-      `/v1/leases/${encodeURIComponent(leaseId)}/status`
+    const deniedLeaseStatusResponse = await fetch(
+      `${harness.serverUrl}/v1/leases/${encodeURIComponent(leaseId)}/status`,
+      {
+        headers: {
+          ...(workerToken ? { "x-vilano-token": workerToken } : {}),
+        },
+      }
+    );
+    expect(deniedLeaseStatusResponse.status).toBe(401);
+
+    const leaseStatusResponse = await fetch(
+      `${harness.serverUrl}/v1/leases/${encodeURIComponent(leaseId)}/status`,
+      {
+        headers: {
+          "x-vilano-token": leased.activation.leaseToken,
+        },
+      }
     );
     expect(leaseStatusResponse.status).toBe(200);
 
@@ -73,12 +98,13 @@ test("worker activation and step resolution endpoints match the published contra
     expect(leaseStatus.ok).toBe(true);
     expect(leaseStatus.lease.active).toBe(true);
 
-    const stepResolveResponse = await harness.requestKernel(
-      `/v1/leases/${encodeURIComponent(leaseId)}/steps/resolve`,
+    const stepResolveResponse = await fetch(
+      `${harness.serverUrl}/v1/leases/${encodeURIComponent(leaseId)}/steps/resolve`,
       {
         method: "POST",
         headers: {
           "content-type": "application/json; charset=utf-8",
+          "x-vilano-token": leased.activation.leaseToken,
         },
         body: JSON.stringify({
           name: "protocol-step",

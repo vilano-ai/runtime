@@ -4,6 +4,7 @@ defmodule VilanoKernel.Storage.Migrations do
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
   alias VilanoKernel.Storage.Migrations.{
+    AddRunLeaseAuthToken,
     AddRunStepRetryColumns,
     AddRunSnapshotsAndProjectSnapshots,
     AddServiceEnvelopeAttemptColumn,
@@ -18,7 +19,8 @@ defmodule VilanoKernel.Storage.Migrations do
     CreateRuntimeMetadata,
     AddRunSnapshotsAndProjectSnapshots,
     CreateRunEventSequences,
-    CreateRunServiceRefs
+    CreateRunServiceRefs,
+    AddRunLeaseAuthToken
   ]
 
   def ensure_tracking_table! do

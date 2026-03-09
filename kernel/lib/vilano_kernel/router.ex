@@ -50,13 +50,20 @@ defmodule VilanoKernel.Router do
       |> Conn.get_req_header("x-vilano-token")
       |> List.first()
 
+    lease_scope = lease_auth_scope(conn, provided)
+
     cond do
       valid_auth_token?(provided, runtime.auth_token) ->
         Conn.assign(conn, :auth_scope, :daemon)
 
+      lease_scope != nil ->
+        conn
+        |> Conn.assign(:auth_scope, :lease)
+        |> Conn.assign(:lease_id, lease_scope)
+
       valid_auth_token?(provided, runtime.worker_auth_token) ->
-        if worker_scoped_request?(conn.method, conn.request_path) do
-          Conn.assign(conn, :auth_scope, :worker)
+        if worker_bootstrap_request?(conn.method, conn.request_path) do
+          Conn.assign(conn, :auth_scope, :worker_bootstrap)
         else
           conn
           |> send_error(401, "unauthorized", "Vilano worker token cannot access this endpoint")
@@ -85,15 +92,40 @@ defmodule VilanoKernel.Router do
   defp non_empty_token?(token) when is_binary(token), do: token != ""
   defp non_empty_token?(_token), do: false
 
-  defp worker_scoped_request?("GET", "/v1/status"), do: true
-  defp worker_scoped_request?("POST", "/v1/activations/lease"), do: true
-  defp worker_scoped_request?("POST", "/v1/activations/heartbeat"), do: true
-  defp worker_scoped_request?("POST", "/v1/services/ensure"), do: true
-  defp worker_scoped_request?("GET", path), do: Regex.match?(~r{^/v1/leases/[^/]+/}, path)
-  defp worker_scoped_request?("POST", path) do
-    Regex.match?(~r{^/v1/leases/[^/]+/}, path)
+  defp worker_bootstrap_request?("GET", "/v1/status"), do: true
+  defp worker_bootstrap_request?("POST", "/v1/activations/lease"), do: true
+  defp worker_bootstrap_request?(_method, _path), do: false
+
+  defp lease_auth_scope(_conn, token) when not is_binary(token) or token == "", do: nil
+
+  defp lease_auth_scope(conn, token) do
+    case requested_lease_id(conn) do
+      lease_id when is_binary(lease_id) and lease_id != "" ->
+        if Storage.valid_lease_auth_token?(lease_id, token), do: lease_id, else: nil
+
+      _ ->
+        nil
+    end
   end
-  defp worker_scoped_request?(_method, _path), do: false
+
+  defp requested_lease_id(%Conn{request_path: path, body_params: body_params}) do
+    case Regex.run(~r{^/v1/leases/([^/]+)(?:/|$)}, path, capture: :all_but_first) do
+      [lease_id] ->
+        URI.decode_www_form(lease_id)
+
+      _ ->
+        case path do
+          "/v1/services/ensure" ->
+            case Map.get(body_params, "leaseId") do
+              value when is_binary(value) and value != "" -> value
+              _ -> nil
+            end
+
+          _ ->
+            nil
+        end
+    end
+  end
 
   defp valid_auth_token?(provided, expected)
        when is_binary(provided) and is_binary(expected) and byte_size(provided) == byte_size(expected) do
@@ -118,12 +150,18 @@ defmodule VilanoKernel.Router do
   end
 
   post "/v1/projects" do
-    case Storage.create_project!(project_payload(conn.body_params)) do
-      nil ->
-        send_error(conn, 409, "project_exists", "Project already exists")
+    case validate_project_payload(conn.body_params) do
+      {:ok, project_payload} ->
+        case Storage.create_project!(project_payload) do
+          nil ->
+            send_error(conn, 409, "project_exists", "Project already exists")
 
-      project ->
-        send_json(conn, 200, %{ok: true, project: project})
+          project ->
+            send_json(conn, 200, %{ok: true, project: project})
+        end
+
+      {:error, message} ->
+        send_error(conn, 400, "invalid_project", message)
     end
   end
 
@@ -135,13 +173,14 @@ defmodule VilanoKernel.Router do
   end
 
   post "/v1/projects/:name/sync" do
-    project =
-      conn.body_params
-      |> project_payload()
-      |> Map.put("name", name)
-      |> Storage.upsert_project!()
+    case validate_project_payload(Map.put(conn.body_params, "name", name)) do
+      {:ok, project_payload} ->
+        project = Storage.upsert_project!(project_payload)
+        send_json(conn, 200, %{ok: true, project: project})
 
-    send_json(conn, 200, %{ok: true, project: project})
+      {:error, message} ->
+        send_error(conn, 400, "invalid_project", message)
+    end
   end
 
   delete "/v1/projects/:name" do
@@ -238,12 +277,19 @@ defmodule VilanoKernel.Router do
       nil ->
         send_json(conn, 200, %{ok: true, activation: nil})
 
-      %{activation_kind: "workflow", lease_id: lease_id, lease_expires_at: lease_expires_at, run: run} ->
+      %{
+        activation_kind: "workflow",
+        lease_id: lease_id,
+        lease_auth_token: lease_auth_token,
+        lease_expires_at: lease_expires_at,
+        run: run
+      } ->
         send_json(conn, 200, %{
           ok: true,
           activation: %{
             kind: "workflow",
             leaseId: lease_id,
+            leaseToken: lease_auth_token,
             leaseExpiresAt: lease_expires_at,
             run: %{
               id: run["id"],
@@ -260,6 +306,7 @@ defmodule VilanoKernel.Router do
       %{
         activation_kind: "service_turn",
         lease_id: lease_id,
+        lease_auth_token: lease_auth_token,
         lease_expires_at: lease_expires_at,
         run: run,
         service: service,
@@ -270,6 +317,7 @@ defmodule VilanoKernel.Router do
           activation: %{
             kind: "service_turn",
             leaseId: lease_id,
+            leaseToken: lease_auth_token,
             leaseExpiresAt: lease_expires_at,
             run: %{
               id: run["id"]
@@ -601,8 +649,8 @@ defmodule VilanoKernel.Router do
         _ -> nil
       end
 
-    if conn.assigns[:auth_scope] == :worker and is_nil(lease_id) do
-      send_error(conn, 401, "unauthorized", "Vilano worker token requires lease-scoped service resolution")
+    if conn.assigns[:auth_scope] == :lease and conn.assigns[:lease_id] != lease_id do
+      send_error(conn, 401, "unauthorized", "Lease token can only resolve services for its active lease")
     else
       with {project_record, definition} when not is_nil(project_record) <- resolve_service_definition(conn.body_params, service),
            run <- Storage.ensure_service_run!(project_record, definition, service_key, Map.get(conn.body_params, "keyInput", %{}), lease_id) do

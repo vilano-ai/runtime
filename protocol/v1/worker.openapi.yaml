@@ -52,11 +52,13 @@ components:
           type: string
     WorkflowActivation:
       type: object
-      required: [kind, leaseId, leaseExpiresAt, run, project, definition]
+      required: [kind, leaseId, leaseToken, leaseExpiresAt, run, project, definition]
       properties:
         kind:
           const: workflow
         leaseId:
+          type: string
+        leaseToken:
           type: string
         leaseExpiresAt:
           type: string
@@ -80,11 +82,13 @@ components:
           $ref: '#/components/schemas/DefinitionRef'
     ServiceTurnActivation:
       type: object
-      required: [kind, leaseId, leaseExpiresAt, run, project, definition, service, envelope]
+      required: [kind, leaseId, leaseToken, leaseExpiresAt, run, project, definition, service, envelope]
       properties:
         kind:
           const: service_turn
         leaseId:
+          type: string
+        leaseToken:
           type: string
         leaseExpiresAt:
           type: string

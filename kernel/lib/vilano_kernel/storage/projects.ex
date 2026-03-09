@@ -2,6 +2,7 @@ defmodule VilanoKernel.Storage.Projects do
   @moduledoc false
 
   alias Ecto.Adapters.SQL
+  alias VilanoKernel.ProjectContract
   alias VilanoKernel.Repo
 
   def project_count do
@@ -91,6 +92,12 @@ defmodule VilanoKernel.Storage.Projects do
   end
 
   defp persist_project!(project, mode) do
+    project =
+      case ProjectContract.validate(project) do
+        {:ok, validated} -> validated
+        {:error, message} -> raise ArgumentError, message
+      end
+
     workflows_json = Jason.encode!(get_in(project, ["definitions", "workflows"]) || [])
     services_json = Jason.encode!(get_in(project, ["definitions", "services"]) || [])
 

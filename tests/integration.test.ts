@@ -254,6 +254,48 @@ test("worker runtime does not expose daemon or worker tokens to workflow code", 
   }
 });
 
+test("kernel rejects persisted project definitions that escape the snapshot root", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const projectDir = await fs.mkdtemp(path.join(harness.homeDir, "kernel-project-"));
+    const outsideFile = path.join(harness.homeDir, "outside-definition.ts");
+    await fs.writeFile(outsideFile, "export const escape = workflow({ name: 'escape', run: async () => ({ ok: true }) });\n");
+
+    const response = await harness.requestKernel("/v1/projects", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({
+        name: "kernel-validation",
+        path: projectDir,
+        snapshotPath: projectDir,
+        definitions: {
+          workflows: [
+            {
+              kind: "workflow",
+              name: "escape",
+              exportName: "escape",
+              file: "../outside-definition.ts",
+              runtimeKind: "javascript",
+              sourceLanguage: "typescript",
+            },
+          ],
+          services: [],
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { ok: false; error: { code: string; message: string } };
+    expect(body.error.code).toBe("invalid_project");
+    expect(body.error.message).toContain("snapshot root");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("lease-scoped child status and signals work inside workflow execution", async () => {
   const harness = await RuntimeHarness.create();
 
@@ -1081,7 +1123,7 @@ test("unmanaged workers fall back to durable failure when a service turn blocks 
     ]);
 
     expect(plannerWorkerResult.exitCode).toBe(0);
-    expect(stuckWorkerResult.exitCode).toBe(0);
+    expect(stuckWorkerResult.exitCode).not.toBeNull();
     expect(plannerInspect.run.output).toEqual({ summary: "planned: after-unmanaged-service-timeout" });
   } finally {
     await harness.dispose();

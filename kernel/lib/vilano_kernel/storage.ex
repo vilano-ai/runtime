@@ -32,6 +32,9 @@ defmodule VilanoKernel.Storage do
 
   def remove_project(name), do: Projects.remove_project(name)
 
+  def valid_lease_auth_token?(lease_id, lease_auth_token),
+    do: lease_auth_token_valid?(lease_id, lease_auth_token)
+
   def list_definitions(kind, project_name \\ nil), do: Projects.list_definitions(kind, project_name)
 
   def get_definition(project_name, kind, definition_name),
@@ -352,6 +355,7 @@ defmodule VilanoKernel.Storage do
                             set
                               status = 'waiting',
                               lease_id = null,
+                              lease_auth_token = null,
                               lease_worker_id = null,
                               lease_expires_at = null,
                               updated_at = ?
@@ -657,6 +661,7 @@ defmodule VilanoKernel.Storage do
                     set
                       status = 'waiting',
                       lease_id = null,
+                      lease_auth_token = null,
                       lease_worker_id = null,
                       lease_expires_at = null,
                       updated_at = ?
@@ -744,6 +749,7 @@ defmodule VilanoKernel.Storage do
 
         {service_run, envelope} ->
           if envelope["service_run_id"] == service_run["id"] do
+            ensure_fenced_run_ownership!(service_run["id"], lease_id, now)
             state = Map.get(body, "state")
 
             state_commit = maybe_commit_service_state!(service_run["id"], state, now)
@@ -813,13 +819,16 @@ defmodule VilanoKernel.Storage do
             else
               next_status = service_next_status(service_run["id"], false)
 
-              SQL.query!(
-                Repo,
+              ensure_fenced_run_write!(
+                service_run["id"],
+                lease_id,
+                now,
                 """
                 update runs
                 set
                   status = ?,
                   lease_id = null,
+                  lease_auth_token = null,
                   lease_worker_id = null,
                   lease_expires_at = null,
                   updated_at = ?
@@ -851,7 +860,7 @@ defmodule VilanoKernel.Storage do
 
         {service_run, envelope} ->
           if envelope["service_run_id"] == service_run["id"] do
-            fail_service_turn_attempt!(service_run, envelope, error_body, retry_options, now)
+            fail_service_turn_attempt!(service_run, envelope, error_body, retry_options, now, lease_id)
           else
             nil
           end
@@ -875,6 +884,7 @@ defmodule VilanoKernel.Storage do
 
              {:workflow, candidate} ->
                lease_id = "lease_" <> Ecto.UUID.generate()
+               lease_auth_token = "ltok_" <> Ecto.UUID.generate()
                run_id = candidate["id"]
 
                claimed_rows =
@@ -884,6 +894,7 @@ defmodule VilanoKernel.Storage do
                    set
                      status = 'running',
                      lease_id = ?,
+                     lease_auth_token = ?,
                      lease_worker_id = ?,
                      lease_expires_at = ?,
                      updated_at = ?
@@ -893,7 +904,7 @@ defmodule VilanoKernel.Storage do
                      and status in ('pending', 'running')
                      and (lease_expires_at is null or lease_expires_at < ?)
                    """,
-                   [lease_id, worker_id, expires_at, now, run_id, now]
+                   [lease_id, lease_auth_token, worker_id, expires_at, now, run_id, now]
                  )
 
                if claimed_rows != 1 do
@@ -917,6 +928,7 @@ defmodule VilanoKernel.Storage do
                  {:ok, pinned_run} ->
                    %{
                      lease_id: lease_id,
+                     lease_auth_token: lease_auth_token,
                      lease_expires_at: expires_at,
                      activation_kind: "workflow",
                      run: pinned_run
@@ -928,6 +940,7 @@ defmodule VilanoKernel.Storage do
 
              {:service_turn, candidate} ->
                lease_id = "lease_" <> Ecto.UUID.generate()
+               lease_auth_token = "ltok_" <> Ecto.UUID.generate()
                run_id = candidate["service_run_id"]
                envelope_id = candidate["id"]
 
@@ -983,6 +996,7 @@ defmodule VilanoKernel.Storage do
                    set
                      status = 'active',
                      lease_id = ?,
+                     lease_auth_token = ?,
                      lease_worker_id = ?,
                      lease_expires_at = ?,
                      updated_at = ?
@@ -992,7 +1006,7 @@ defmodule VilanoKernel.Storage do
                      and status in ('idle', 'pending', 'active')
                      and (lease_expires_at is null or lease_expires_at < ?)
                    """,
-                   [lease_id, worker_id, expires_at, now, run_id, now]
+                   [lease_id, lease_auth_token, worker_id, expires_at, now, run_id, now]
                  )
 
                if claimed_rows != 1 do
@@ -1034,6 +1048,7 @@ defmodule VilanoKernel.Storage do
                  {:ok, pinned_run} ->
                    %{
                      lease_id: lease_id,
+                     lease_auth_token: lease_auth_token,
                      lease_expires_at: expires_at,
                      activation_kind: "service_turn",
                      run: pinned_run,
@@ -1143,13 +1158,16 @@ defmodule VilanoKernel.Storage do
           nil
 
         run ->
-          SQL.query!(
-            Repo,
+          ensure_fenced_run_write!(
+            run["id"],
+            lease_id,
+            now,
             """
             update runs
             set
               status = 'completed',
               lease_id = null,
+              lease_auth_token = null,
               lease_worker_id = null,
               lease_expires_at = null,
               output_json = ?,
@@ -1177,13 +1195,16 @@ defmodule VilanoKernel.Storage do
           nil
 
         run ->
-          SQL.query!(
-            Repo,
+          ensure_fenced_run_write!(
+            run["id"],
+            lease_id,
+            now,
             """
             update runs
             set
               status = 'failed',
               lease_id = null,
+              lease_auth_token = null,
               lease_worker_id = null,
               lease_expires_at = null,
               error_json = ?,
@@ -1509,6 +1530,8 @@ defmodule VilanoKernel.Storage do
               nil
 
             _step ->
+              ensure_fenced_run_ownership!(run["id"], lease_id, now)
+
               SQL.query!(
                 Repo,
                 """
@@ -1559,7 +1582,7 @@ defmodule VilanoKernel.Storage do
               nil
 
             step ->
-              fail_step_attempt!(run, step, name, error_body, now)
+              fail_step_attempt!(run, step, name, error_body, now, lease_id)
           end
       end
     end)
@@ -1590,7 +1613,7 @@ defmodule VilanoKernel.Storage do
                 if step["status"] != "running" do
                   nil
                 else
-                  case fail_step_attempt!(run, step, step["name"], error_body, now) do
+                  case fail_step_attempt!(run, step, step["name"], error_body, now, lease_id) do
                     %{"status" => "retry_waiting", "wait" => wait} ->
                       %{
                         "run" => get_run(run["id"]),
@@ -1738,6 +1761,8 @@ defmodule VilanoKernel.Storage do
               nil
 
             existing ->
+              ensure_fenced_run_ownership!(run["id"], lease_id, now)
+
               SQL.query!(
                 Repo,
                 """
@@ -1807,7 +1832,7 @@ defmodule VilanoKernel.Storage do
               nil
 
             existing ->
-              fail_exec_attempt!(run, existing, name, op_key, body, now)
+              fail_exec_attempt!(run, existing, name, op_key, body, now, lease_id)
           end
       end
     end)
@@ -1863,6 +1888,7 @@ defmodule VilanoKernel.Storage do
                 set
                   status = 'waiting',
                   lease_id = null,
+                  lease_auth_token = null,
                   lease_worker_id = null,
                   lease_expires_at = null,
                   updated_at = ?
@@ -2060,6 +2086,7 @@ defmodule VilanoKernel.Storage do
                     set
                       status = 'waiting',
                       lease_id = null,
+                      lease_auth_token = null,
                       lease_worker_id = null,
                       lease_expires_at = null,
                       updated_at = ?
@@ -2525,6 +2552,7 @@ defmodule VilanoKernel.Storage do
         definition_source_language,
         status,
         lease_id,
+        lease_auth_token,
         lease_worker_id,
         lease_expires_at,
         input_json,
@@ -2579,6 +2607,48 @@ defmodule VilanoKernel.Storage do
     ) == 1
   end
 
+  defp ensure_fenced_run_write!(run_id, lease_id, now, query, params) do
+    if acquire_lease_write_fence(run_id, lease_id, now) do
+      SQL.query!(Repo, query, params)
+      :ok
+    else
+      Repo.rollback(:stale_candidate)
+    end
+  end
+
+  defp ensure_fenced_run_ownership!(run_id, lease_id, now) do
+    if acquire_lease_write_fence(run_id, lease_id, now) do
+      :ok
+    else
+      Repo.rollback(:stale_candidate)
+    end
+  end
+
+  defp lease_auth_token_valid?(lease_id, lease_auth_token)
+       when is_binary(lease_id) and lease_id != "" and is_binary(lease_auth_token) and
+              lease_auth_token != "" do
+    now = Infrastructure.now_iso8601()
+
+    Repo
+    |> SQL.query!(
+      """
+      select 1
+      from runs
+      where
+        lease_id = ?
+        and lease_auth_token = ?
+        and status in ('running', 'active')
+        and lease_expires_at is not null
+        and lease_expires_at >= ?
+      limit 1
+      """,
+      [lease_id, lease_auth_token, now]
+    )
+    |> first_integer() == 1
+  end
+
+  defp lease_auth_token_valid?(_lease_id, _lease_auth_token), do: false
+
   defp ensure_run_activation_pinned!(run) do
     if activation_pinned?(run) do
       {:ok, run}
@@ -2616,6 +2686,7 @@ defmodule VilanoKernel.Storage do
       set
         status = 'failed',
         lease_id = null,
+        lease_auth_token = null,
         lease_worker_id = null,
         lease_expires_at = null,
         error_json = ?,
@@ -3172,6 +3243,7 @@ defmodule VilanoKernel.Storage do
         definition_source_language,
         status,
         lease_id,
+        lease_auth_token,
         lease_worker_id,
         lease_expires_at,
         input_json,
@@ -3179,7 +3251,7 @@ defmodule VilanoKernel.Storage do
         error_json,
         created_at,
         updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       """,
       [
         run_id,
@@ -3193,6 +3265,7 @@ defmodule VilanoKernel.Storage do
         Map.fetch!(definition, "runtimeKind"),
         Map.fetch!(definition, "sourceLanguage"),
         "pending",
+        nil,
         nil,
         nil,
         nil,
@@ -3235,6 +3308,7 @@ defmodule VilanoKernel.Storage do
         set
           status = 'cancelled',
           lease_id = null,
+          lease_auth_token = null,
           lease_worker_id = null,
           lease_expires_at = null,
           output_json = null,
@@ -3302,6 +3376,7 @@ defmodule VilanoKernel.Storage do
         set
           status = 'stopped',
           lease_id = null,
+          lease_auth_token = null,
           lease_worker_id = null,
           lease_expires_at = null,
           output_json = null,
@@ -3363,6 +3438,7 @@ defmodule VilanoKernel.Storage do
           set
             status = 'failed',
             lease_id = null,
+            lease_auth_token = null,
             lease_worker_id = null,
             lease_expires_at = null,
             output_json = null,
@@ -3392,6 +3468,7 @@ defmodule VilanoKernel.Storage do
               set
                 status = 'idle',
                 lease_id = null,
+                lease_auth_token = null,
                 lease_worker_id = null,
                 lease_expires_at = null,
                 updated_at = ?
@@ -3445,6 +3522,7 @@ defmodule VilanoKernel.Storage do
               set
                 status = ?,
                 lease_id = null,
+                lease_auth_token = null,
                 lease_worker_id = null,
                 lease_expires_at = null,
                 updated_at = ?
@@ -3462,7 +3540,9 @@ defmodule VilanoKernel.Storage do
     end
   end
 
-  defp fail_step_attempt!(run, step, name, error_body, now) do
+  defp fail_step_attempt!(run, step, name, error_body, now, lease_id) do
+    ensure_fenced_run_ownership!(run["id"], lease_id, now)
+
     encoded_error = Jason.encode!(error_body)
     attempt = step_attempt(step)
     max_attempts = RetryPolicy.normalize_max_attempts(step["max_attempts"])
@@ -3582,7 +3662,9 @@ defmodule VilanoKernel.Storage do
     end
   end
 
-  defp fail_exec_attempt!(run, exec, name, op_key, body, now) do
+  defp fail_exec_attempt!(run, exec, name, op_key, body, now, lease_id) do
+    ensure_fenced_run_ownership!(run["id"], lease_id, now)
+
     error_body = Map.get(body, "error", %{})
     encoded_error = Jason.encode!(error_body)
     attempt = exec["attempt"] || 1
@@ -3734,7 +3816,9 @@ defmodule VilanoKernel.Storage do
     end
   end
 
-  defp fail_service_turn_attempt!(service_run, envelope, error_body, retry_options, now) do
+  defp fail_service_turn_attempt!(service_run, envelope, error_body, retry_options, now, lease_id) do
+    ensure_fenced_run_ownership!(service_run["id"], lease_id, now)
+
     max_attempts = RetryPolicy.normalize_max_attempts(Map.get(retry_options, "maxAttempts"))
     attempt = envelope["attempt"] || 1
     retry_on = RetryPolicy.normalize_retry_on(Map.get(retry_options, "retryOn"))
@@ -3853,6 +3937,7 @@ defmodule VilanoKernel.Storage do
         set
           status = ?,
           lease_id = null,
+          lease_auth_token = null,
           lease_worker_id = null,
           lease_expires_at = null,
           updated_at = ?
@@ -3898,6 +3983,7 @@ defmodule VilanoKernel.Storage do
       set
         status = 'waiting',
         lease_id = null,
+        lease_auth_token = null,
         lease_worker_id = null,
         lease_expires_at = null,
         updated_at = ?
@@ -4189,6 +4275,7 @@ defmodule VilanoKernel.Storage do
       set
         status = ?,
         lease_id = null,
+        lease_auth_token = null,
         lease_worker_id = null,
         lease_expires_at = null,
         updated_at = ?

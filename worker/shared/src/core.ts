@@ -181,6 +181,7 @@ async function executeActivation(
     }
   } finally {
     clearInterval(heartbeat);
+    client.clearLeaseAuthToken(activation.leaseId);
   }
 }
 

@@ -1132,6 +1132,7 @@ export interface components {
             /** @constant */
             kind: "workflow";
             leaseId: string;
+            leaseToken: string;
             /** Format: date-time */
             leaseExpiresAt: string;
             run: {
@@ -1148,6 +1149,7 @@ export interface components {
             /** @constant */
             kind: "service_turn";
             leaseId: string;
+            leaseToken: string;
             /** Format: date-time */
             leaseExpiresAt: string;
             run: {

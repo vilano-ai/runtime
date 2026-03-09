@@ -109,6 +109,7 @@ defmodule VilanoKernel.Storage.Infrastructure do
         definition_source_language text,
         status text not null,
         lease_id text,
+        lease_auth_token text,
         lease_worker_id text,
         lease_expires_at text,
         input_json text not null,

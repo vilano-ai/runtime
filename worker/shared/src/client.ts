@@ -62,7 +62,8 @@ export class WorkerClient {
   private compatibilityChecked = false;
   private readonly serverUrl: string;
   private readonly workerId: string;
-  private readonly authToken?: string;
+  private readonly bootstrapAuthToken?: string;
+  private readonly leaseAuthTokens = new Map<string, string>();
 
   constructor(
     serverUrl: string,
@@ -71,11 +72,11 @@ export class WorkerClient {
   ) {
     this.serverUrl = serverUrl;
     this.workerId = workerId;
-    this.authToken = authToken;
+    this.bootstrapAuthToken = authToken;
   }
 
   async getStatus(): Promise<KernelStatusResponse> {
-    return await this.request<KernelStatusResponse>("GET", "/v1/status");
+    return await this.request<KernelStatusResponse>("GET", "/v1/status", undefined, this.bootstrapAuthToken);
   }
 
   async assertCompatible(expectedProtocolVersion: number): Promise<KernelStatusResponse> {
@@ -97,7 +98,11 @@ export class WorkerClient {
   async leaseActivation(): Promise<WorkflowActivation | ServiceTurnActivation | null> {
     const response = await this.request<ActivationLeaseResponse>("POST", "/v1/activations/lease", {
       workerId: this.workerId,
-    });
+    }, this.bootstrapAuthToken);
+
+    if (response.activation) {
+      this.leaseAuthTokens.set(response.activation.leaseId, response.activation.leaseToken);
+    }
 
     return response.activation;
   }
@@ -105,7 +110,7 @@ export class WorkerClient {
   async heartbeat(leaseId: string): Promise<void> {
     await this.request("POST", `/v1/leases/${encodeURIComponent(leaseId)}/heartbeat`, {
       workerId: this.workerId,
-    });
+    }, this.requireLeaseAuthToken(leaseId));
   }
 
   async getLeaseStatus(
@@ -113,7 +118,9 @@ export class WorkerClient {
   ): Promise<LeaseStatusResponse["lease"]> {
     const response = await this.request<LeaseStatusResponse>(
       "GET",
-      `/v1/leases/${encodeURIComponent(leaseId)}/status`
+      `/v1/leases/${encodeURIComponent(leaseId)}/status`,
+      undefined,
+      this.requireLeaseAuthToken(leaseId)
     );
 
     return response.lease;
@@ -142,7 +149,8 @@ export class WorkerClient {
         backoffJitterKind: retry?.backoffJitterKind,
         backoffJitterRatio: retry?.backoffJitterRatio,
         retryOn: retry?.retryOn,
-      }
+      },
+      this.requireLeaseAuthToken(leaseId)
     );
 
     return response.step;
@@ -153,7 +161,7 @@ export class WorkerClient {
       name,
       key,
       output,
-    });
+    }, this.requireLeaseAuthToken(leaseId));
   }
 
   async failStep(
@@ -169,7 +177,8 @@ export class WorkerClient {
         name,
         key,
         error,
-      }
+      },
+      this.requireLeaseAuthToken(leaseId)
     );
 
     return response.step;
@@ -190,7 +199,8 @@ export class WorkerClient {
     const response = await this.request<ExecResolveResponse>(
       "POST",
       `/v1/leases/${encodeURIComponent(leaseId)}/execs/resolve`,
-      spec
+      spec,
+      this.requireLeaseAuthToken(leaseId)
     );
 
     return response.exec;
@@ -209,7 +219,7 @@ export class WorkerClient {
       output: unknown;
     }
   ): Promise<void> {
-    await this.request("POST", `/v1/leases/${encodeURIComponent(leaseId)}/execs/complete`, spec);
+    await this.request("POST", `/v1/leases/${encodeURIComponent(leaseId)}/execs/complete`, spec, this.requireLeaseAuthToken(leaseId));
   }
 
   async failExec(
@@ -247,7 +257,8 @@ export class WorkerClient {
         backoffJitterKind: spec.retry?.backoffJitterKind,
         backoffJitterRatio: spec.retry?.backoffJitterRatio,
         retryOn: spec.retry?.retryOn,
-      }
+      },
+      this.requireLeaseAuthToken(leaseId)
     );
 
     return response.exec;
@@ -260,7 +271,8 @@ export class WorkerClient {
     const response = await this.request<WaitResolveResponse>(
       "POST",
       `/v1/leases/${encodeURIComponent(leaseId)}/waits/sleep`,
-      spec
+      spec,
+      this.requireLeaseAuthToken(leaseId)
     );
 
     return response.wait;
@@ -273,7 +285,8 @@ export class WorkerClient {
     const response = await this.request<WaitResolveResponse>(
       "POST",
       `/v1/leases/${encodeURIComponent(leaseId)}/waits/signal`,
-      spec
+      spec,
+      this.requireLeaseAuthToken(leaseId)
     );
 
     return response.wait;
@@ -286,7 +299,8 @@ export class WorkerClient {
     const response = await this.request<SpawnResolveResponse>(
       "POST",
       `/v1/leases/${encodeURIComponent(leaseId)}/spawns/resolve`,
-      spec
+      spec,
+      this.requireLeaseAuthToken(leaseId)
     );
 
     return response.spawn;
@@ -299,7 +313,8 @@ export class WorkerClient {
     const response = await this.request<ChildResultResponse>(
       "POST",
       `/v1/leases/${encodeURIComponent(leaseId)}/children/result`,
-      spec
+      spec,
+      this.requireLeaseAuthToken(leaseId)
     );
 
     return response.child;
@@ -308,7 +323,9 @@ export class WorkerClient {
   async getRelatedRunStatus(leaseId: string, runId: string): Promise<string> {
     const response = await this.request<RunStatusResponse>(
       "GET",
-      `/v1/leases/${encodeURIComponent(leaseId)}/runs/${encodeURIComponent(runId)}/status`
+      `/v1/leases/${encodeURIComponent(leaseId)}/runs/${encodeURIComponent(runId)}/status`,
+      undefined,
+      this.requireLeaseAuthToken(leaseId)
     );
     return response.run.status;
   }
@@ -320,7 +337,8 @@ export class WorkerClient {
       {
         name,
         payload,
-      }
+      },
+      this.requireLeaseAuthToken(leaseId)
     );
   }
 
@@ -337,7 +355,7 @@ export class WorkerClient {
       serviceKey,
       keyInput,
       leaseId,
-    });
+    }, leaseId ? this.requireLeaseAuthToken(leaseId) : this.bootstrapAuthToken);
 
     return response.run.id;
   }
@@ -349,7 +367,8 @@ export class WorkerClient {
     const response = await this.request<ServiceCallResolveResponse>(
       "POST",
       `/v1/leases/${encodeURIComponent(leaseId)}/services/send`,
-      spec
+      spec,
+      this.requireLeaseAuthToken(leaseId)
     );
 
     return response.result;
@@ -362,7 +381,8 @@ export class WorkerClient {
     const response = await this.request<ServiceCallResolveResponse>(
       "POST",
       `/v1/leases/${encodeURIComponent(leaseId)}/services/ask`,
-      spec
+      spec,
+      this.requireLeaseAuthToken(leaseId)
     );
 
     return response.result;
@@ -375,7 +395,8 @@ export class WorkerClient {
     const response = await this.request<ServiceCallResolveResponse>(
       "POST",
       `/v1/leases/${encodeURIComponent(leaseId)}/services/signal`,
-      spec
+      spec,
+      this.requireLeaseAuthToken(leaseId)
     );
 
     return response.result;
@@ -389,7 +410,8 @@ export class WorkerClient {
     await this.request(
       "POST",
       `/v1/leases/${encodeURIComponent(leaseId)}/service-turns/${encodeURIComponent(envelopeId)}/complete`,
-      body
+      body,
+      this.requireLeaseAuthToken(leaseId)
     );
   }
 
@@ -413,28 +435,42 @@ export class WorkerClient {
         backoffJitterKind: retry?.backoffJitterKind,
         backoffJitterRatio: retry?.backoffJitterRatio,
         retryOn: retry?.retryOn,
-      }
+      },
+      this.requireLeaseAuthToken(leaseId)
     );
   }
 
   async completeRun(leaseId: string, result: unknown): Promise<void> {
     await this.request("POST", `/v1/leases/${encodeURIComponent(leaseId)}/complete`, {
       result,
-    });
+    }, this.requireLeaseAuthToken(leaseId));
   }
 
   async failRun(leaseId: string, error: Record<string, unknown>): Promise<void> {
     await this.request("POST", `/v1/leases/${encodeURIComponent(leaseId)}/fail`, {
       error,
-    });
+    }, this.requireLeaseAuthToken(leaseId));
   }
 
-  private async request<T>(method: string, pathname: string, body?: unknown): Promise<T> {
+  clearLeaseAuthToken(leaseId: string): void {
+    this.leaseAuthTokens.delete(leaseId);
+  }
+
+  private requireLeaseAuthToken(leaseId: string): string {
+    const token = this.leaseAuthTokens.get(leaseId);
+    if (!token) {
+      throw new Error(`Missing Vilano lease auth token for activation ${leaseId}`);
+    }
+
+    return token;
+  }
+
+  private async request<T>(method: string, pathname: string, body?: unknown, authToken?: string): Promise<T> {
     const response = await fetch(`${this.serverUrl}${pathname}`, {
       method,
       headers: {
         "content-type": "application/json; charset=utf-8",
-        ...(this.authToken ? { "x-vilano-token": this.authToken } : {}),
+        ...(authToken ? { "x-vilano-token": authToken } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
