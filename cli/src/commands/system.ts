@@ -7,6 +7,7 @@ import { runDoctor } from "../doctor.ts";
 import {
   ensureDaemonStarted,
   getRunningDaemonStatus,
+  readDaemonAuthState,
   stopDaemon,
 } from "../daemon-client.ts";
 import {
@@ -136,6 +137,7 @@ export async function handleWorkerCommand(
           stdio: "inherit",
           env: {
             ...process.env,
+            VILANO_HOME: "",
             ...workerAuthEnv,
           },
         });
@@ -153,7 +155,8 @@ export async function handleWorkerCommand(
 
 async function resolveWorkerAuthEnv(serverUrl: string): Promise<Record<string, string>> {
   const daemonState = await readJsonFile<DaemonState | null>(getRuntimePaths().daemonStateFile, null);
-  if (!daemonState?.workerAuthToken) {
+  const daemonAuthState = await readDaemonAuthState();
+  if (!daemonState || !daemonAuthState?.workerAuthToken) {
     return {};
   }
 
@@ -164,7 +167,9 @@ async function resolveWorkerAuthEnv(serverUrl: string): Promise<Record<string, s
 
     if (isLoopback && port === daemonState.port) {
       return {
-        VILANO_WORKER_TOKEN: daemonState.workerAuthToken,
+        VILANO_WORKER_TOKEN: daemonAuthState.workerAuthToken,
+        VILANO_RUNTIME_HOME: getRuntimePaths().homeDir,
+        VILANO_WORKER_HOME: getRuntimePaths().workerHomeDir,
       };
     }
   } catch {

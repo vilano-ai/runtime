@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import crypto from "node:crypto";
 import process from "node:process";
 
@@ -40,6 +41,7 @@ import {
   isRetryableError,
   parseDurationToMs,
   resolveExecCwd,
+  setRuntimeHomeOverride,
   throwAbortReason,
   toChildRunError,
   toExecError,
@@ -66,16 +68,23 @@ export async function startWorker(
   adapter: RuntimeAdapter,
   options: WorkerOptions = {}
 ): Promise<void> {
-  const runtimeHome = process.env.VILANO_HOME;
-  if (runtimeHome) {
-    process.chdir(runtimeHome);
+  const runtimeHome =
+    process.env.VILANO_RUNTIME_HOME ?? process.env.VILANO_HOME ?? process.env.VILANO_WORKER_HOME;
+  const workerHome = process.env.VILANO_WORKER_HOME ?? runtimeHome;
+  if (workerHome) {
+    await fs.mkdir(workerHome, { recursive: true });
+    process.chdir(workerHome);
   }
+  setRuntimeHomeOverride(runtimeHome ? runtimeHome : null);
 
   const workerId = options.workerId ?? `worker-${crypto.randomUUID()}`;
   const serverUrl = options.serverUrl ?? "http://127.0.0.1:4141";
   const authToken = options.authToken ?? process.env.VILANO_WORKER_TOKEN;
   delete process.env.VILANO_WORKER_TOKEN;
   delete process.env.VILANO_DAEMON_TOKEN;
+  delete process.env.VILANO_RUNTIME_HOME;
+  delete process.env.VILANO_WORKER_HOME;
+  delete process.env.VILANO_HOME;
   const pollIntervalMs = options.pollIntervalMs ?? 1000;
   const client = new WorkerClient(serverUrl, workerId, authToken);
   const status = await client.assertCompatible(WORKER_PROTOCOL_VERSION);

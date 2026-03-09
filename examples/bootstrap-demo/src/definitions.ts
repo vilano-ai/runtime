@@ -782,6 +782,9 @@ export const workerEnvProbe = workflow({
     return {
       workerTokenPresent: Boolean(process.env.VILANO_WORKER_TOKEN),
       daemonTokenPresent: Boolean(process.env.VILANO_DAEMON_TOKEN),
+      runtimeHomePresent: Boolean(process.env.VILANO_HOME),
+      workerHomePresent: Boolean(process.env.VILANO_WORKER_HOME),
+      internalRuntimeHomePresent: Boolean(process.env.VILANO_RUNTIME_HOME),
     };
   },
 });

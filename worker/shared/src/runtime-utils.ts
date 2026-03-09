@@ -22,6 +22,8 @@ interface ActivationLike {
   project: { path: string };
 }
 
+let runtimeHomeOverride: string | null = null;
+
 export type ExecSuccess<TOutput> = {
   ok: true;
   output: TOutput;
@@ -661,8 +663,18 @@ function sanitizePathSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]+/g, "_");
 }
 
+export function setRuntimeHomeOverride(runtimeHome: string | null): void {
+  runtimeHomeOverride = runtimeHome ? path.resolve(runtimeHome) : null;
+}
+
 function getRuntimeHome(): string {
-  return process.env.VILANO_HOME
+  return runtimeHomeOverride
+    ? runtimeHomeOverride
+    : process.env.VILANO_RUNTIME_HOME
+    ? path.resolve(process.env.VILANO_RUNTIME_HOME)
+    : process.env.VILANO_WORKER_HOME
+    ? path.resolve(process.env.VILANO_WORKER_HOME)
+    : process.env.VILANO_HOME
     ? path.resolve(process.env.VILANO_HOME)
     : path.join(os.homedir(), ".vilano");
 }

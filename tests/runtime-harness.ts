@@ -5,6 +5,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 import type {
+  DaemonAuthState,
   DaemonState,
   RunCancelResponse,
   RunEnvelopeRecord,
@@ -210,6 +211,9 @@ export class RuntimeHarness {
     const executable = runtime === "node" ? "node" : "bun";
     const workerEntry = path.join(WORKER_ROOT, runtime, "src", "cli.ts");
     const args = [executable, workerEntry, "--server", this.serverUrl];
+    const workerHome = path.join(this.runtimeHome, "worker-home");
+
+    await fs.mkdir(workerHome, { recursive: true });
 
     if (options.workerId) {
       args.push("--worker-id", options.workerId);
@@ -223,8 +227,11 @@ export class RuntimeHarness {
       args,
       {
         VILANO_WORKER_TOKEN: await this.readWorkerToken(),
+        VILANO_RUNTIME_HOME: this.runtimeHome,
+        VILANO_WORKER_HOME: workerHome,
       },
-      this.runtimeHome
+      workerHome,
+      false
     );
   }
 
@@ -286,13 +293,14 @@ export class RuntimeHarness {
   private spawnCommand(
     command: string[],
     extraEnv: Record<string, string> = {},
-    cwd = ROOT
+    cwd = ROOT,
+    includeRuntimeHome = true
   ): SpawnedCommand {
     const proc = Bun.spawn(command, {
       cwd,
       env: {
         ...process.env,
-        VILANO_HOME: this.runtimeHome,
+        ...(includeRuntimeHome ? { VILANO_HOME: this.runtimeHome } : {}),
         ...this.envOverrides,
         ...extraEnv,
       },
@@ -304,13 +312,13 @@ export class RuntimeHarness {
   }
 
   private async readDaemonToken(): Promise<string> {
-    const daemonState = await readDaemonState(this.runtimeHome);
-    return daemonState?.authToken ?? "";
+    const daemonAuth = await readDaemonAuthState(this.runtimeHome);
+    return daemonAuth?.authToken ?? "";
   }
 
   private async readWorkerToken(): Promise<string> {
-    const daemonState = await readDaemonState(this.runtimeHome);
-    return daemonState?.workerAuthToken ?? "";
+    const daemonAuth = await readDaemonAuthState(this.runtimeHome);
+    return daemonAuth?.workerAuthToken ?? "";
   }
 
   private async resolveServiceAddress(
@@ -492,6 +500,20 @@ async function readDaemonState(runtimeHome: string): Promise<DaemonState | null>
   try {
     const raw = await fs.readFile(path.join(runtimeHome, "daemon.json"), "utf8");
     return JSON.parse(raw) as DaemonState;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function readDaemonAuthState(runtimeHome: string): Promise<DaemonAuthState | null> {
+  try {
+    const raw = await fs.readFile(path.join(runtimeHome, "daemon-auth.json"), "utf8");
+    return JSON.parse(raw) as DaemonAuthState;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT") {

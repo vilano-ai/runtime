@@ -199,7 +199,7 @@ test("worker tokens cannot access daemon-only routes", async () => {
   try {
     const run = await harness.startWorkflow("demo/planner", { topic: "worker-auth" });
     const daemonState = JSON.parse(
-      await Bun.file(`${harness.homeDir}/daemon.json`).text()
+      await Bun.file(`${harness.homeDir}/daemon-auth.json`).text()
     ) as { workerAuthToken?: string };
     const headers = new Headers();
     if (daemonState.workerAuthToken) {
@@ -238,6 +238,26 @@ test("worker tokens cannot access daemon-only routes", async () => {
   }
 });
 
+test("daemon state keeps operator credentials out of daemon.json", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const daemonState = JSON.parse(
+      await Bun.file(`${harness.homeDir}/daemon.json`).text()
+    ) as Record<string, unknown>;
+    const daemonAuthState = JSON.parse(
+      await Bun.file(`${harness.homeDir}/daemon-auth.json`).text()
+    ) as Record<string, unknown>;
+
+    expect(daemonState.authToken).toBeUndefined();
+    expect(daemonState.workerAuthToken).toBeUndefined();
+    expect(typeof daemonAuthState.authToken).toBe("string");
+    expect(typeof daemonAuthState.workerAuthToken).toBe("string");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("worker runtime does not expose daemon or worker tokens to workflow code", async () => {
   const harness = await RuntimeHarness.create();
 
@@ -248,6 +268,9 @@ test("worker runtime does not expose daemon or worker tokens to workflow code", 
     expect(completed.run.output).toEqual({
       workerTokenPresent: false,
       daemonTokenPresent: false,
+      runtimeHomePresent: false,
+      workerHomePresent: false,
+      internalRuntimeHomePresent: false,
     });
   } finally {
     await harness.dispose();

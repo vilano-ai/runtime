@@ -44,7 +44,7 @@ test("worker activation and step resolution endpoints match the published contra
     await harness.startWorkflow("demo/planner", { topic: "Protocol contract" });
 
     const daemonState = JSON.parse(
-      await fs.readFile(path.join(harness.homeDir, "daemon.json"), "utf8")
+      await fs.readFile(path.join(harness.homeDir, "daemon-auth.json"), "utf8")
     ) as { workerAuthToken?: string };
     const workerToken = daemonState.workerAuthToken;
     expect(workerToken).toBeTruthy();

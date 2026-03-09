@@ -39,11 +39,15 @@ export interface DaemonState {
   port: number;
   startedAt: string;
   runtimeDbPath: string;
-  authToken?: string;
-  workerAuthToken?: string;
   runtimeVersion?: string;
   protocolVersion?: number;
   schemaVersion?: number;
+}
+
+export interface DaemonAuthState {
+  version: 1;
+  authToken: string;
+  workerAuthToken: string;
 }
 
 export interface DaemonStatusResponse {

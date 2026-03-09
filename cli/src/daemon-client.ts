@@ -10,6 +10,7 @@ import { prepareRuntimeBundle } from "./runtime-materializer.ts";
 import { CLI_PROTOCOL_VERSION } from "./runtime-version.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
 import type {
+  DaemonAuthState,
   DaemonState,
   DaemonStatusResponse,
   DefinitionInspectResponse,
@@ -61,6 +62,7 @@ export async function ensureDaemonStarted(
 
   const runtimePaths = getRuntimePaths();
   await ensureDir(runtimePaths.homeDir);
+  await ensureDir(runtimePaths.workerHomeDir);
 
   const bundle = await prepareRuntimeBundle();
   const kernelDir = bundle.kernelDir;
@@ -115,14 +117,18 @@ export async function ensureDaemonStarted(
         port,
         startedAt: kernelStatus.startedAt,
         runtimeDbPath: kernelStatus.runtimeDbPath,
-        authToken,
-        workerAuthToken,
         runtimeVersion: kernelStatus.runtimeVersion,
         protocolVersion: kernelStatus.protocolVersion,
         schemaVersion: kernelStatus.schemaVersion,
       };
+      const daemonAuthState: DaemonAuthState = {
+        version: 1,
+        authToken,
+        workerAuthToken,
+      };
 
       await writeJsonFileAtomic(runtimePaths.daemonStateFile, daemonState);
+      await writeJsonFileAtomic(runtimePaths.daemonAuthFile, daemonAuthState);
       child.unref();
       const status = toDaemonStatus(daemonState, kernelStatus);
       assertCompatibleKernelStatus(status);
@@ -158,26 +164,37 @@ export async function ensureDaemonStarted(
 
 export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
   const runtimePaths = getRuntimePaths();
-  const daemonState = await readJsonFile<DaemonState | null>(runtimePaths.daemonStateFile, null);
+  const daemonState = await readDaemonState();
+  const daemonAuthState = await readDaemonAuthState();
 
-  if (!daemonState) {
+  if (!daemonState || !daemonAuthState) {
     return null;
   }
 
   try {
-    await requestJsonWithState<{ ok: true; shuttingDown: true }>(daemonState, {
+    await requestJsonWithState<{ ok: true; shuttingDown: true }>(
+      {
+        port: daemonState.port,
+        authToken: daemonAuthState.authToken,
+      },
+      {
       method: "POST",
       pathname: "/v1/admin/shutdown",
       autoStart: false,
-    });
+      }
+    );
   } catch (error) {
     if (error instanceof KernelRequestError && error.code === "unauthorized") {
       throw error;
     }
 
-    const running = await pingKernelStatus(daemonState.port, daemonState.authToken);
+    const running = await pingKernelStatus(daemonState.port, daemonAuthState.authToken);
     if (!running) {
-      await fs.rm(runtimePaths.daemonStateFile, { force: true });
+      if (await isProcessAlive(daemonState.pid)) {
+        throw new Error("Vilano kernel process is still running but the shutdown probe failed");
+      }
+
+      await clearDaemonStateFiles();
       return null;
     }
 
@@ -186,9 +203,14 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
 
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
-    const running = await pingKernelStatus(daemonState.port, daemonState.authToken);
+    const running = await pingKernelStatus(daemonState.port, daemonAuthState.authToken);
       if (!running) {
-        await fs.rm(runtimePaths.daemonStateFile, { force: true });
+        if (await isProcessAlive(daemonState.pid)) {
+          await sleep(150);
+          continue;
+        }
+
+        await clearDaemonStateFiles();
         return {
           ok: true,
           pid: daemonState.pid,
@@ -214,19 +236,25 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
 }
 
 export async function getRunningDaemonStatus(): Promise<DaemonStatusResponse | null> {
-  const runtimePaths = getRuntimePaths();
-  const daemonState = await readJsonFile<DaemonState | null>(runtimePaths.daemonStateFile, null);
+  const daemonState = await readDaemonState();
+  const daemonAuthState = await readDaemonAuthState();
 
-  if (!daemonState) {
+  if (!daemonState || !daemonAuthState) {
     return null;
   }
 
   try {
-    const kernelStatus = await requestJsonWithState<KernelStatusBody>(daemonState, {
+    const kernelStatus = await requestJsonWithState<KernelStatusBody>(
+      {
+        port: daemonState.port,
+        authToken: daemonAuthState.authToken,
+      },
+      {
       method: "GET",
       pathname: "/v1/status",
       autoStart: false,
-    });
+      }
+    );
 
     const status = toDaemonStatus(daemonState, kernelStatus);
     assertCompatibleKernelStatus(status);
@@ -237,17 +265,24 @@ export async function getRunningDaemonStatus(): Promise<DaemonStatusResponse | n
     }
 
     if (error instanceof KernelRequestError && error.code === "unauthorized") {
-      if (daemonState.authToken) {
-        throw error;
-      }
-
-      await fs.rm(runtimePaths.daemonStateFile, { force: true });
-      return null;
+      throw error;
     }
 
-    await fs.rm(runtimePaths.daemonStateFile, { force: true });
+    if (await isProcessAlive(daemonState.pid)) {
+      throw new Error("Vilano kernel process is still running but the status probe failed");
+    }
+
+    await clearDaemonStateFiles();
     return null;
   }
+}
+
+export async function readDaemonState(): Promise<DaemonState | null> {
+  return await readJsonFile<DaemonState | null>(getRuntimePaths().daemonStateFile, null);
+}
+
+export async function readDaemonAuthState(): Promise<DaemonAuthState | null> {
+  return await readJsonFile<DaemonAuthState | null>(getRuntimePaths().daemonAuthFile, null);
 }
 
 export async function listProjects(): Promise<ProjectListResponse> {
@@ -534,12 +569,13 @@ async function requestJson<T>({
   body,
   autoStart = true,
 }: RequestOptions): Promise<T> {
-  const runtimePaths = getRuntimePaths();
-  let daemonState = await readJsonFile<DaemonState | null>(runtimePaths.daemonStateFile, null);
+  let daemonState = await readDaemonState();
+  let daemonAuthState = await readDaemonAuthState();
   let status = await getRunningDaemonStatus();
   if (!status && autoStart) {
     status = await ensureDaemonStarted();
-    daemonState = await readJsonFile<DaemonState | null>(runtimePaths.daemonStateFile, null);
+    daemonState = await readDaemonState();
+    daemonAuthState = await readDaemonAuthState();
   }
 
   if (!status) {
@@ -547,19 +583,29 @@ async function requestJson<T>({
   }
 
   if (!daemonState) {
-    daemonState = await readJsonFile<DaemonState | null>(runtimePaths.daemonStateFile, null);
+    daemonState = await readDaemonState();
   }
 
-  if (!daemonState) {
+  if (!daemonAuthState) {
+    daemonAuthState = await readDaemonAuthState();
+  }
+
+  if (!daemonState || !daemonAuthState) {
     throw new Error("Vilano kernel state is missing from VILANO_HOME");
   }
 
   assertCompatibleKernelStatus(status);
-  return requestJsonWithState<T>(daemonState, { method, pathname, body, autoStart });
+  return requestJsonWithState<T>(
+    {
+      port: daemonState.port,
+      authToken: daemonAuthState.authToken,
+    },
+    { method, pathname, body, autoStart }
+  );
 }
 
 async function requestJsonWithState<T>(
-  status: Pick<DaemonState, "port" | "authToken">,
+  status: { port: number; authToken: string },
   { method, pathname, body }: RequestOptions
 ): Promise<T> {
   const response = await fetch(`http://127.0.0.1:${status.port}${pathname}`, {
@@ -650,6 +696,30 @@ function assertCompatibleKernelStatus(status: Pick<DaemonStatusResponse, "protoc
 
 function generateDaemonAuthToken(): string {
   return crypto.randomBytes(32).toString("hex");
+}
+
+async function clearDaemonStateFiles(): Promise<void> {
+  const runtimePaths = getRuntimePaths();
+  await fs.rm(runtimePaths.daemonStateFile, { force: true });
+  await fs.rm(runtimePaths.daemonAuthFile, { force: true });
+}
+
+async function isProcessAlive(pid: number | null | undefined): Promise<boolean> {
+  if (!Number.isInteger(pid) || (pid as number) <= 0) {
+    return false;
+  }
+
+  try {
+    process.kill(pid as number, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EPERM") {
+      return true;
+    }
+
+    return false;
+  }
 }
 
 async function sleep(durationMs: number): Promise<void> {
