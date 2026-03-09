@@ -19,8 +19,7 @@ import type {
   WorkflowHandle,
   WorkflowContext,
   WorkflowDefinition,
-} from "@vilano/runtime";
-
+} from "./runtime-sdk.ts";
 import {
   WorkerClient,
   type ServiceTurnActivation,
@@ -66,13 +65,20 @@ export async function startWorker(
   adapter: RuntimeAdapter,
   options: WorkerOptions = {}
 ): Promise<void> {
+  const runtimeHome = process.env.VILANO_HOME;
+  if (runtimeHome) {
+    process.chdir(runtimeHome);
+  }
+
   const workerId = options.workerId ?? `worker-${crypto.randomUUID()}`;
   const serverUrl = options.serverUrl ?? "http://127.0.0.1:4141";
   const authToken = options.authToken ?? process.env.VILANO_DAEMON_TOKEN;
   const pollIntervalMs = options.pollIntervalMs ?? 1000;
-  const heartbeatIntervalMs = options.heartbeatIntervalMs ?? 5000;
   const client = new WorkerClient(serverUrl, workerId, authToken);
-  await client.assertCompatible(WORKER_PROTOCOL_VERSION);
+  const status = await client.assertCompatible(WORKER_PROTOCOL_VERSION);
+  const heartbeatIntervalMs =
+    options.heartbeatIntervalMs ??
+    Math.max(1000, Math.floor((status.leaseDurationSeconds * 1000) / 3));
 
   while (true) {
     let activation: WorkflowActivation | ServiceTurnActivation | null;
@@ -115,18 +121,22 @@ async function executeActivation(
     void client.heartbeat(activation.leaseId).catch(() => undefined);
   }, heartbeatIntervalMs);
   let serviceDefinition: ServiceDefinition<any, any, any, any, any> | null = null;
+  let serviceRetry: ServiceDefinition<any, any, any, any, any>["retry"] | undefined;
 
   try {
-    if (activation.kind === "workflow") {
-      const definition = await loadWorkflowDefinition(activation);
-      const ctx = createTurnContext(adapter, client, activation);
-      const result = await definition.run(activation.run.input, ctx);
-      await client.completeRun(activation.leaseId, result);
-      return;
-    }
+    await withActivationCwd(activation.project.path, async () => {
+      if (activation.kind === "workflow") {
+        const definition = await loadWorkflowDefinition(activation);
+        const ctx = createTurnContext(adapter, client, activation);
+        const result = await definition.run(activation.run.input, ctx);
+        await client.completeRun(activation.leaseId, result);
+        return;
+      }
 
-    serviceDefinition = await loadServiceDefinition(activation);
-    await executeServiceTurn(adapter, client, activation, serviceDefinition);
+      serviceDefinition = await loadServiceDefinition(activation);
+      serviceRetry = serviceDefinition.retry;
+      await executeServiceTurn(adapter, client, activation, serviceDefinition);
+    });
   } catch (error) {
     if (error instanceof RunSuspendedError) {
       return;
@@ -152,7 +162,7 @@ async function executeActivation(
           activation.leaseId,
           activation.envelope.id,
           toFailureBody(error),
-          toRetryPolicy(serviceDefinition?.retry)
+          toRetryPolicy(serviceRetry)
         );
 
         if (failedTurn.status === "retry_waiting") {
@@ -168,6 +178,17 @@ async function executeActivation(
     }
   } finally {
     clearInterval(heartbeat);
+  }
+}
+
+async function withActivationCwd<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
+  const previousCwd = process.cwd();
+  process.chdir(cwd);
+
+  try {
+    return await fn();
+  } finally {
+    process.chdir(previousCwd);
   }
 }
 
@@ -242,10 +263,11 @@ function createTurnContext(
     ): Promise<ServiceRef<TSend, TAsk, TSignal>> {
       const serviceKey = definition.key(input);
       const serviceRunId = await client.ensureService(
-        activation.project.name,
+        null,
         definition.name,
         serviceKey,
-        input
+        input,
+        activation.leaseId
       );
 
       return createServiceRef(

@@ -7,12 +7,10 @@ import { spawn } from "node:child_process";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 const CLI_DIR = path.join(ROOT, "cli");
-const SDK_DIR = path.join(ROOT, "sdk", "typescript");
 
 await run("bun", ["run", "prepare:cli-package"], ROOT);
 
 const cliTarball = await packWorkspace(CLI_DIR);
-const sdkTarball = await packWorkspace(SDK_DIR);
 const installDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-install-smoke-"));
 const runtimeHome = path.join(installDir, ".vilano-home");
 
@@ -29,7 +27,6 @@ try {
     )
   );
 
-  await run("bun", ["add", sdkTarball], installDir);
   await run("bun", ["add", cliTarball], installDir);
 
   const cliEntry = path.join(installDir, "node_modules", "vilano", "bin", "vilano.ts");
@@ -113,6 +110,20 @@ try {
   }
 
   await run("bun", [cliEntry, "project", "add", "./manifest-project", "--name", "smoke"], installDir, env);
+  const projectInspect = JSON.parse(
+    (await run("bun", [cliEntry, "project", "inspect", "smoke", "--json"], installDir, env)).stdout
+  ) as {
+    project: {
+      definitions: {
+        workflows: Array<{ name: string }>;
+      };
+    };
+  };
+
+  if (!projectInspect.project.definitions.workflows.some((definition) => definition.name === "smokeWorkflow")) {
+    throw new Error("Packaged CLI did not register the explicit vilano.manifest.json project contract");
+  }
+
   const workflowList = JSON.parse(
     (await run("bun", [cliEntry, "workflow", "list", "--project", "smoke", "--json"], installDir, env)).stdout
   ) as {
@@ -138,7 +149,6 @@ try {
 } finally {
   await fs.rm(installDir, { recursive: true, force: true });
   await cleanupTarball(cliTarball);
-  await cleanupTarball(sdkTarball);
 }
 
 async function packWorkspace(workspaceDir: string): Promise<string> {

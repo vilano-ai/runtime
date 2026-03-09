@@ -5,14 +5,18 @@ defmodule VilanoKernel.Storage.Migrations do
   alias VilanoKernel.Repo
   alias VilanoKernel.Storage.Migrations.{
     AddRunStepRetryColumns,
+    AddRunSnapshotsAndProjectSnapshots,
     AddServiceEnvelopeAttemptColumn,
+    CreateRunEventSequences,
     CreateRuntimeMetadata
   }
 
   @migrations [
     AddRunStepRetryColumns,
     AddServiceEnvelopeAttemptColumn,
-    CreateRuntimeMetadata
+    CreateRuntimeMetadata,
+    AddRunSnapshotsAndProjectSnapshots,
+    CreateRunEventSequences
   ]
 
   def ensure_tracking_table! do

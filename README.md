@@ -103,8 +103,8 @@ bun run pack
 bun run smoke:install
 ```
 
-That path packs `vilano` and `@vilano/runtime`, installs them into a temporary directory, starts the
-daemon, runs health checks, and verifies the packaged bundle stays immutable.
+That path packs `vilano`, installs it into a temporary directory, starts the daemon, runs health
+checks, and verifies the packaged bundle stays immutable and self-contained.
 
 ## Programming Model
 

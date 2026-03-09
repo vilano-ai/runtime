@@ -35,22 +35,24 @@ defmodule VilanoKernel.Storage do
   def get_definition(project_name, kind, definition_name),
     do: Projects.get_definition(project_name, kind, definition_name)
 
-  def create_workflow_run!(project_name, definition_name, input) do
+  def get_active_run_by_lease(lease_id), do: get_run_by_lease(lease_id)
+
+  def create_workflow_run!(project, definition, input) do
     now = Infrastructure.now_iso8601()
     run_id = "run_" <> Ecto.UUID.generate()
 
     Repo.transaction(fn ->
-      insert_workflow_run!(run_id, project_name, definition_name, input || %{}, now)
+      insert_workflow_run!(run_id, project, definition, input || %{}, now)
     end)
 
     get_run(run_id)
   end
 
-  def ensure_service_run!(project_name, definition_name, service_key, key_input) do
+  def ensure_service_run!(project, definition, service_key, key_input) do
     now = Infrastructure.now_iso8601()
 
     Infrastructure.transaction_with_busy_retry(fn ->
-      ensure_service_run_in_tx!(project_name, definition_name, service_key, key_input, now)
+      ensure_service_run_in_tx!(project, definition, service_key, key_input, now)
     end)
     |> unwrap_transaction_result()
   end
@@ -59,14 +61,14 @@ defmodule VilanoKernel.Storage do
     get_service_run(project_name, definition_name, service_key)
   end
 
-  def enqueue_service_envelope!(project_name, definition_name, service_key, key_input, kind, name, payload) do
+  def enqueue_service_envelope!(project, definition, service_key, key_input, kind, name, payload) do
     now = Infrastructure.now_iso8601()
 
     Infrastructure.transaction_with_busy_retry(fn ->
       service_run =
         ensure_service_run_in_tx!(
-          project_name,
-          definition_name,
+          project,
+          definition,
           service_key,
           key_input || %{},
           now
@@ -195,13 +197,12 @@ defmodule VilanoKernel.Storage do
           if existing_child do
             %{"status" => "existing", "childRun" => get_run(existing_child["child_run_id"])}
           else
-            insert_workflow_run!(
-              child_run_id,
-              parent_run["project"],
-              definition_name,
-              input || %{},
-              now
-            )
+            definition =
+              parent_run
+              |> project_definitions_for_run()
+              |> definition_from_project_definitions!("workflow", definition_name)
+
+            insert_workflow_run!(child_run_id, project_record_for_run(parent_run), definition, input || %{}, now)
 
             SQL.query!(
               Repo,
@@ -2217,6 +2218,9 @@ defmodule VilanoKernel.Storage do
       "project" => row["project_name"],
       "definitionKind" => row["definition_kind"],
       "definitionName" => row["definition_name"],
+      "projectSnapshotPath" => row["project_snapshot_path"],
+      "projectDefinitions" => decode_json_value(row["project_definitions_json"], nil),
+      "definition" => definition_from_row(row),
       "status" => row["status"],
       "leaseId" => row["lease_id"],
       "leaseWorkerId" => row["lease_worker_id"],
@@ -2227,6 +2231,21 @@ defmodule VilanoKernel.Storage do
       "createdAt" => row["created_at"],
       "updatedAt" => row["updated_at"]
     }
+  end
+
+  defp definition_from_row(row) do
+    if row["definition_file"] do
+      %{
+        "kind" => row["definition_kind"],
+        "name" => row["definition_name"],
+        "file" => row["definition_file"],
+        "exportName" => row["definition_export_name"],
+        "runtimeKind" => row["definition_runtime_kind"],
+        "sourceLanguage" => row["definition_source_language"]
+      }
+    else
+      nil
+    end
   end
 
   defp exec_from_row(row) do
@@ -2276,6 +2295,30 @@ defmodule VilanoKernel.Storage do
       |> Map.put("state", decode_json_value(service_row["state_json"], nil))
 
     run
+  end
+
+  defp project_record_for_run(run) do
+    %{
+      "name" => run["project"],
+      "path" => run["projectSnapshotPath"] || run["project"],
+      "snapshotPath" => run["projectSnapshotPath"],
+      "definitions" => project_definitions_for_run(run)
+    }
+  end
+
+  defp project_definitions_for_run(run) do
+    run["projectDefinitions"] || %{"workflows" => [], "services" => []}
+  end
+
+  defp definition_from_project_definitions!(definitions, kind, definition_name) do
+    bucket =
+      case kind do
+        "workflow" -> Map.get(definitions, "workflows", [])
+        "service" -> Map.get(definitions, "services", [])
+      end
+
+    Enum.find(bucket, &(&1["name"] == definition_name)) ||
+      raise "Unknown #{kind} definition '#{definition_name}' in stored project snapshot"
   end
 
   defp service_envelope_from_row(row) do
@@ -2350,6 +2393,12 @@ defmodule VilanoKernel.Storage do
         project_name,
         definition_kind,
         definition_name,
+        project_snapshot_path,
+        project_definitions_json,
+        definition_file,
+        definition_export_name,
+        definition_runtime_kind,
+        definition_source_language,
         status,
         lease_id,
         lease_worker_id,
@@ -2529,10 +2578,14 @@ defmodule VilanoKernel.Storage do
     |> List.first()
   end
 
-  defp ensure_service_run_in_tx!(project_name, definition_name, service_key, key_input, now) do
+  defp ensure_service_run_in_tx!(project, definition, service_key, key_input, now) do
+    project_name = Map.fetch!(project, "name")
+    definition_name = Map.fetch!(definition, "name")
+
     case get_service_run(project_name, definition_name, service_key) do
       nil ->
         run_id = "run_" <> Ecto.UUID.generate()
+        definitions_json = Jason.encode!(Map.fetch!(project, "definitions"))
 
         SQL.query!(
           Repo,
@@ -2542,6 +2595,12 @@ defmodule VilanoKernel.Storage do
             project_name,
             definition_kind,
             definition_name,
+            project_snapshot_path,
+            project_definitions_json,
+            definition_file,
+            definition_export_name,
+            definition_runtime_kind,
+            definition_source_language,
             status,
             lease_id,
             lease_worker_id,
@@ -2551,9 +2610,22 @@ defmodule VilanoKernel.Storage do
             error_json,
             created_at,
             updated_at
-          ) values (?, ?, 'service', ?, 'idle', null, null, null, ?, null, null, ?, ?)
+          ) values (?, ?, 'service', ?, ?, ?, ?, ?, ?, ?, 'idle', null, null, null, ?, null, null, ?, ?)
           """,
-          [run_id, project_name, definition_name, Jason.encode!(key_input || %{}), now, now]
+          [
+            run_id,
+            project_name,
+            definition_name,
+            Map.get(project, "snapshotPath") || Map.fetch!(project, "path"),
+            definitions_json,
+            Map.fetch!(definition, "file"),
+            Map.fetch!(definition, "exportName"),
+            Map.fetch!(definition, "runtimeKind"),
+            Map.fetch!(definition, "sourceLanguage"),
+            Jason.encode!(key_input || %{}),
+            now,
+            now
+          ]
         )
 
         SQL.query!(
@@ -2597,6 +2669,12 @@ defmodule VilanoKernel.Storage do
         r.project_name,
         r.definition_kind,
         r.definition_name,
+        r.project_snapshot_path,
+        r.project_definitions_json,
+        r.definition_file,
+        r.definition_export_name,
+        r.definition_runtime_kind,
+        r.definition_source_language,
         r.status,
         r.lease_id,
         r.lease_worker_id,
@@ -2631,6 +2709,12 @@ defmodule VilanoKernel.Storage do
         r.project_name,
         r.definition_kind,
         r.definition_name,
+        r.project_snapshot_path,
+        r.project_definitions_json,
+        r.definition_file,
+        r.definition_export_name,
+        r.definition_runtime_kind,
+        r.definition_source_language,
         r.status,
         r.lease_id,
         r.lease_worker_id,
@@ -2747,10 +2831,7 @@ defmodule VilanoKernel.Storage do
   end
 
   defp append_event!(run_id, event_type, body, created_at) do
-    next_seq =
-      Repo
-      |> SQL.query!("select coalesce(max(seq), 0) + 1 from run_events where run_id = ?", [run_id])
-      |> first_integer()
+    next_seq = reserve_next_event_seq!(run_id)
 
     SQL.query!(
       Repo,
@@ -2775,6 +2856,20 @@ defmodule VilanoKernel.Storage do
     )
   end
 
+  defp reserve_next_event_seq!(run_id) do
+    Repo
+    |> SQL.query!(
+      """
+      insert into run_event_sequences (run_id, next_seq)
+      values (?, 2)
+      on conflict(run_id) do update set next_seq = run_event_sequences.next_seq + 1
+      returning next_seq - 1
+      """,
+      [run_id]
+    )
+    |> first_integer()
+  end
+
   defp shift_seconds(iso8601, seconds) do
     {:ok, datetime, _offset} = DateTime.from_iso8601(iso8601)
     datetime |> DateTime.add(seconds, :second) |> DateTime.to_iso8601()
@@ -2785,8 +2880,12 @@ defmodule VilanoKernel.Storage do
     datetime |> DateTime.add(milliseconds, :millisecond) |> DateTime.to_iso8601()
   end
 
-  defp insert_workflow_run!(run_id, project_name, definition_name, input, now) do
+  defp insert_workflow_run!(run_id, project, definition, input, now) do
     input_json = Jason.encode!(input || %{})
+    project_name = Map.fetch!(project, "name")
+    definition_name = Map.fetch!(definition, "name")
+    project_snapshot_path = Map.get(project, "snapshotPath") || Map.fetch!(project, "path")
+    project_definitions_json = Jason.encode!(Map.fetch!(project, "definitions"))
 
     SQL.query!(
       Repo,
@@ -2796,6 +2895,12 @@ defmodule VilanoKernel.Storage do
         project_name,
         definition_kind,
         definition_name,
+        project_snapshot_path,
+        project_definitions_json,
+        definition_file,
+        definition_export_name,
+        definition_runtime_kind,
+        definition_source_language,
         status,
         lease_id,
         lease_worker_id,
@@ -2805,13 +2910,19 @@ defmodule VilanoKernel.Storage do
         error_json,
         created_at,
         updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       """,
       [
         run_id,
         project_name,
         "workflow",
         definition_name,
+        project_snapshot_path,
+        project_definitions_json,
+        Map.fetch!(definition, "file"),
+        Map.fetch!(definition, "exportName"),
+        Map.fetch!(definition, "runtimeKind"),
+        Map.fetch!(definition, "sourceLanguage"),
         "pending",
         nil,
         nil,
@@ -2831,6 +2942,7 @@ defmodule VilanoKernel.Storage do
         project: project_name,
         definitionKind: "workflow",
         definitionName: definition_name,
+        definition: definition,
         input: input || %{}
       },
       now

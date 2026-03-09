@@ -66,9 +66,9 @@ export class WorkerClient {
     return await this.request<KernelStatusResponse>("GET", "/v1/status");
   }
 
-  async assertCompatible(expectedProtocolVersion: number): Promise<void> {
+  async assertCompatible(expectedProtocolVersion: number): Promise<KernelStatusResponse> {
     if (this.compatibilityChecked) {
-      return;
+      return await this.getStatus();
     }
 
     const status = await this.getStatus();
@@ -79,6 +79,7 @@ export class WorkerClient {
     }
 
     this.compatibilityChecked = true;
+    return status;
   }
 
   async leaseActivation(): Promise<WorkflowActivation | ServiceTurnActivation | null> {
@@ -305,16 +306,18 @@ export class WorkerClient {
   }
 
   async ensureService(
-    project: string,
+    project: string | null,
     service: string,
     serviceKey: string,
-    keyInput: unknown
+    keyInput: unknown,
+    leaseId?: string
   ): Promise<string> {
     const response = await this.request<ServiceRunResponse>("POST", "/v1/services/ensure", {
       project,
       service,
       serviceKey,
       keyInput,
+      leaseId,
     });
 
     return response.run.id;

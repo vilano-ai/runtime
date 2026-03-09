@@ -4,7 +4,7 @@ export interface DefinitionRecord {
   exportName: string;
   file: string;
   runtimeKind: "javascript";
-  sourceLanguage: "typescript";
+  sourceLanguage: "typescript" | "javascript";
 }
 
 export type DefinitionKind = DefinitionRecord["kind"];
@@ -24,6 +24,7 @@ export type RunStatus =
 export interface ProjectRecord {
   name: string;
   path: string;
+  snapshotPath: string | null;
   lastSyncedAt: string | null;
   definitionsManifestHash: string | null;
   definitions: {

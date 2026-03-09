@@ -205,9 +205,6 @@ defmodule VilanoKernel.Router do
         send_json(conn, 200, %{ok: true, activation: nil})
 
       %{activation_kind: "workflow", lease_id: lease_id, lease_expires_at: lease_expires_at, run: run} ->
-        project = Storage.get_project(run["project"])
-        definition = Storage.get_definition(run["project"], "workflow", run["definitionName"])
-
         send_json(conn, 200, %{
           ok: true,
           activation: %{
@@ -219,10 +216,10 @@ defmodule VilanoKernel.Router do
               input: run["input"]
             },
             project: %{
-              name: project["name"],
-              path: project["path"]
+              name: run["project"],
+              path: activation_project_path(run)
             },
-            definition: definition
+            definition: activation_definition(run)
           }
         })
 
@@ -234,9 +231,6 @@ defmodule VilanoKernel.Router do
         service: service,
         envelope: envelope
       } ->
-        project = Storage.get_project(run["project"])
-        definition = Storage.get_definition(run["project"], "service", run["definitionName"])
-
         send_json(conn, 200, %{
           ok: true,
           activation: %{
@@ -247,10 +241,10 @@ defmodule VilanoKernel.Router do
               id: run["id"]
             },
             project: %{
-              name: project["name"],
-              path: project["path"]
+              name: run["project"],
+              path: activation_project_path(run)
             },
-            definition: definition,
+            definition: activation_definition(run),
             service: %{
               key: service["serviceKey"],
               keyInput: service["keyInput"],
@@ -535,18 +529,15 @@ defmodule VilanoKernel.Router do
   end
 
   post "/v1/services/ensure" do
-    project = fetch_required_string(conn.body_params, "project")
     service = fetch_required_string(conn.body_params, "service")
     service_key = fetch_required_string(conn.body_params, "serviceKey")
 
-    with project_record when not is_nil(project_record) <- Storage.get_project(project),
-         definition when not is_nil(definition) <- Storage.get_definition(project, "service", service),
-         run <- Storage.ensure_service_run!(project, definition["name"], service_key, Map.get(conn.body_params, "keyInput", %{})) do
-      _ = project_record
+    with {project_record, definition} when not is_nil(project_record) <- resolve_service_definition(conn.body_params, service),
+         run <- Storage.ensure_service_run!(project_record, definition, service_key, Map.get(conn.body_params, "keyInput", %{})) do
       send_json(conn, 200, %{ok: true, run: run})
     else
       nil ->
-        send_error(conn, 404, "not_found", "Unknown service '#{service}' in project '#{project}'")
+        send_error(conn, 404, "not_found", "Unknown service '#{service}'")
     end
   end
 
@@ -555,8 +546,8 @@ defmodule VilanoKernel.Router do
          definition when not is_nil(definition) <- Storage.get_definition(project, "service", name),
          result <-
            Storage.enqueue_service_envelope!(
-             project,
-             definition["name"],
+             project_record,
+             definition,
              service_key,
              Map.get(conn.body_params, "keyInput", %{}),
              "send",
@@ -583,8 +574,8 @@ defmodule VilanoKernel.Router do
          definition when not is_nil(definition) <- Storage.get_definition(project, "service", name),
          result <-
            Storage.enqueue_service_envelope!(
-             project,
-             definition["name"],
+             project_record,
+             definition,
              service_key,
              Map.get(conn.body_params, "keyInput", %{}),
              "ask",
@@ -611,8 +602,8 @@ defmodule VilanoKernel.Router do
          definition when not is_nil(definition) <- Storage.get_definition(project, "service", name),
          result <-
            Storage.enqueue_service_envelope!(
-             project,
-             definition["name"],
+             project_record,
+             definition,
              service_key,
              Map.get(conn.body_params, "keyInput", %{}),
              "signal",
@@ -635,10 +626,7 @@ defmodule VilanoKernel.Router do
   end
 
   post "/v1/services/:project/:name/runs/:service_key/stop" do
-    with project_record when not is_nil(project_record) <- Storage.get_project(project),
-         definition when not is_nil(definition) <- Storage.get_definition(project, "service", name),
-         result when not is_nil(result) <- Storage.stop_service_run(project, definition["name"], service_key) do
-      _ = project_record
+    with result when not is_nil(result) <- Storage.stop_service_run(project, name, service_key) do
       maybe_kill_managed_worker(result)
       send_json(conn, 200, %{
         ok: true,
@@ -661,8 +649,7 @@ defmodule VilanoKernel.Router do
 
     with project_record when not is_nil(project_record) <- Storage.get_project(project),
          definition when not is_nil(definition) <- Storage.get_definition(project, "workflow", workflow),
-         run <- Storage.create_workflow_run!(project, definition["name"], Map.get(conn.body_params, "input", %{})) do
-      _ = project_record
+         run <- Storage.create_workflow_run!(project_record, definition, Map.get(conn.body_params, "input", %{})) do
       send_json(conn, 200, %{ok: true, run: run})
     else
       nil ->
@@ -724,6 +711,56 @@ defmodule VilanoKernel.Router do
       nil -> send_error(conn, 404, "not_found", "Unknown run: #{id}")
       signal -> send_json(conn, 200, %{ok: true, signal: signal})
     end
+  end
+
+  defp resolve_service_definition(body_params, service_name) do
+    case Map.get(body_params, "leaseId") do
+      lease_id when is_binary(lease_id) and lease_id != "" ->
+        with run when not is_nil(run) <- Storage.get_active_run_by_lease(lease_id),
+             definition when not is_nil(definition) <- find_definition_in_run(run, "service", service_name) do
+          {
+            %{
+              "name" => run["project"],
+              "path" => activation_project_path(run),
+              "snapshotPath" => run["projectSnapshotPath"],
+              "definitions" => run["projectDefinitions"] || %{"workflows" => [], "services" => []}
+            },
+            definition
+          }
+        end
+
+      _ ->
+        project = fetch_required_string(body_params, "project")
+
+        with project_record when not is_nil(project_record) <- Storage.get_project(project),
+             definition when not is_nil(definition) <- Storage.get_definition(project, "service", service_name) do
+          {project_record, definition}
+        end
+    end
+  end
+
+  defp find_definition_in_run(run, kind, definition_name) do
+    bucket =
+      case kind do
+        "workflow" -> get_in(run, ["projectDefinitions", "workflows"]) || []
+        "service" -> get_in(run, ["projectDefinitions", "services"]) || []
+      end
+
+    Enum.find(bucket, &(&1["name"] == definition_name)) ||
+      Storage.get_definition(run["project"], kind, definition_name)
+  end
+
+  defp activation_project_path(run) do
+    run["projectSnapshotPath"] ||
+      case Storage.get_project(run["project"]) do
+        nil -> run["project"]
+        project -> project["snapshotPath"] || project["path"]
+      end
+  end
+
+  defp activation_definition(run) do
+    run["definition"] ||
+      Storage.get_definition(run["project"], run["definitionKind"], run["definitionName"])
   end
 
   match _ do

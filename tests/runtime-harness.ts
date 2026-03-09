@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -23,8 +22,7 @@ import type {
 const ROOT = path.resolve(import.meta.dir, "..");
 const CLI_ENTRY = path.join(ROOT, "cli", "bin", "vilano.ts");
 const WORKER_ROOT = path.join(ROOT, "worker");
-const BOOTSTRAP_DEMO_TMP = path.join(ROOT, "examples", "bootstrap-demo", "tmp");
-const ROOT_TMP = path.join(ROOT, "tmp");
+const BOOTSTRAP_DEMO_ROOT = path.join(ROOT, "examples", "bootstrap-demo");
 
 export class RuntimeHarness {
   private readonly serviceAddressCache = new Map<string, { project: string; name: string; key: string }>();
@@ -40,14 +38,13 @@ export class RuntimeHarness {
       env?: Record<string, string>;
     } = {}
   ): Promise<RuntimeHarness> {
-    await fs.rm(BOOTSTRAP_DEMO_TMP, { recursive: true, force: true });
-    await fs.rm(ROOT_TMP, { recursive: true, force: true });
-
     let lastError: unknown;
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
       const runtimeHome = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-test-"));
-      const port = await reservePort();
+      const projectDir = path.join(runtimeHome, "projects", "bootstrap-demo");
+      await cloneBootstrapDemoProject(projectDir);
+      const port = choosePortCandidate();
       const harness = new RuntimeHarness(runtimeHome, port, {
         VILANO_KERNEL_NO_COMPILE: "1",
         VILANO_KERNEL_PORT: String(port),
@@ -56,7 +53,7 @@ export class RuntimeHarness {
 
       try {
         await harness.runCli(["daemon", "start", "--port", String(port)]);
-        await harness.runCli(["project", "add", "./examples/bootstrap-demo", "--name", "demo"]);
+        await harness.runCli(["project", "add", projectDir, "--name", "demo"]);
         return harness;
       } catch (error) {
         lastError = error;
@@ -74,8 +71,6 @@ export class RuntimeHarness {
       await this.runCli(["daemon", "stop"], { allowFailure: true });
     } finally {
       await fs.rm(this.runtimeHome, { recursive: true, force: true });
-      await fs.rm(BOOTSTRAP_DEMO_TMP, { recursive: true, force: true });
-      await fs.rm(ROOT_TMP, { recursive: true, force: true });
     }
   }
 
@@ -223,9 +218,13 @@ export class RuntimeHarness {
       args.push("--once");
     }
 
-    return this.spawnCommand(args, {
-      VILANO_DAEMON_TOKEN: await this.readDaemonToken(),
-    });
+    return this.spawnCommand(
+      args,
+      {
+        VILANO_DAEMON_TOKEN: await this.readDaemonToken(),
+      },
+      this.runtimeHome
+    );
   }
 
   spawnCliCommand(args: string[]): SpawnedCommand {
@@ -283,9 +282,13 @@ export class RuntimeHarness {
     });
   }
 
-  private spawnCommand(command: string[], extraEnv: Record<string, string> = {}): SpawnedCommand {
+  private spawnCommand(
+    command: string[],
+    extraEnv: Record<string, string> = {},
+    cwd = ROOT
+  ): SpawnedCommand {
     const proc = Bun.spawn(command, {
-      cwd: ROOT,
+      cwd,
       env: {
         ...process.env,
         VILANO_HOME: this.runtimeHome,
@@ -315,6 +318,32 @@ export class RuntimeHarness {
     }
 
     const [project, name] = parseQualifiedReference(reference);
+    const serviceRunsResponse = await this.requestKernel(
+      `/v1/service-runs?project=${encodeURIComponent(project)}`
+    );
+    const serviceRunsBody = (await serviceRunsResponse.json()) as {
+      ok: true;
+      runs: Array<{ definitionName: string; serviceKey?: string; keyInput?: unknown }>;
+    };
+
+    const existingRun = serviceRunsBody.runs.find(
+      (entry) =>
+        entry.definitionName === name &&
+        entry.serviceKey &&
+        JSON.stringify(entry.keyInput ?? null) === JSON.stringify(keyInput ?? null)
+    );
+
+    if (existingRun?.serviceKey) {
+      const resolved = {
+        project,
+        name,
+        key: existingRun.serviceKey,
+      };
+
+      this.serviceAddressCache.set(cacheKey, resolved);
+      return resolved;
+    }
+
     const projectResponse = await this.requestKernel(`/v1/projects/${encodeURIComponent(project)}`);
     const projectBody = (await projectResponse.json()) as {
       ok: true;
@@ -421,29 +450,35 @@ async function waitFor<T>(
   throw new Error(`Timed out waiting after ${timeoutMs}ms`);
 }
 
-async function reservePort(): Promise<number> {
-  return await new Promise<number>((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close(() => reject(new Error("Failed to reserve test port")));
-        return;
-      }
-
-      const { port } = address;
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-
-        resolve(port);
-      });
-    });
+async function cloneBootstrapDemoProject(projectDir: string): Promise<void> {
+  await fs.mkdir(path.dirname(projectDir), { recursive: true });
+  await fs.cp(BOOTSTRAP_DEMO_ROOT, projectDir, {
+    recursive: true,
+    force: true,
+    filter: (_source, destination) => {
+      const name = path.basename(destination);
+      return name !== ".vilano" && name !== "tmp";
+    },
   });
+
+  const sourceNodeModules = path.join(ROOT, "node_modules");
+  const projectNodeModules = path.join(projectDir, "node_modules");
+
+  try {
+    await fs.lstat(projectNodeModules);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+
+    await fs.symlink(sourceNodeModules, projectNodeModules, "dir");
+  }
+}
+
+function choosePortCandidate(): number {
+  const min = 20_000;
+  const max = 50_000;
+  return min + Math.floor(Math.random() * (max - min));
 }
 
 async function streamToText(

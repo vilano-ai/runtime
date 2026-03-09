@@ -974,7 +974,7 @@ export interface components {
             /** @enum {string} */
             runtimeKind: "javascript";
             /** @enum {string} */
-            sourceLanguage: "typescript";
+            sourceLanguage: "typescript" | "javascript";
         };
         ActivationLeaseResponse: {
             /** @constant */

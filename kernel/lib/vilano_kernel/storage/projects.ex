@@ -17,6 +17,7 @@ defmodule VilanoKernel.Storage.Projects do
       select
         name,
         path,
+        snapshot_path,
         last_synced_at,
         definitions_manifest_hash,
         workflows_json,
@@ -37,6 +38,7 @@ defmodule VilanoKernel.Storage.Projects do
       select
         name,
         path,
+        snapshot_path,
         last_synced_at,
         definitions_manifest_hash,
         workflows_json,
@@ -65,13 +67,15 @@ defmodule VilanoKernel.Storage.Projects do
         insert into projects (
           name,
           path,
+          snapshot_path,
           last_synced_at,
           definitions_manifest_hash,
           workflows_json,
           services_json
-        ) values (?, ?, ?, ?, ?, ?)
+        ) values (?, ?, ?, ?, ?, ?, ?)
         on conflict(name) do update set
           path = excluded.path,
+          snapshot_path = excluded.snapshot_path,
           last_synced_at = excluded.last_synced_at,
           definitions_manifest_hash = excluded.definitions_manifest_hash,
           workflows_json = excluded.workflows_json,
@@ -80,6 +84,7 @@ defmodule VilanoKernel.Storage.Projects do
         [
           Map.fetch!(project, "name"),
           Map.fetch!(project, "path"),
+          Map.get(project, "snapshotPath") || Map.fetch!(project, "path"),
           Map.get(project, "lastSyncedAt"),
           Map.get(project, "definitionsManifestHash"),
           workflows_json,
@@ -129,6 +134,7 @@ defmodule VilanoKernel.Storage.Projects do
     %{
       "name" => row["name"],
       "path" => row["path"],
+      "snapshotPath" => row["snapshot_path"] || row["path"],
       "lastSyncedAt" => row["last_synced_at"],
       "definitionsManifestHash" => row["definitions_manifest_hash"],
       "definitions" => %{

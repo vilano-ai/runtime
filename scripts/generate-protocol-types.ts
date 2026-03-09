@@ -3,17 +3,20 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 
 const ROOT = path.resolve(import.meta.dir, "..");
-const GENERATED_DIR = path.join(ROOT, "protocol", "v1", "generated");
+const DEFAULT_GENERATED_DIR = path.join(ROOT, "protocol", "v1", "generated");
 
-await fs.mkdir(GENERATED_DIR, { recursive: true });
+export async function generateProtocolTypes(outputDir = DEFAULT_GENERATED_DIR): Promise<void> {
+  await fs.mkdir(outputDir, { recursive: true });
+  await generate("worker.openapi.yaml", path.join(outputDir, "worker.ts"));
+  await generate("control.openapi.yaml", path.join(outputDir, "control.ts"));
+}
 
-await generate("worker.openapi.yaml", "worker.ts");
-await generate("control.openapi.yaml", "control.ts");
+if (import.meta.main) {
+  await generateProtocolTypes();
+}
 
-async function generate(sourceFile: string, outputFile: string): Promise<void> {
+async function generate(sourceFile: string, outputPath: string): Promise<void> {
   const inputPath = path.join(ROOT, "protocol", "v1", sourceFile);
-  const outputPath = path.join(GENERATED_DIR, outputFile);
-
   await run("openapi-typescript", [inputPath, "-o", outputPath]);
 }
 

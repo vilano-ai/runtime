@@ -6,6 +6,7 @@ export interface RuntimePaths {
   daemonStateFile: string;
   runtimeBundlesDir: string;
   runtimeCacheDir: string;
+  projectSnapshotsDir: string;
 }
 
 export function getRuntimePaths(): RuntimePaths {
@@ -18,5 +19,6 @@ export function getRuntimePaths(): RuntimePaths {
     daemonStateFile: path.join(homeDir, "daemon.json"),
     runtimeBundlesDir: path.join(homeDir, "runtime-bundles"),
     runtimeCacheDir: path.join(homeDir, "runtime-cache"),
+    projectSnapshotsDir: path.join(homeDir, "project-snapshots"),
   };
 }

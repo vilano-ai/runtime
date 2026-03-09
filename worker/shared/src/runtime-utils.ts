@@ -12,8 +12,7 @@ import type {
   RetryFamily,
   RetryJitter,
   RetryOptions,
-} from "@vilano/runtime";
-
+} from "./runtime-sdk.ts";
 import type { WorkerClient } from "./client.ts";
 import type { RuntimeAdapter } from "./runtime-adapter.ts";
 

@@ -12,8 +12,8 @@ defmodule VilanoKernel.ManagedWorker do
   def kill_worker(worker_id, reason \\ :requested)
 
   def kill_worker("managed-local-" <> index_text, reason) do
-    case Integer.parse(index_text) do
-      {index, ""} ->
+    case parse_managed_worker_index(index_text) do
+      {:ok, index} ->
         via_name(index)
         |> GenServer.whereis()
         |> case do
@@ -127,7 +127,7 @@ defmodule VilanoKernel.ManagedWorker do
         :stderr_to_stdout,
         :exit_status,
         :hide,
-        {:cd, String.to_charlist(runtime.project_root)},
+        {:cd, String.to_charlist(runtime.home_dir)},
         {:env, worker_env(runtime)},
         {:args,
          Enum.map(
@@ -209,6 +209,22 @@ defmodule VilanoKernel.ManagedWorker do
   defp runtime_executable("bun"), do: System.find_executable("bun")
   defp runtime_executable("node"), do: System.find_executable("node")
   defp runtime_executable(_runtime), do: nil
+
+  defp parse_managed_worker_index(index_text) do
+    case Integer.parse(index_text) do
+      {index, ""} when index > 0 ->
+        runtime = Application.fetch_env!(:vilano_kernel, :runtime)
+
+        if index <= runtime.managed_worker_count do
+          {:ok, index}
+        else
+          :error
+        end
+
+      _ ->
+        :error
+    end
+  end
 
   defp list_worker_files!(root_dir) do
     root_dir

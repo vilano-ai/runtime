@@ -6,6 +6,7 @@ import {
   syncProject,
 } from "../daemon-client.ts";
 import { renderProject, renderProjectSummary, writeOutput } from "../output.ts";
+import { materializeProjectSnapshot } from "../project-snapshot.ts";
 import { buildProjectManifest } from "../registry.ts";
 import { CliError } from "../cli-error.ts";
 
@@ -29,6 +30,7 @@ export async function handleProjectCommand(
       }
 
       const manifest = await buildProjectManifest(nameFlag, projectPath, { regenerate: true });
+      manifest.snapshotPath = await materializeProjectSnapshot(nameFlag, manifest.path);
       const response = await addProject(manifest);
       writeOutput(flags, response, (body) => renderProject(body.project));
       return 0;
@@ -62,6 +64,7 @@ export async function handleProjectCommand(
       const manifest = await buildProjectManifest(existing.project.name, existing.project.path, {
         regenerate: true,
       });
+      manifest.snapshotPath = await materializeProjectSnapshot(existing.project.name, manifest.path);
       const response = await syncProject(manifest);
       writeOutput(flags, response, (body) => renderProject(body.project));
       return 0;

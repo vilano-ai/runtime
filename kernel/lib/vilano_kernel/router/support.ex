@@ -9,6 +9,7 @@ defmodule VilanoKernel.Router.Support do
     %{
       "name" => fetch_required_string(body_params, "name"),
       "path" => fetch_required_string(body_params, "path"),
+      "snapshotPath" => Map.get(body_params, "snapshotPath"),
       "lastSyncedAt" => Map.get(body_params, "lastSyncedAt"),
       "definitionsManifestHash" => Map.get(body_params, "definitionsManifestHash"),
       "definitions" => %{

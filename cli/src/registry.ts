@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import {
+  loadExplicitProjectManifest,
   loadProjectManifest,
   type BuildProjectManifestOptions,
   writeGeneratedProjectManifest,
@@ -25,6 +26,11 @@ export async function buildProjectManifest(
     if (generated) {
       return generated;
     }
+  }
+
+  const explicitManifest = await loadExplicitProjectManifest(projectName, resolvedPath);
+  if (explicitManifest) {
+    return explicitManifest;
   }
 
   return await writeGeneratedProjectManifest(projectName, resolvedPath);

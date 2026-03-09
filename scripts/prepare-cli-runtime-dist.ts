@@ -23,6 +23,10 @@ await copyIntoRuntimeDist("worker", [
   "shared",
 ]);
 
+await copyIntoRuntimeDist("sdk", [
+  "typescript",
+]);
+
 await copyIntoRuntimeDist("protocol", [
   "v1",
 ]);

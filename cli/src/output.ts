@@ -145,6 +145,7 @@ export function renderProject(project: ProjectRecord): string {
   return [
     `project: ${project.name}`,
     `path: ${project.path}`,
+    `snapshot_path: ${project.snapshotPath ?? "none"}`,
     `last_synced_at: ${project.lastSyncedAt ?? "never"}`,
     `definitions_manifest_hash: ${project.definitionsManifestHash ?? "none"}`,
     `workflows: ${project.definitions.workflows.length}`,
@@ -153,7 +154,7 @@ export function renderProject(project: ProjectRecord): string {
 }
 
 export function renderProjectSummary(project: ProjectRecord): string {
-  return `${project.name}\t${project.path}\tworkflows=${project.definitions.workflows.length}\tservices=${project.definitions.services.length}`;
+  return `${project.name}\t${project.path}\tsnapshot=${project.snapshotPath ?? "none"}\tworkflows=${project.definitions.workflows.length}\tservices=${project.definitions.services.length}`;
 }
 
 export function renderDefinitionList(

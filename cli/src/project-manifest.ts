@@ -43,7 +43,7 @@ export function getGeneratedProjectManifestCachePath(projectPath: string): strin
   return path.join(projectPath, ".vilano", "project-manifest.json");
 }
 
-export async function loadProjectManifest(
+export async function loadExplicitProjectManifest(
   projectName: string,
   projectPath: string
 ): Promise<ProjectRecord | null> {
@@ -51,12 +51,26 @@ export async function loadProjectManifest(
   const manifestPath = getProjectManifestPath(resolvedPath);
   const manifest = await readJsonFile<unknown>(manifestPath, null);
 
-  if (manifest) {
-    const validated = await assertValidProjectManifest(manifest, manifestPath);
-    return toProjectRecord(projectName, resolvedPath, validated, {
-      generatedAt: null,
-      definitionsManifestHash: hashDefinitions(validated.definitions),
-    });
+  if (!manifest) {
+    return null;
+  }
+
+  const validated = await assertValidProjectManifest(manifest, manifestPath);
+  return toProjectRecord(projectName, resolvedPath, validated, {
+    generatedAt: null,
+    definitionsManifestHash: hashDefinitions(validated.definitions),
+  });
+}
+
+export async function loadProjectManifest(
+  projectName: string,
+  projectPath: string
+): Promise<ProjectRecord | null> {
+  const resolvedPath = path.resolve(projectPath);
+  const explicitManifest = await loadExplicitProjectManifest(projectName, resolvedPath);
+
+  if (explicitManifest) {
+    return explicitManifest;
   }
 
   return await loadGeneratedProjectManifestCache(projectName, resolvedPath);
@@ -137,6 +151,7 @@ function toProjectRecord(
   return {
     name: projectName,
     path: projectPath,
+    snapshotPath: null,
     lastSyncedAt: options.generatedAt,
     definitionsManifestHash: options.definitionsManifestHash,
     definitions: manifest.definitions,
@@ -225,7 +240,7 @@ function scanDefinitionsInSource(
       exportName,
       file,
       runtimeKind: "javascript",
-      sourceLanguage: "typescript",
+      sourceLanguage: inferSourceLanguage(file),
     });
   }
 
@@ -238,6 +253,18 @@ function compareDefinitions(a: DefinitionRecord, b: DefinitionRecord): number {
 
 function hashDefinitions(definitions: ProjectManifestFile["definitions"]): string {
   return crypto.createHash("sha256").update(JSON.stringify(definitions)).digest("hex");
+}
+
+function inferSourceLanguage(file: string): "typescript" | "javascript" {
+  switch (path.extname(file)) {
+    case ".ts":
+    case ".tsx":
+    case ".mts":
+    case ".cts":
+      return "typescript";
+    default:
+      return "javascript";
+  }
 }
 
 function isGeneratedProjectManifestCacheFile(

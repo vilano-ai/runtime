@@ -36,6 +36,7 @@ import {
   renderDefinitionList,
   writeOutput,
 } from "./output.ts";
+import { materializeProjectSnapshot } from "./project-snapshot.ts";
 import { buildProjectManifest, findDefinition, resolveProjectForCwd } from "./registry.ts";
 import {
   decorateRunInspect,
@@ -132,7 +133,7 @@ async function handleWorkflow(
       const project = await resolveProjectScope(flags);
       if (project) {
         const existing = await inspectProject(project);
-        await syncProject(await buildProjectManifest(existing.project.name, existing.project.path));
+        await syncProject(await buildAndMaterializeProjectManifest(existing.project.name, existing.project.path));
       }
 
       const response = await listDefinitions("workflow", project);
@@ -256,7 +257,7 @@ async function handleService(
       const project = await resolveProjectScope(flags);
       if (project) {
         const existing = await inspectProject(project);
-        await syncProject(await buildProjectManifest(existing.project.name, existing.project.path));
+        await syncProject(await buildAndMaterializeProjectManifest(existing.project.name, existing.project.path));
       }
 
       const response = await listDefinitions("service", project);
@@ -539,7 +540,7 @@ async function resolveWorkflowReference(
       throw new CliError(`Unknown project: ${projectName}`);
     }
 
-    await syncProject(await buildProjectManifest(project.name, project.path));
+    await syncProject(await buildAndMaterializeProjectManifest(project.name, project.path));
     projects = (await listProjects()).projects;
   }
 
@@ -561,11 +562,20 @@ async function resolveServiceReference(
       throw new CliError(`Unknown project: ${projectName}`);
     }
 
-    await syncProject(await buildProjectManifest(project.name, project.path));
+    await syncProject(await buildAndMaterializeProjectManifest(project.name, project.path));
     projects = (await listProjects()).projects;
   }
 
   return findDefinition(projects, "service", reference, process.cwd(), explicitProject);
+}
+
+async function buildAndMaterializeProjectManifest(
+  projectName: string,
+  projectPath: string
+): Promise<ProjectRecord> {
+  const manifest = await buildProjectManifest(projectName, projectPath, { regenerate: true });
+  manifest.snapshotPath = await materializeProjectSnapshot(projectName, manifest.path);
+  return manifest;
 }
 
 async function resolveServiceTarget(

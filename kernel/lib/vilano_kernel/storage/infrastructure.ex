@@ -83,6 +83,7 @@ defmodule VilanoKernel.Storage.Infrastructure do
       create table if not exists projects (
         name text primary key,
         path text not null,
+        snapshot_path text,
         last_synced_at text,
         definitions_manifest_hash text,
         workflows_json text not null,
@@ -100,6 +101,12 @@ defmodule VilanoKernel.Storage.Infrastructure do
         project_name text not null,
         definition_kind text not null,
         definition_name text not null,
+        project_snapshot_path text,
+        project_definitions_json text,
+        definition_file text,
+        definition_export_name text,
+        definition_runtime_kind text,
+        definition_source_language text,
         status text not null,
         lease_id text,
         lease_worker_id text,
@@ -125,6 +132,17 @@ defmodule VilanoKernel.Storage.Infrastructure do
         body_json text not null,
         created_at text not null,
         unique (run_id, seq)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists run_event_sequences (
+        run_id text primary key,
+        next_seq integer not null
       )
       """,
       []

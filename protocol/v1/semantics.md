@@ -39,7 +39,8 @@ These semantics are authoritative for the current kernel, CLI, and JavaScript/Ty
 ## Definition Metadata
 
 - Project manifests identify definitions by kind, name, file, export name, source language, and runtime kind.
-- The current manifest/runtime pair is `sourceLanguage=typescript` and `runtimeKind=javascript`.
+- The current JS/TS manifest/runtime pairs are `sourceLanguage=typescript` or
+  `sourceLanguage=javascript`, both with `runtimeKind=javascript`.
 - Future worker families may add additional runtime kinds without changing the kernel control model.
 
 ## Retries

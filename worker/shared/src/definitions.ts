@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { ServiceDefinition, WorkflowDefinition } from "@vilano/runtime";
+import type { ServiceDefinition, WorkflowDefinition } from "./runtime-sdk.ts";
 
 import type { ServiceTurnActivation, WorkflowActivation } from "./client.ts";
 
@@ -62,9 +62,8 @@ async function loadDefinitionModule(
   exportName: string
 ): Promise<Record<string, unknown>> {
   const absolutePath = path.join(projectPath, file);
-  const stats = await fs.stat(absolutePath);
-  const version = `${stats.mtimeMs}-${stats.size}`;
-  const moduleUrl = `${pathToFileURL(absolutePath).href}?v=${encodeURIComponent(version)}`;
+  await fs.stat(absolutePath);
+  const moduleUrl = pathToFileURL(absolutePath).href;
   const moduleExports = (await import(moduleUrl)) as Record<string, unknown>;
   if (!(exportName in moduleExports)) {
     return moduleExports;

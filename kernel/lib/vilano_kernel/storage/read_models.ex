@@ -13,6 +13,12 @@ defmodule VilanoKernel.Storage.ReadModels do
           project_name,
           definition_kind,
           definition_name,
+          project_snapshot_path,
+          project_definitions_json,
+          definition_file,
+          definition_export_name,
+          definition_runtime_kind,
+          definition_source_language,
           status,
           lease_id,
           lease_worker_id,
@@ -32,6 +38,12 @@ defmodule VilanoKernel.Storage.ReadModels do
           project_name,
           definition_kind,
           definition_name,
+          project_snapshot_path,
+          project_definitions_json,
+          definition_file,
+          definition_export_name,
+          definition_runtime_kind,
+          definition_source_language,
           status,
           lease_id,
           lease_worker_id,
@@ -60,13 +72,19 @@ defmodule VilanoKernel.Storage.ReadModels do
     |> SQL.query!(
       """
       select
-        id,
-        project_name,
-        definition_kind,
-        definition_name,
-        status,
-        lease_id,
-        lease_worker_id,
+          id,
+          project_name,
+          definition_kind,
+          definition_name,
+          project_snapshot_path,
+          project_definitions_json,
+          definition_file,
+          definition_export_name,
+          definition_runtime_kind,
+          definition_source_language,
+          status,
+          lease_id,
+          lease_worker_id,
         lease_expires_at,
         input_json,
         output_json,
@@ -313,6 +331,9 @@ defmodule VilanoKernel.Storage.ReadModels do
       "project" => row["project_name"],
       "definitionKind" => row["definition_kind"],
       "definitionName" => row["definition_name"],
+      "projectSnapshotPath" => row["project_snapshot_path"],
+      "projectDefinitions" => decode_json_value(row["project_definitions_json"], nil),
+      "definition" => definition_from_row(row),
       "status" => row["status"],
       "leaseId" => row["lease_id"],
       "leaseWorkerId" => row["lease_worker_id"],
@@ -323,6 +344,21 @@ defmodule VilanoKernel.Storage.ReadModels do
       "createdAt" => row["created_at"],
       "updatedAt" => row["updated_at"]
     }
+  end
+
+  defp definition_from_row(row) do
+    if row["definition_file"] do
+      %{
+        "kind" => row["definition_kind"],
+        "name" => row["definition_name"],
+        "file" => row["definition_file"],
+        "exportName" => row["definition_export_name"],
+        "runtimeKind" => row["definition_runtime_kind"],
+        "sourceLanguage" => row["definition_source_language"]
+      }
+    else
+      nil
+    end
   end
 
   defp run_event_from_row(row) do

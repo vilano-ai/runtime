@@ -145,7 +145,7 @@ components:
           enum: [javascript]
         sourceLanguage:
           type: string
-          enum: [typescript]
+          enum: [typescript, javascript]
     ActivationLeaseResponse:
       type: object
       required: [ok, activation]
