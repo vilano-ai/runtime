@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
+import type { components as ControlComponents } from "../../protocol/v1/generated/control.ts";
 import { ensureDir, readJsonFile, writeJsonFileAtomic } from "./json-file.ts";
 import { prepareRuntimeBundle } from "./runtime-materializer.ts";
 import { CLI_PROTOCOL_VERSION } from "./runtime-version.ts";
@@ -37,22 +38,7 @@ interface RequestOptions {
   autoStart?: boolean;
 }
 
-interface KernelStatusBody {
-  ok: true;
-  runtimeVersion: string;
-  protocolVersion: number;
-  schemaVersion: number;
-  appliedMigrations: Array<{ version: number; name: string; applied_at: string }>;
-  port: number;
-  startedAt: string;
-  homeDir: string;
-  projectRoot: string;
-  runtimeDbPath: string;
-  managedWorkerCount: number;
-  managedWorkerRuntime: string;
-  leaseDurationSeconds: number;
-  projectCount: number;
-}
+type KernelStatusBody = ControlComponents["schemas"]["StatusResponse"];
 
 class KernelRequestError extends Error {
   constructor(

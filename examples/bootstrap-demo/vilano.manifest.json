@@ -1,0 +1,241 @@
+{
+  "manifestVersion": 1,
+  "definitions": {
+    "workflows": [
+      {
+        "kind": "workflow",
+        "name": "approvalCoordinator",
+        "exportName": "approvalCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "blockingStep",
+        "exportName": "blockingStep",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "childTask",
+        "exportName": "childTask",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "cooperativeStep",
+        "exportName": "cooperativeStep",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "delegator",
+        "exportName": "delegator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "echoChild",
+        "exportName": "echoChild",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "gate",
+        "exportName": "gate",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "implicitKeyProbe",
+        "exportName": "implicitKeyProbe",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "longExec",
+        "exportName": "longExec",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "mailboxAskWorkflow",
+        "exportName": "mailboxAskWorkflow",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "nonRetryingExec",
+        "exportName": "nonRetryingExec",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "nonRetryingStep",
+        "exportName": "nonRetryingStep",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "planner",
+        "exportName": "planner",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "retryingExec",
+        "exportName": "retryingExec",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "retryingStep",
+        "exportName": "retryingStep",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "reviewCoordinator",
+        "exportName": "reviewCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "serviceTurnCoordinator",
+        "exportName": "serviceTurnCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "sleeper",
+        "exportName": "sleeper",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "slowChildTask",
+        "exportName": "slowChildTask",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "slowDelegator",
+        "exportName": "slowDelegator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "slowWorkflowStep",
+        "exportName": "slowWorkflowStep",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "timedExec",
+        "exportName": "timedExec",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "timeoutRetryingStep",
+        "exportName": "timeoutRetryingStep",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      }
+    ],
+    "services": [
+      {
+        "kind": "service",
+        "name": "mailboxProbe",
+        "exportName": "mailboxProbe",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "service",
+        "name": "nonRetryingResponder",
+        "exportName": "nonRetryingResponder",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "service",
+        "name": "operator",
+        "exportName": "operator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "service",
+        "name": "retryingResponder",
+        "exportName": "retryingResponder",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "service",
+        "name": "reviewer",
+        "exportName": "reviewer",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "service",
+        "name": "timeoutOnlyResponder",
+        "exportName": "timeoutOnlyResponder",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      }
+    ]
+  }
+}

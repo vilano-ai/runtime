@@ -11,6 +11,65 @@ components:
       type: apiKey
       in: header
       name: X-Vilano-Token
+  schemas:
+    StatusResponse:
+      type: object
+      required:
+        - ok
+        - runtimeVersion
+        - protocolVersion
+        - schemaVersion
+        - appliedMigrations
+        - port
+        - startedAt
+        - homeDir
+        - projectRoot
+        - runtimeDbPath
+        - managedWorkerCount
+        - managedWorkerRuntime
+        - leaseDurationSeconds
+        - projectCount
+      properties:
+        ok:
+          const: true
+        runtimeVersion:
+          type: string
+        protocolVersion:
+          type: integer
+        schemaVersion:
+          type: integer
+        appliedMigrations:
+          type: array
+          items:
+            type: object
+            required: [version, name, applied_at]
+            properties:
+              version:
+                type: integer
+              name:
+                type: string
+              applied_at:
+                type: string
+                format: date-time
+        port:
+          type: integer
+        startedAt:
+          type: string
+          format: date-time
+        homeDir:
+          type: string
+        projectRoot:
+          type: string
+        runtimeDbPath:
+          type: string
+        managedWorkerCount:
+          type: integer
+        managedWorkerRuntime:
+          type: string
+        leaseDurationSeconds:
+          type: integer
+        projectCount:
+          type: integer
 security:
   - daemonToken: []
 paths:
@@ -20,6 +79,10 @@ paths:
       responses:
         '200':
           description: Kernel status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
   /v1/admin/shutdown:
     post:
       summary: Gracefully stop the local kernel.

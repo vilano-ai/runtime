@@ -27,6 +27,9 @@
     "typecheck": "tsc -p tsconfig.json",
     "prepack": "bun ../scripts/prepare-cli-runtime-dist.ts"
   },
+  "dependencies": {
+    "ajv": "^8.18.0"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/vilano-ai/runtime.git",

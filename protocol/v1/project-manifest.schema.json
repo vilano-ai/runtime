@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/vilano-ai/runtime/protocol/v1/project-manifest.schema.json",
+  "title": "Vilano Project Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifestVersion",
+    "definitions"
+  ],
+  "properties": {
+    "manifestVersion": {
+      "const": 1
+    },
+    "definitions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflows", "services"],
+      "properties": {
+        "workflows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/definitionRecord"
+          }
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/definitionRecord"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "definitionRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "name",
+        "exportName",
+        "file",
+        "runtimeKind",
+        "sourceLanguage"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["workflow", "service"]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exportName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtimeKind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceLanguage": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

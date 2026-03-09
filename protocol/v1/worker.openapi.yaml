@@ -146,6 +146,253 @@ components:
         sourceLanguage:
           type: string
           enum: [typescript]
+    ActivationLeaseResponse:
+      type: object
+      required: [ok, activation]
+      properties:
+        ok:
+          const: true
+        activation:
+          oneOf:
+            - $ref: '#/components/schemas/WorkflowActivation'
+            - $ref: '#/components/schemas/ServiceTurnActivation'
+            - type: 'null'
+    LeaseStatusActive:
+      type: object
+      required: [active, runId, status, definitionKind, leaseExpiresAt]
+      properties:
+        active:
+          const: true
+        runId:
+          type: string
+        status:
+          type: string
+        definitionKind:
+          type: string
+        leaseExpiresAt:
+          type: [string, 'null']
+          format: date-time
+    LeaseStatusInactive:
+      type: object
+      required: [active]
+      properties:
+        active:
+          const: false
+    LeaseStatusResponse:
+      type: object
+      required: [ok, lease]
+      properties:
+        ok:
+          const: true
+        lease:
+          oneOf:
+            - $ref: '#/components/schemas/LeaseStatusActive'
+            - $ref: '#/components/schemas/LeaseStatusInactive'
+    StepStatePending:
+      type: object
+      required: [status]
+      properties:
+        status:
+          const: pending
+    StepStateCompleted:
+      type: object
+      required: [status, output]
+      properties:
+        status:
+          const: completed
+        output: {}
+    StepStateFailed:
+      type: object
+      required: [status, error]
+      properties:
+        status:
+          const: failed
+        error: {}
+    StepResolveResponse:
+      type: object
+      required: [ok, step]
+      properties:
+        ok:
+          const: true
+        step:
+          oneOf:
+            - $ref: '#/components/schemas/StepStatePending'
+            - $ref: '#/components/schemas/StepStateCompleted'
+            - $ref: '#/components/schemas/StepStateFailed'
+    RetryWaitingState:
+      type: object
+      required: [status, wait]
+      properties:
+        status:
+          const: retry_waiting
+        wait:
+          $ref: '#/components/schemas/WaitRef'
+    StepFailResponse:
+      type: object
+      required: [ok, step]
+      properties:
+        ok:
+          const: true
+        step:
+          oneOf:
+            - $ref: '#/components/schemas/StepStateFailed'
+            - $ref: '#/components/schemas/RetryWaitingState'
+    ExecExecute:
+      type: object
+      required: [status, attempt]
+      properties:
+        status:
+          const: execute
+        attempt:
+          type: integer
+    ExecCompleted:
+      type: object
+      required: [status, output]
+      properties:
+        status:
+          const: completed
+        output: {}
+    ExecFailed:
+      type: object
+      required: [status, error]
+      properties:
+        status:
+          const: failed
+        error: {}
+    ExecResolveResponse:
+      type: object
+      required: [ok, exec]
+      properties:
+        ok:
+          const: true
+        exec:
+          oneOf:
+            - $ref: '#/components/schemas/ExecExecute'
+            - $ref: '#/components/schemas/ExecCompleted'
+            - $ref: '#/components/schemas/ExecFailed'
+    ExecFailResponse:
+      type: object
+      required: [ok, exec]
+      properties:
+        ok:
+          const: true
+        exec:
+          oneOf:
+            - $ref: '#/components/schemas/ExecFailed'
+            - $ref: '#/components/schemas/RetryWaitingState'
+    WaitCompleted:
+      type: object
+      required: [status]
+      properties:
+        status:
+          const: completed
+        output: {}
+    WaitSuspended:
+      type: object
+      required: [status, wait]
+      properties:
+        status:
+          const: suspended
+        wait:
+          $ref: '#/components/schemas/WaitRef'
+    WaitResolveResponse:
+      type: object
+      required: [ok, wait]
+      properties:
+        ok:
+          const: true
+        wait:
+          oneOf:
+            - $ref: '#/components/schemas/WaitCompleted'
+            - $ref: '#/components/schemas/WaitSuspended'
+    ChildCompleted:
+      type: object
+      required: [status, output]
+      properties:
+        status:
+          const: completed
+        output: {}
+    ChildFailed:
+      type: object
+      required: [status, error]
+      properties:
+        status:
+          const: failed
+        error: {}
+    ChildResultResponse:
+      type: object
+      required: [ok, child]
+      properties:
+        ok:
+          const: true
+        child:
+          oneOf:
+            - $ref: '#/components/schemas/ChildCompleted'
+            - $ref: '#/components/schemas/ChildFailed'
+            - $ref: '#/components/schemas/WaitSuspended'
+    RunStatusResponse:
+      type: object
+      required: [ok, run]
+      properties:
+        ok:
+          const: true
+        run:
+          type: object
+          required: [status]
+          properties:
+            status:
+              type: string
+    ServiceRunResponse:
+      type: object
+      required: [ok, run]
+      properties:
+        ok:
+          const: true
+        run:
+          type: object
+          required: [id, status]
+          properties:
+            id:
+              type: string
+            status:
+              type: string
+    ServiceCallCompleted:
+      type: object
+      required: [status]
+      properties:
+        status:
+          const: completed
+        output: {}
+    ServiceCallFailed:
+      type: object
+      required: [status, error]
+      properties:
+        status:
+          const: failed
+        error: {}
+    ServiceCallResolveResponse:
+      type: object
+      required: [ok, result]
+      properties:
+        ok:
+          const: true
+        result:
+          oneOf:
+            - $ref: '#/components/schemas/ServiceCallCompleted'
+            - $ref: '#/components/schemas/ServiceCallFailed'
+            - $ref: '#/components/schemas/WaitSuspended'
+    ServiceTurnFailResponse:
+      type: object
+      required: [ok, run]
+      properties:
+        ok:
+          const: true
+        run: {}
+        status:
+          type: string
+          enum: [retry_waiting]
+        wait:
+          $ref: '#/components/schemas/WaitRef'
 security:
   - daemonToken: []
 paths:
@@ -165,6 +412,10 @@ paths:
       responses:
         '200':
           description: Activation lease result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivationLeaseResponse'
   /v1/leases/{leaseId}/heartbeat:
     post:
       summary: Renew an activation lease.
@@ -189,6 +440,10 @@ paths:
       responses:
         '200':
           description: Lease status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaseStatusResponse'
   /v1/leases/{leaseId}/complete:
     post:
       summary: Complete a workflow activation.
@@ -225,6 +480,10 @@ paths:
       responses:
         '200':
           description: Step state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StepResolveResponse'
   /v1/leases/{leaseId}/steps/complete:
     post:
       summary: Complete a durable step.
@@ -249,6 +508,10 @@ paths:
       responses:
         '200':
           description: Step failed or entered retry wait
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StepFailResponse'
   /v1/leases/{leaseId}/execs/resolve:
     post:
       summary: Resolve or create a durable exec boundary.
@@ -261,6 +524,10 @@ paths:
       responses:
         '200':
           description: Exec state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecResolveResponse'
   /v1/leases/{leaseId}/execs/complete:
     post:
       summary: Complete a durable exec.
@@ -285,6 +552,10 @@ paths:
       responses:
         '200':
           description: Exec failed or entered retry wait
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecFailResponse'
   /v1/leases/{leaseId}/waits/sleep:
     post:
       summary: Resolve or suspend on a sleep wait.
@@ -297,6 +568,10 @@ paths:
       responses:
         '200':
           description: Wait state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WaitResolveResponse'
   /v1/leases/{leaseId}/waits/signal:
     post:
       summary: Resolve or suspend on a signal wait.
@@ -309,6 +584,10 @@ paths:
       responses:
         '200':
           description: Wait state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WaitResolveResponse'
   /v1/leases/{leaseId}/spawns/resolve:
     post:
       summary: Resolve or create a child workflow run.
@@ -333,6 +612,10 @@ paths:
       responses:
         '200':
           description: Child result state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChildResultResponse'
   /v1/leases/{leaseId}/services/send:
     post:
       summary: Resolve a workflow-or-service send to another service.
@@ -345,6 +628,10 @@ paths:
       responses:
         '200':
           description: Send state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceCallResolveResponse'
   /v1/leases/{leaseId}/services/ask:
     post:
       summary: Resolve or suspend on a service ask.
@@ -357,6 +644,10 @@ paths:
       responses:
         '200':
           description: Ask state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceCallResolveResponse'
   /v1/leases/{leaseId}/services/signal:
     post:
       summary: Resolve a service-directed signal.
@@ -369,6 +660,10 @@ paths:
       responses:
         '200':
           description: Signal state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceCallResolveResponse'
   /v1/leases/{leaseId}/service-turns/{envelopeId}/complete:
     post:
       summary: Complete a service turn.
@@ -403,3 +698,45 @@ paths:
       responses:
         '200':
           description: Service turn failed or entered retry wait
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceTurnFailResponse'
+  /v1/services/ensure:
+    post:
+      summary: Resolve or create a durable service instance.
+      responses:
+        '200':
+          description: Service ensured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceRunResponse'
+  /v1/runs/{id}:
+    get:
+      summary: Inspect run status for a referenced child or service target.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Run status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunStatusResponse'
+  /v1/runs/{id}/signals:
+    post:
+      summary: Send a signal to another run.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Signal accepted

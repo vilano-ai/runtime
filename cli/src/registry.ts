@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import {
-  loadGeneratedProjectManifest,
+  loadProjectManifest,
   type BuildProjectManifestOptions,
   writeGeneratedProjectManifest,
 } from "./project-manifest.ts";
@@ -21,7 +21,7 @@ export async function buildProjectManifest(
   }
 
   if (!options.regenerate) {
-    const generated = await loadGeneratedProjectManifest(projectName, resolvedPath);
+    const generated = await loadProjectManifest(projectName, resolvedPath);
     if (generated) {
       return generated;
     }

@@ -38,6 +38,32 @@ try {
     VILANO_HOME: runtimeHome,
   };
 
+  const manifestProjectDir = path.join(installDir, "manifest-project");
+  await fs.mkdir(path.join(manifestProjectDir, "src"), { recursive: true });
+  await fs.writeFile(
+    path.join(manifestProjectDir, "vilano.manifest.json"),
+    `${JSON.stringify(
+      {
+        manifestVersion: 1,
+        definitions: {
+          workflows: [
+            {
+              kind: "workflow",
+              name: "smokeWorkflow",
+              exportName: "smokeWorkflow",
+              file: "src/definitions.ts",
+              runtimeKind: "javascript",
+              sourceLanguage: "typescript",
+            },
+          ],
+          services: [],
+        },
+      },
+      null,
+      2
+    )}\n`
+  );
+
   const version = JSON.parse((await run("bun", [cliEntry, "version", "--json"], installDir, baseEnv)).stdout) as {
     cliVersion: string;
     protocolVersion: number;
@@ -84,6 +110,17 @@ try {
 
   if (status.protocolVersion !== version.protocolVersion) {
     throw new Error("Packaged CLI started a kernel with a mismatched protocol version");
+  }
+
+  await run("bun", [cliEntry, "project", "add", "./manifest-project", "--name", "smoke"], installDir, env);
+  const workflowList = JSON.parse(
+    (await run("bun", [cliEntry, "workflow", "list", "--project", "smoke", "--json"], installDir, env)).stdout
+  ) as {
+    definitions: Array<{ name: string }>;
+  };
+
+  if (!workflowList.definitions.some((definition) => definition.name === "smokeWorkflow")) {
+    throw new Error("Packaged CLI did not load the explicit vilano.manifest.json project contract");
   }
 
   await run("bun", [cliEntry, "daemon", "stop"], installDir, env);

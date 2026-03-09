@@ -1,73 +1,13 @@
-export interface ActivationDefinition {
-  kind: "workflow" | "service";
-  name: string;
-  exportName: string;
-  file: string;
-  runtimeKind: "javascript";
-  sourceLanguage: "typescript";
-}
+import type { components as ControlComponents } from "../../../protocol/v1/generated/control.ts";
+import type { components as WorkerComponents } from "../../../protocol/v1/generated/worker.ts";
 
-export interface WorkflowActivation {
-  kind: "workflow";
-  leaseId: string;
-  leaseExpiresAt: string;
-  run: {
-    id: string;
-    input: unknown;
-  };
-  project: {
-    name: string;
-    path: string;
-  };
-  definition: ActivationDefinition;
-}
+export type ActivationDefinition = WorkerComponents["schemas"]["DefinitionRef"];
+export type WorkflowActivation = WorkerComponents["schemas"]["WorkflowActivation"];
+export type ServiceTurnActivation = WorkerComponents["schemas"]["ServiceTurnActivation"];
+type ActivationLeaseResponse = WorkerComponents["schemas"]["ActivationLeaseResponse"];
+type KernelStatusResponse = ControlComponents["schemas"]["StatusResponse"];
 
-export interface ServiceTurnActivation {
-  kind: "service_turn";
-  leaseId: string;
-  leaseExpiresAt: string;
-  run: {
-    id: string;
-  };
-  project: {
-    name: string;
-    path: string;
-  };
-  definition: ActivationDefinition;
-  service: {
-    key: string;
-    keyInput: unknown;
-    state: unknown;
-  };
-  envelope: {
-    id: string;
-    kind: "send" | "ask" | "signal";
-    name: string;
-    payload: unknown;
-    correlationId: string | null;
-    senderRunId: string | null;
-  };
-}
-
-interface ActivationLeaseResponse {
-  ok: true;
-  activation: WorkflowActivation | ServiceTurnActivation | null;
-}
-
-interface KernelStatusResponse {
-  ok: true;
-  runtimeVersion: string;
-  protocolVersion: number;
-  schemaVersion: number;
-}
-
-interface StepResolveResponse {
-  ok: true;
-  step:
-    | { status: "pending" }
-    | { status: "completed"; output: unknown }
-    | { status: "failed"; error: unknown };
-}
+type StepResolveResponse = WorkerComponents["schemas"]["StepResolveResponse"];
 
 interface ResolvedRetryPolicy {
   maxAttempts?: number;
@@ -81,34 +21,10 @@ interface ResolvedRetryPolicy {
   retryOn?: string[];
 }
 
-interface ExecResolveResponse {
-  ok: true;
-  exec:
-    | { status: "execute"; attempt: number }
-    | { status: "completed"; output: unknown }
-    | { status: "failed"; error: unknown };
-}
-
-interface StepFailResponse {
-  ok: true;
-  step:
-    | { status: "failed"; error: unknown }
-    | { status: "retry_waiting"; wait: { key: string; kind: string; name: string } };
-}
-
-interface ExecFailResponse {
-  ok: true;
-  exec:
-    | { status: "failed"; error: unknown }
-    | { status: "retry_waiting"; wait: { key: string; kind: string; name: string } };
-}
-
-interface WaitResolveResponse {
-  ok: true;
-  wait:
-    | { status: "completed"; output?: unknown }
-    | { status: "suspended"; wait: { key: string; kind: string; name: string } };
-}
+type ExecResolveResponse = WorkerComponents["schemas"]["ExecResolveResponse"];
+type StepFailResponse = WorkerComponents["schemas"]["StepFailResponse"];
+type ExecFailResponse = WorkerComponents["schemas"]["ExecFailResponse"];
+type WaitResolveResponse = WorkerComponents["schemas"]["WaitResolveResponse"];
 
 interface SpawnResolveResponse {
   ok: true;
@@ -123,56 +39,12 @@ interface SpawnResolveResponse {
   };
 }
 
-interface ChildResultResponse {
-  ok: true;
-  child:
-    | { status: "completed"; output: unknown }
-    | { status: "failed"; error: unknown }
-    | { status: "suspended"; wait: { key: string; kind: string; name: string } };
-}
-
-interface RunStatusResponse {
-  ok: true;
-  run: {
-    status: string;
-  };
-}
-
-interface LeaseStatusResponse {
-  ok: true;
-  lease:
-    | { active: false }
-    | {
-        active: true;
-        runId: string;
-        status: string;
-        definitionKind: string;
-        leaseExpiresAt: string | null;
-      };
-}
-
-interface ServiceRunResponse {
-  ok: true;
-  run: {
-    id: string;
-    status: string;
-  };
-}
-
-interface ServiceCallResolveResponse {
-  ok: true;
-  result:
-    | { status: "completed"; output?: unknown }
-    | { status: "failed"; error: unknown }
-    | { status: "suspended"; wait: { key: string; kind: string; name: string } };
-}
-
-interface ServiceTurnFailResponse {
-  ok: true;
-  run: unknown;
-  status?: "retry_waiting";
-  wait?: { key: string; kind: string; name: string };
-}
+type ChildResultResponse = WorkerComponents["schemas"]["ChildResultResponse"];
+type RunStatusResponse = WorkerComponents["schemas"]["RunStatusResponse"];
+type LeaseStatusResponse = WorkerComponents["schemas"]["LeaseStatusResponse"];
+type ServiceRunResponse = WorkerComponents["schemas"]["ServiceRunResponse"];
+type ServiceCallResolveResponse = WorkerComponents["schemas"]["ServiceCallResolveResponse"];
+type ServiceTurnFailResponse = WorkerComponents["schemas"]["ServiceTurnFailResponse"];
 
 export class WorkerClient {
   private compatibilityChecked = false;

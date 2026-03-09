@@ -3,6 +3,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { ensureDir, readJsonFile, writeJsonFileAtomic } from "./json-file.ts";
+import {
+  PROJECT_MANIFEST_VERSION,
+  assertValidProjectManifest,
+  type ProjectManifestFile,
+} from "./project-manifest-contract.ts";
 import type { DefinitionRecord, ProjectRecord } from "./types.ts";
 
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
@@ -21,39 +26,61 @@ const IGNORED_DIRS = new Set([
   "spec",
 ]);
 
-const PROJECT_MANIFEST_VERSION = 1;
-
-interface GeneratedProjectManifestFile {
-  manifestVersion: number;
-  generatedAt: string;
-  definitionsManifestHash: string;
-  definitions: {
-    workflows: DefinitionRecord[];
-    services: DefinitionRecord[];
-  };
-}
-
 export interface BuildProjectManifestOptions {
   regenerate?: boolean;
 }
 
+interface GeneratedProjectManifestCacheFile extends ProjectManifestFile {
+  generatedAt: string;
+  definitionsManifestHash: string;
+}
+
 export function getProjectManifestPath(projectPath: string): string {
+  return path.join(projectPath, "vilano.manifest.json");
+}
+
+export function getGeneratedProjectManifestCachePath(projectPath: string): string {
   return path.join(projectPath, ".vilano", "project-manifest.json");
 }
 
-export async function loadGeneratedProjectManifest(
+export async function loadProjectManifest(
   projectName: string,
   projectPath: string
 ): Promise<ProjectRecord | null> {
   const resolvedPath = path.resolve(projectPath);
   const manifestPath = getProjectManifestPath(resolvedPath);
-  const manifest = await readJsonFile<GeneratedProjectManifestFile | null>(manifestPath, null);
+  const manifest = await readJsonFile<unknown>(manifestPath, null);
 
-  if (!manifest || manifest.manifestVersion !== PROJECT_MANIFEST_VERSION) {
+  if (manifest) {
+    const validated = await assertValidProjectManifest(manifest, manifestPath);
+    return toProjectRecord(projectName, resolvedPath, validated, {
+      generatedAt: null,
+      definitionsManifestHash: hashDefinitions(validated.definitions),
+    });
+  }
+
+  return await loadGeneratedProjectManifestCache(projectName, resolvedPath);
+}
+
+async function loadGeneratedProjectManifestCache(
+  projectName: string,
+  projectPath: string
+): Promise<ProjectRecord | null> {
+  const manifestPath = getGeneratedProjectManifestCachePath(projectPath);
+  const manifest = await readJsonFile<GeneratedProjectManifestCacheFile | null>(manifestPath, null);
+
+  if (!manifest) {
     return null;
   }
 
-  return toProjectRecord(projectName, resolvedPath, manifest);
+  if (!isGeneratedProjectManifestCacheFile(manifest)) {
+    return null;
+  }
+
+  return toProjectRecord(projectName, projectPath, manifest, {
+    generatedAt: manifest.generatedAt,
+    definitionsManifestHash: manifest.definitionsManifestHash,
+  });
 }
 
 export async function writeGeneratedProjectManifest(
@@ -61,36 +88,62 @@ export async function writeGeneratedProjectManifest(
   projectPath: string
 ): Promise<ProjectRecord> {
   const resolvedPath = path.resolve(projectPath);
+  const manifest = await buildGeneratedProjectManifestCacheFile(resolvedPath);
+
+  const manifestPath = getGeneratedProjectManifestCachePath(resolvedPath);
+  await ensureDir(path.dirname(manifestPath));
+  await writeJsonFileAtomic(manifestPath, manifest);
+  return toProjectRecord(projectName, resolvedPath, manifest, {
+    generatedAt: manifest.generatedAt,
+    definitionsManifestHash: manifest.definitionsManifestHash,
+  });
+}
+
+export async function buildProjectManifestFile(projectPath: string): Promise<ProjectManifestFile> {
+  const resolvedPath = path.resolve(projectPath);
   const definitions = await scanProjectDefinitions(resolvedPath);
-  const manifest: GeneratedProjectManifestFile = {
+  const manifest: ProjectManifestFile = {
     manifestVersion: PROJECT_MANIFEST_VERSION,
-    generatedAt: new Date().toISOString(),
-    definitionsManifestHash: definitions.hash,
     definitions: definitions.definitions,
   };
 
-  const manifestPath = getProjectManifestPath(resolvedPath);
-  await ensureDir(path.dirname(manifestPath));
-  await writeJsonFileAtomic(manifestPath, manifest);
-  return toProjectRecord(projectName, resolvedPath, manifest);
+  return await assertValidProjectManifest(
+    manifest,
+    `generated manifest for ${resolvedPath}`
+  );
+}
+
+async function buildGeneratedProjectManifestCacheFile(
+  projectPath: string
+): Promise<GeneratedProjectManifestCacheFile> {
+  const manifest = await buildProjectManifestFile(projectPath);
+
+  return {
+    ...manifest,
+    generatedAt: new Date().toISOString(),
+    definitionsManifestHash: hashDefinitions(manifest.definitions),
+  };
 }
 
 function toProjectRecord(
   projectName: string,
   projectPath: string,
-  manifest: GeneratedProjectManifestFile
+  manifest: ProjectManifestFile,
+  options: {
+    generatedAt: string | null;
+    definitionsManifestHash: string;
+  }
 ): ProjectRecord {
   return {
     name: projectName,
     path: projectPath,
-    lastSyncedAt: manifest.generatedAt,
-    definitionsManifestHash: manifest.definitionsManifestHash,
+    lastSyncedAt: options.generatedAt,
+    definitionsManifestHash: options.definitionsManifestHash,
     definitions: manifest.definitions,
   };
 }
 
 async function scanProjectDefinitions(projectPath: string): Promise<{
-  hash: string;
   definitions: {
     workflows: DefinitionRecord[];
     services: DefinitionRecord[];
@@ -111,18 +164,7 @@ async function scanProjectDefinitions(projectPath: string): Promise<{
   workflows.sort(compareDefinitions);
   services.sort(compareDefinitions);
 
-  const hash = crypto
-    .createHash("sha256")
-    .update(
-      JSON.stringify({
-        workflows,
-        services,
-      })
-    )
-    .digest("hex");
-
   return {
-    hash,
     definitions: {
       workflows,
       services,
@@ -192,4 +234,24 @@ function scanDefinitionsInSource(
 
 function compareDefinitions(a: DefinitionRecord, b: DefinitionRecord): number {
   return a.name.localeCompare(b.name) || a.file.localeCompare(b.file);
+}
+
+function hashDefinitions(definitions: ProjectManifestFile["definitions"]): string {
+  return crypto.createHash("sha256").update(JSON.stringify(definitions)).digest("hex");
+}
+
+function isGeneratedProjectManifestCacheFile(
+  value: unknown
+): value is GeneratedProjectManifestCacheFile {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.manifestVersion === "number" &&
+    typeof candidate.generatedAt === "string" &&
+    typeof candidate.definitionsManifestHash === "string" &&
+    candidate.definitions !== undefined
+  );
 }

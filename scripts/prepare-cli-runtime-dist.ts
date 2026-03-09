@@ -23,6 +23,10 @@ await copyIntoRuntimeDist("worker", [
   "shared",
 ]);
 
+await copyIntoRuntimeDist("protocol", [
+  "v1",
+]);
+
 await writeBundleManifest();
 
 async function copyIntoRuntimeDist(sourceRelativeDir: string, entries: string[]): Promise<void> {
