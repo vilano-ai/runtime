@@ -140,8 +140,9 @@ Primary modules:
 - manifest generation, which still discovers definitions by scanning JS/TS source
 - JS/TS replay semantics in the worker core
 
-This is why the runtime is now JS-runtime-neutral enough for Bun and Node, but not yet fully
-polyglot at the language SDK level.
+This is why the runtime is now JS-runtime-neutral enough for Bun and Node, but not yet polyglot at
+the language SDK level. The current manifest/runtime contract is still explicitly JS/TS execution
+oriented even though the long-term direction is broader.
 
 ## Current Refactor Priorities
 

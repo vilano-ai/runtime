@@ -38,7 +38,8 @@ The canonical path for the first OSS release is:
 - Bun worker runtime: supported
 - Node worker runtime: preview
 
-Both currently share the same JS/TS worker core and protocol.
+Both currently share the same JS/TS worker core and protocol. Additional worker languages are not
+part of the current OSS support matrix.
 
 ### CLI / Operations
 
@@ -109,5 +110,11 @@ To support additional worker languages without weakening the current model:
 2. keep the protocol artifacts authoritative
 3. make manifests fully language-neutral
 4. add per-language SDK + worker implementations that obey the same replay semantics
+
+## Managed vs External Workers
+
+- managed workers supervised by the kernel get hard-stop fallback for blocking timed steps
+- external/manual workers only get cooperative in-process step cancellation today
+- that difference is intentional in the current `0.x` support posture
 
 That is different from simply adding another JS runtime adapter.

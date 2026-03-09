@@ -61,6 +61,9 @@ Not supported yet:
 - language-native SDKs beyond TypeScript
 - exact-once side-effect guarantees
 
+Managed workers supervised by the kernel get hard-stop fallback for blocking timed steps. External
+workers currently rely on cooperative in-process step cancellation.
+
 The current support posture is documented in [docs/support-matrix.md](./docs/support-matrix.md).
 
 ## Quick Start

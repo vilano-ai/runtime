@@ -13,8 +13,9 @@ Vilano uses two manifest forms today:
 
 ## Why This Split Exists
 
-The explicit source manifest is the public contract. It is the format the runtime should be able to
-consume regardless of worker language.
+The explicit source manifest is the public contract. Its shape is meant to stay portable, but the
+current OSS runtime still only executes JavaScript/TypeScript definitions through the `javascript`
+runtime kind.
 
 The generated cache is an implementation detail for the current TypeScript/JavaScript path. It
 exists because the CLI can still discover definitions by scanning source when a project has not yet
@@ -63,4 +64,5 @@ For broader language support later:
 - projects should emit `vilano.manifest.json` directly
 - the runtime should not need to discover definitions by scanning source files
 
-This is the bridge from the current TS/JS-first path to a language-neutral manifest system.
+This is the bridge from the current TS/JS-first path to a broader manifest system. It should not be
+read as “fully language-neutral today”; the current supported execution family is still JS/TS.

@@ -63,11 +63,13 @@
         },
         "runtimeKind": {
           "type": "string",
-          "enum": ["javascript"]
+          "enum": ["javascript"],
+          "description": "Current OSS runtime family. Additional runtime kinds are future work."
         },
         "sourceLanguage": {
           "type": "string",
-          "enum": ["typescript", "javascript"]
+          "enum": ["typescript", "javascript"],
+          "description": "Current supported definition source languages for the OSS worker path."
         }
       }
     }
