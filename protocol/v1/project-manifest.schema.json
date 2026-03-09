@@ -63,11 +63,11 @@
         },
         "runtimeKind": {
           "type": "string",
-          "minLength": 1
+          "enum": ["javascript"]
         },
         "sourceLanguage": {
           "type": "string",
-          "minLength": 1
+          "enum": ["typescript", "javascript"]
         }
       }
     }

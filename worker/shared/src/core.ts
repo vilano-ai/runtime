@@ -266,7 +266,7 @@ function createTurnContext(
     >(
       definition: ServiceDefinition<TKeyInput, TState, TSend, TAsk, TSignal>,
       input: TKeyInput,
-      _options?: ConnectOptions
+      options?: ConnectOptions
     ): Promise<ServiceRef<TSend, TAsk, TSignal>> {
       const serviceKey = definition.key(input);
       const serviceRunId = await client.ensureService(
@@ -274,7 +274,8 @@ function createTurnContext(
         definition.name,
         serviceKey,
         input,
-        activation.leaseId
+        activation.leaseId,
+        options?.mustExist ?? false
       );
 
       return createServiceRef(

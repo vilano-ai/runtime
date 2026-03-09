@@ -12,6 +12,322 @@ components:
       in: header
       name: X-Vilano-Token
   schemas:
+    JsonValue:
+      description: Arbitrary JSON payload.
+    DefinitionRecord:
+      type: object
+      required: [kind, name, exportName, file, runtimeKind, sourceLanguage]
+      properties:
+        kind:
+          type: string
+          enum: [workflow, service]
+        name:
+          type: string
+        exportName:
+          type: string
+        file:
+          type: string
+        runtimeKind:
+          type: string
+          enum: [javascript]
+        sourceLanguage:
+          type: string
+          enum: [typescript, javascript]
+    ProjectDefinitions:
+      type: object
+      required: [workflows, services]
+      properties:
+        workflows:
+          type: array
+          items:
+            $ref: '#/components/schemas/DefinitionRecord'
+        services:
+          type: array
+          items:
+            $ref: '#/components/schemas/DefinitionRecord'
+    ProjectRecord:
+      type: object
+      required: [name, path, definitions]
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        snapshotPath:
+          type: [string, 'null']
+        lastSyncedAt:
+          type: [string, 'null']
+          format: date-time
+        definitionsManifestHash:
+          type: [string, 'null']
+        definitions:
+          $ref: '#/components/schemas/ProjectDefinitions'
+    ProjectListResponse:
+      type: object
+      required: [ok, projects]
+      properties:
+        ok:
+          const: true
+        projects:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectRecord'
+    ProjectResponse:
+      type: object
+      required: [ok, project]
+      properties:
+        ok:
+          const: true
+        project:
+          $ref: '#/components/schemas/ProjectRecord'
+    DefinitionListResponse:
+      type: object
+      required: [ok, project, definitions]
+      properties:
+        ok:
+          const: true
+        project:
+          type: [string, 'null']
+        definitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/DefinitionRecord'
+    DefinitionInspectResponse:
+      type: object
+      required: [ok, project, definition]
+      properties:
+        ok:
+          const: true
+        project:
+          type: string
+        definition:
+          $ref: '#/components/schemas/DefinitionRecord'
+    ServiceRunRecord:
+      type: object
+      required: [id, project, definitionKind, definitionName, status, input, output, error, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        project:
+          type: string
+        definitionKind:
+          type: string
+        definitionName:
+          type: string
+        status:
+          type: string
+        leaseId:
+          type: [string, 'null']
+        leaseWorkerId:
+          type: [string, 'null']
+        leaseExpiresAt:
+          type: [string, 'null']
+          format: date-time
+        input: {}
+        output: {}
+        error: {}
+        serviceKey:
+          type: [string, 'null']
+        keyInput: {}
+        state: {}
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ServiceRunListResponse:
+      type: object
+      required: [ok, runs]
+      properties:
+        ok:
+          const: true
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceRunRecord'
+    ServiceEnvelopeRecord:
+      type: object
+      required: [id, serviceRunId, kind, name, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        serviceRunId:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+        attempt:
+          type: [integer, 'null']
+        payload: {}
+        correlationId:
+          type: [string, 'null']
+        senderRunId:
+          type: [string, 'null']
+        status:
+          type: string
+        reply: {}
+        error: {}
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ServiceEnvelopeResponse:
+      type: object
+      required: [ok, envelope]
+      properties:
+        ok:
+          const: true
+        envelope:
+          $ref: '#/components/schemas/ServiceEnvelopeRecord'
+    ServiceEnsureResponse:
+      type: object
+      required: [ok, run]
+      properties:
+        ok:
+          const: true
+        run:
+          $ref: '#/components/schemas/ServiceRunRecord'
+    ServiceMutationResponse:
+      type: object
+      required: [ok, run, envelope]
+      properties:
+        ok:
+          const: true
+        run:
+          $ref: '#/components/schemas/ServiceRunRecord'
+        envelope:
+          $ref: '#/components/schemas/ServiceEnvelopeRecord'
+    ServiceStopResponse:
+      type: object
+      required: [ok, run, stoppedEnvelopeCount, cancelledWaitCount, cancelledChildRunCount, cancelledServiceAskCount, hadInFlightTurn]
+      properties:
+        ok:
+          const: true
+        run:
+          $ref: '#/components/schemas/ServiceRunRecord'
+        stoppedEnvelopeCount:
+          type: integer
+        cancelledWaitCount:
+          type: integer
+        cancelledChildRunCount:
+          type: integer
+        cancelledServiceAskCount:
+          type: integer
+        hadInFlightTurn:
+          type: boolean
+    RunRecord:
+      type: object
+      required: [id, project, definitionKind, definitionName, status, input, output, error, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        project:
+          type: string
+        definitionKind:
+          type: string
+        definitionName:
+          type: string
+        status:
+          type: string
+        leaseId:
+          type: [string, 'null']
+        leaseWorkerId:
+          type: [string, 'null']
+        leaseExpiresAt:
+          type: [string, 'null']
+          format: date-time
+        input: {}
+        output: {}
+        error: {}
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    RunListResponse:
+      type: object
+      required: [ok, project, runs]
+      properties:
+        ok:
+          const: true
+        project:
+          type: [string, 'null']
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunRecord'
+    RunStartResponse:
+      type: object
+      required: [ok, run]
+      properties:
+        ok:
+          const: true
+        run:
+          $ref: '#/components/schemas/RunRecord'
+    RunInspectResponse:
+      type: object
+      required: [ok, run]
+      properties:
+        ok:
+          const: true
+        run: {}
+    RunReplayResponse:
+      type: object
+      required: [ok, runId, replay]
+      properties:
+        ok:
+          const: true
+        runId:
+          type: string
+        replay:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    RunCancelResponse:
+      type: object
+      required: [ok, run, cancelledWaitCount, cancelledChildRunCount, cancelledServiceAskCount, hadActiveLease]
+      properties:
+        ok:
+          const: true
+        run:
+          $ref: '#/components/schemas/RunRecord'
+        cancelledWaitCount:
+          type: integer
+        cancelledChildRunCount:
+          type: integer
+        cancelledServiceAskCount:
+          type: integer
+        hadActiveLease:
+          type: boolean
+        stoppedEnvelopeCount:
+          type: integer
+        hadInFlightTurn:
+          type: boolean
+    SignalSendResponse:
+      type: object
+      required: [ok, signal]
+      properties:
+        ok:
+          const: true
+        signal: {}
+    ProjectSnapshotReferencesResponse:
+      type: object
+      required: [ok, project, snapshotPaths]
+      properties:
+        ok:
+          const: true
+        project:
+          type: [string, 'null']
+        snapshotPaths:
+          type: array
+          items:
+            type: string
     StatusResponse:
       type: object
       required:
@@ -89,12 +405,42 @@ paths:
       responses:
         '200':
           description: Shutdown accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, shuttingDown]
+                properties:
+                  ok:
+                    const: true
+                  shuttingDown:
+                    const: true
+  /v1/admin/project-snapshots:
+    get:
+      summary: List snapshot paths still referenced by registered projects or non-terminal runs.
+      parameters:
+        - in: query
+          name: project
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Snapshot reference list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectSnapshotReferencesResponse'
   /v1/projects:
     get:
       summary: List registered projects.
       responses:
         '200':
           description: Project list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectListResponse'
     post:
       summary: Add or replace a registered project manifest.
       requestBody:
@@ -117,20 +463,14 @@ paths:
                 definitionsManifestHash:
                   type: [string, 'null']
                 definitions:
-                  type: object
-                  required: [workflows, services]
-                  properties:
-                    workflows:
-                      type: array
-                      items:
-                        type: object
-                    services:
-                      type: array
-                      items:
-                        type: object
+                  $ref: '#/components/schemas/ProjectDefinitions'
       responses:
         '200':
           description: Project upserted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
   /v1/projects/{name}:
     get:
       summary: Inspect a registered project.
@@ -143,6 +483,10 @@ paths:
       responses:
         '200':
           description: Project record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
     delete:
       summary: Remove a registered project.
       parameters:
@@ -154,6 +498,10 @@ paths:
       responses:
         '200':
           description: Project removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
   /v1/projects/{name}/sync:
     post:
       summary: Replace a project manifest after regeneration.
@@ -183,38 +531,44 @@ paths:
                 definitionsManifestHash:
                   type: [string, 'null']
                 definitions:
-                  type: object
-                  required: [workflows, services]
-                  properties:
-                    workflows:
-                      type: array
-                      items:
-                        type: object
-                    services:
-                      type: array
-                      items:
-                        type: object
+                  $ref: '#/components/schemas/ProjectDefinitions'
       responses:
         '200':
           description: Project synced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
   /v1/workflows:
     get:
       summary: List known workflow definitions.
       responses:
         '200':
           description: Workflow list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DefinitionListResponse'
   /v1/services:
     get:
       summary: List known service definitions.
       responses:
         '200':
           description: Service list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DefinitionListResponse'
   /v1/service-runs:
     get:
       summary: List service run instances.
       responses:
         '200':
           description: Service run list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceRunListResponse'
   /v1/workflows/{project}/{name}:
     get:
       summary: Inspect a workflow definition.
@@ -232,6 +586,10 @@ paths:
       responses:
         '200':
           description: Workflow definition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DefinitionInspectResponse'
   /v1/services/{project}/{name}/runs/{serviceKey}:
     get:
       summary: Inspect a concrete service instance.
@@ -254,6 +612,10 @@ paths:
       responses:
         '200':
           description: Service run inspect payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunInspectResponse'
   /v1/service-envelopes/{id}:
     get:
       summary: Inspect a specific service envelope.
@@ -266,6 +628,10 @@ paths:
       responses:
         '200':
           description: Envelope record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceEnvelopeResponse'
   /v1/services/ensure:
     post:
       summary: Resolve or create a durable service instance.
@@ -278,15 +644,23 @@ paths:
               required: [project, service, serviceKey]
               properties:
                 project:
-                  type: string
+                  type: [string, 'null']
                 service:
                   type: string
                 serviceKey:
                   type: string
                 keyInput: {}
+                leaseId:
+                  type: [string, 'null']
+                mustExist:
+                  type: boolean
       responses:
         '200':
           description: Service ensured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceEnsureResponse'
   /v1/services/{project}/{name}/runs/{serviceKey}/send:
     post:
       summary: Send an external one-way service message.
@@ -321,6 +695,10 @@ paths:
       responses:
         '200':
           description: Message enqueued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceMutationResponse'
   /v1/services/{project}/{name}/runs/{serviceKey}/ask:
     post:
       summary: Send an external request/response service ask.
@@ -355,6 +733,10 @@ paths:
       responses:
         '200':
           description: Ask accepted or completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceMutationResponse'
   /v1/services/{project}/{name}/runs/{serviceKey}/signal:
     post:
       summary: Send an external service signal.
@@ -389,6 +771,10 @@ paths:
       responses:
         '200':
           description: Signal enqueued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceMutationResponse'
   /v1/services/{project}/{name}/runs/{serviceKey}/stop:
     post:
       summary: Stop a service instance and fail queued/in-flight envelopes.
@@ -411,6 +797,10 @@ paths:
       responses:
         '200':
           description: Service stopped
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceStopResponse'
   /v1/runs:
     post:
       summary: Start a workflow run.
@@ -430,11 +820,19 @@ paths:
       responses:
         '200':
           description: Run created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunStartResponse'
     get:
       summary: List runs.
       responses:
         '200':
           description: Run list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunListResponse'
   /v1/runs/{id}:
     get:
       summary: Inspect a workflow or service run.
@@ -447,6 +845,10 @@ paths:
       responses:
         '200':
           description: Run inspect payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunInspectResponse'
   /v1/runs/{id}/replay:
     get:
       summary: Read replay timeline for a run.
@@ -459,6 +861,10 @@ paths:
       responses:
         '200':
           description: Replay timeline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunReplayResponse'
   /v1/runs/{id}/cancel:
     post:
       summary: Cancel a workflow run.
@@ -471,6 +877,10 @@ paths:
       responses:
         '200':
           description: Run cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunCancelResponse'
   /v1/runs/{id}/signals:
     post:
       summary: Send a signal to a workflow or service run.
@@ -494,3 +904,7 @@ paths:
       responses:
         '200':
           description: Signal accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignalSendResponse'

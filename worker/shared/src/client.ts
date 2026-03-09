@@ -1,3 +1,7 @@
+import http from "node:http";
+import https from "node:https";
+import { URL } from "node:url";
+
 import type { components as ControlComponents } from "../../../protocol/v1/generated/control.ts";
 import type { components as WorkerComponents } from "../../../protocol/v1/generated/worker.ts";
 
@@ -347,7 +351,8 @@ export class WorkerClient {
     service: string,
     serviceKey: string,
     keyInput: unknown,
-    leaseId?: string
+    leaseId?: string,
+    mustExist = false
   ): Promise<string> {
     const response = await this.request<ServiceRunResponse>("POST", "/v1/services/ensure", {
       project,
@@ -355,6 +360,7 @@ export class WorkerClient {
       serviceKey,
       keyInput,
       leaseId,
+      mustExist,
     }, leaseId ? this.requireLeaseAuthToken(leaseId) : this.bootstrapAuthToken);
 
     return response.run.id;
@@ -466,19 +472,49 @@ export class WorkerClient {
   }
 
   private async request<T>(method: string, pathname: string, body?: unknown, authToken?: string): Promise<T> {
-    const response = await fetch(`${this.serverUrl}${pathname}`, {
-      method,
-      headers: {
-        "content-type": "application/json; charset=utf-8",
-        ...(authToken ? { "x-vilano-token": authToken } : {}),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
+    const url = new URL(pathname, this.serverUrl);
+    const raw = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const payload = body === undefined ? undefined : JSON.stringify(body);
+      const transport = url.protocol === "https:" ? https.request : http.request;
+      const request = transport(
+        url,
+        {
+          method,
+          headers: {
+            accept: "application/json",
+            ...(payload
+              ? { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(payload) }
+              : {}),
+            ...(authToken ? { "x-vilano-token": authToken } : {}),
+          },
+        },
+        (response) => {
+          response.setEncoding("utf8");
+          let responseBody = "";
+          response.on("data", (chunk) => {
+            responseBody += chunk;
+          });
+          response.on("end", () => {
+            resolve({
+              status: response.statusCode ?? 500,
+              body: responseBody,
+            });
+          });
+        }
+      );
+
+      request.on("error", reject);
+
+      if (payload) {
+        request.write(payload);
+      }
+
+      request.end();
     });
 
-    const raw = await response.text();
-    const parsed = raw ? JSON.parse(raw) : {};
+    const parsed = raw.body ? JSON.parse(raw.body) : {};
 
-    if (!response.ok) {
+    if (raw.status < 200 || raw.status >= 300) {
       const message =
         typeof parsed === "object" &&
         parsed !== null &&
@@ -486,9 +522,9 @@ export class WorkerClient {
         parsed.error &&
         typeof parsed.error.message === "string"
           ? parsed.error.message
-          : raw
-            ? `Worker request failed with status ${response.status}: ${raw}`
-            : `Worker request failed with status ${response.status}`;
+          : raw.body
+            ? `Worker request failed with status ${raw.status}: ${raw.body}`
+            : `Worker request failed with status ${raw.status}`;
 
       const code =
         typeof parsed === "object" &&
@@ -500,7 +536,7 @@ export class WorkerClient {
           : undefined;
 
       throw new WorkerRequestError(message, {
-        status: response.status,
+        status: raw.status,
         code,
       });
     }

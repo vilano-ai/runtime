@@ -292,6 +292,17 @@ export async function removeProject(name: string): Promise<ProjectResponse> {
   });
 }
 
+export async function listReferencedProjectSnapshots(
+  project?: string
+): Promise<{ ok: true; project: string | null; snapshotPaths: string[] }> {
+  const query = project ? `?project=${encodeURIComponent(project)}` : "";
+  return requestJson<{ ok: true; project: string | null; snapshotPaths: string[] }>({
+    method: "GET",
+    pathname: `/v1/admin/project-snapshots${query}`,
+    autoStart: true,
+  });
+}
+
 export async function listDefinitions(
   kind: "workflow" | "service",
   project?: string

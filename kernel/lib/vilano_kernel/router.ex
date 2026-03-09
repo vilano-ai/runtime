@@ -142,6 +142,19 @@ defmodule VilanoKernel.Router do
     end)
   end
 
+  get "/v1/admin/project-snapshots" do
+    project_name =
+      conn
+      |> Conn.fetch_query_params()
+      |> then(& &1.query_params["project"])
+
+    send_json(conn, 200, %{
+      ok: true,
+      project: project_name,
+      snapshotPaths: Storage.list_referenced_snapshot_paths(project_name)
+    })
+  end
+
   get "/v1/projects" do
     send_json(conn, 200, %{
       ok: true,
@@ -643,6 +656,7 @@ defmodule VilanoKernel.Router do
   post "/v1/services/ensure" do
     service = fetch_required_string(conn.body_params, "service")
     service_key = fetch_required_string(conn.body_params, "serviceKey")
+    must_exist = Map.get(conn.body_params, "mustExist", false) == true
     lease_id =
       case Map.get(conn.body_params, "leaseId") do
         value when is_binary(value) and value != "" -> value
@@ -653,11 +667,26 @@ defmodule VilanoKernel.Router do
       send_error(conn, 401, "unauthorized", "Lease token can only resolve services for its active lease")
     else
       with {project_record, definition} when not is_nil(project_record) <- resolve_service_definition(conn.body_params, service),
-           run <- Storage.ensure_service_run!(project_record, definition, service_key, Map.get(conn.body_params, "keyInput", %{}), lease_id) do
+           run <- Storage.ensure_service_run!(
+             project_record,
+             definition,
+             service_key,
+             Map.get(conn.body_params, "keyInput", %{}),
+             lease_id,
+             must_exist
+           ) do
         send_json(conn, 200, %{ok: true, run: run})
       else
         nil ->
-          send_error(conn, 404, "not_found", "Unknown service '#{service}'")
+          send_error(
+            conn,
+            404,
+            "not_found",
+            if(must_exist,
+              do: "Unknown service instance '#{service}/#{service_key}'",
+              else: "Unknown service '#{service}'"
+            )
+          )
       end
     end
   end

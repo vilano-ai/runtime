@@ -25,6 +25,7 @@ interface MaterializedBundleState {
   protocolVersion: number;
   runtimeVersion: string;
   bundleVersion: string;
+  bundleContentHash: string | null;
   materializedAt: string;
 }
 
@@ -65,6 +66,7 @@ export async function prepareRuntimeBundle(): Promise<PreparedRuntimeBundle> {
       protocolVersion: CLI_PROTOCOL_VERSION,
       runtimeVersion: manifest?.runtimeVersion ?? getCliVersion(),
       bundleVersion,
+      bundleContentHash: manifest?.bundleContentHash ?? null,
       materializedAt: new Date().toISOString(),
     } satisfies MaterializedBundleState);
   }
@@ -95,7 +97,16 @@ async function isMaterialized(
     state !== null &&
     state.sourceRoot === sourceRoot &&
     state.bundleVersion === bundleVersion &&
+    state.bundleContentHash === (await readBundleContentHash(sourceRoot)) &&
     state.cliVersion === getCliVersion() &&
     state.protocolVersion === CLI_PROTOCOL_VERSION
   );
+}
+
+async function readBundleContentHash(sourceRoot: string): Promise<string | null> {
+  const manifest = await readJsonFile<RuntimeBundleManifest | null>(
+    path.join(sourceRoot, "bundle-manifest.json"),
+    null
+  );
+  return manifest?.bundleContentHash ?? null;
 }

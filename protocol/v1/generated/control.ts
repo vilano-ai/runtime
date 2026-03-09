@@ -64,10 +64,55 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": {
+                            /** @constant */
+                            ok: true;
+                            /** @constant */
+                            shuttingDown: true;
+                        };
+                    };
                 };
             };
         };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/project-snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List snapshot paths still referenced by registered projects or non-terminal runs. */
+        get: {
+            parameters: {
+                query?: {
+                    project?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Snapshot reference list */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectSnapshotReferencesResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -96,7 +141,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProjectListResponse"];
+                    };
                 };
             };
         };
@@ -118,10 +165,7 @@ export interface paths {
                         /** Format: date-time */
                         lastSyncedAt?: string | null;
                         definitionsManifestHash?: string | null;
-                        definitions: {
-                            workflows: Record<string, never>[];
-                            services: Record<string, never>[];
-                        };
+                        definitions: components["schemas"]["ProjectDefinitions"];
                     };
                 };
             };
@@ -131,7 +175,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProjectResponse"];
+                    };
                 };
             };
         };
@@ -165,7 +211,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProjectResponse"];
+                    };
                 };
             };
         };
@@ -188,7 +236,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProjectResponse"];
+                    };
                 };
             };
         };
@@ -225,10 +275,7 @@ export interface paths {
                         /** Format: date-time */
                         lastSyncedAt?: string | null;
                         definitionsManifestHash?: string | null;
-                        definitions: {
-                            workflows: Record<string, never>[];
-                            services: Record<string, never>[];
-                        };
+                        definitions: components["schemas"]["ProjectDefinitions"];
                     };
                 };
             };
@@ -238,7 +285,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ProjectResponse"];
+                    };
                 };
             };
         };
@@ -270,7 +319,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["DefinitionListResponse"];
+                    };
                 };
             };
         };
@@ -304,7 +355,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["DefinitionListResponse"];
+                    };
                 };
             };
         };
@@ -338,7 +391,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ServiceRunListResponse"];
+                    };
                 };
             };
         };
@@ -375,7 +430,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["DefinitionInspectResponse"];
+                    };
                 };
             };
         };
@@ -413,7 +470,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["RunInspectResponse"];
+                    };
                 };
             };
         };
@@ -449,7 +508,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ServiceEnvelopeResponse"];
+                    };
                 };
             };
         };
@@ -481,10 +542,12 @@ export interface paths {
             requestBody: {
                 content: {
                     "application/json": {
-                        project: string;
+                        project: string | null;
                         service: string;
                         serviceKey: string;
                         keyInput?: unknown;
+                        leaseId?: string | null;
+                        mustExist?: boolean;
                     };
                 };
             };
@@ -494,7 +557,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ServiceEnsureResponse"];
+                    };
                 };
             };
         };
@@ -540,7 +605,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ServiceMutationResponse"];
+                    };
                 };
             };
         };
@@ -586,7 +653,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ServiceMutationResponse"];
+                    };
                 };
             };
         };
@@ -632,7 +701,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ServiceMutationResponse"];
+                    };
                 };
             };
         };
@@ -670,7 +741,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ServiceStopResponse"];
+                    };
                 };
             };
         };
@@ -702,7 +775,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["RunListResponse"];
+                    };
                 };
             };
         };
@@ -730,7 +805,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["RunStartResponse"];
+                    };
                 };
             };
         };
@@ -764,7 +841,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["RunInspectResponse"];
+                    };
                 };
             };
         };
@@ -800,7 +879,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["RunReplayResponse"];
+                    };
                 };
             };
         };
@@ -838,7 +919,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["RunCancelResponse"];
+                    };
                 };
             };
         };
@@ -881,7 +964,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["SignalSendResponse"];
+                    };
                 };
             };
         };
@@ -895,6 +980,187 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Arbitrary JSON payload. */
+        JsonValue: unknown;
+        DefinitionRecord: {
+            /** @enum {string} */
+            kind: "workflow" | "service";
+            name: string;
+            exportName: string;
+            file: string;
+            /** @enum {string} */
+            runtimeKind: "javascript";
+            /** @enum {string} */
+            sourceLanguage: "typescript" | "javascript";
+        };
+        ProjectDefinitions: {
+            workflows: components["schemas"]["DefinitionRecord"][];
+            services: components["schemas"]["DefinitionRecord"][];
+        };
+        ProjectRecord: {
+            name: string;
+            path: string;
+            snapshotPath?: string | null;
+            /** Format: date-time */
+            lastSyncedAt?: string | null;
+            definitionsManifestHash?: string | null;
+            definitions: components["schemas"]["ProjectDefinitions"];
+        };
+        ProjectListResponse: {
+            /** @constant */
+            ok: true;
+            projects: components["schemas"]["ProjectRecord"][];
+        };
+        ProjectResponse: {
+            /** @constant */
+            ok: true;
+            project: components["schemas"]["ProjectRecord"];
+        };
+        DefinitionListResponse: {
+            /** @constant */
+            ok: true;
+            project: string | null;
+            definitions: components["schemas"]["DefinitionRecord"][];
+        };
+        DefinitionInspectResponse: {
+            /** @constant */
+            ok: true;
+            project: string;
+            definition: components["schemas"]["DefinitionRecord"];
+        };
+        ServiceRunRecord: {
+            id: string;
+            project: string;
+            definitionKind: string;
+            definitionName: string;
+            status: string;
+            leaseId?: string | null;
+            leaseWorkerId?: string | null;
+            /** Format: date-time */
+            leaseExpiresAt?: string | null;
+            input: unknown;
+            output: unknown;
+            error: unknown;
+            serviceKey?: string | null;
+            keyInput?: unknown;
+            state?: unknown;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        ServiceRunListResponse: {
+            /** @constant */
+            ok: true;
+            runs: components["schemas"]["ServiceRunRecord"][];
+        };
+        ServiceEnvelopeRecord: {
+            id: string;
+            serviceRunId: string;
+            kind: string;
+            name: string;
+            attempt?: number | null;
+            payload?: unknown;
+            correlationId?: string | null;
+            senderRunId?: string | null;
+            status: string;
+            reply?: unknown;
+            error?: unknown;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        ServiceEnvelopeResponse: {
+            /** @constant */
+            ok: true;
+            envelope: components["schemas"]["ServiceEnvelopeRecord"];
+        };
+        ServiceEnsureResponse: {
+            /** @constant */
+            ok: true;
+            run: components["schemas"]["ServiceRunRecord"];
+        };
+        ServiceMutationResponse: {
+            /** @constant */
+            ok: true;
+            run: components["schemas"]["ServiceRunRecord"];
+            envelope: components["schemas"]["ServiceEnvelopeRecord"];
+        };
+        ServiceStopResponse: {
+            /** @constant */
+            ok: true;
+            run: components["schemas"]["ServiceRunRecord"];
+            stoppedEnvelopeCount: number;
+            cancelledWaitCount: number;
+            cancelledChildRunCount: number;
+            cancelledServiceAskCount: number;
+            hadInFlightTurn: boolean;
+        };
+        RunRecord: {
+            id: string;
+            project: string;
+            definitionKind: string;
+            definitionName: string;
+            status: string;
+            leaseId?: string | null;
+            leaseWorkerId?: string | null;
+            /** Format: date-time */
+            leaseExpiresAt?: string | null;
+            input: unknown;
+            output: unknown;
+            error: unknown;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        RunListResponse: {
+            /** @constant */
+            ok: true;
+            project: string | null;
+            runs: components["schemas"]["RunRecord"][];
+        };
+        RunStartResponse: {
+            /** @constant */
+            ok: true;
+            run: components["schemas"]["RunRecord"];
+        };
+        RunInspectResponse: {
+            /** @constant */
+            ok: true;
+            run: unknown;
+        };
+        RunReplayResponse: {
+            /** @constant */
+            ok: true;
+            runId: string;
+            replay: {
+                [key: string]: unknown;
+            }[];
+        };
+        RunCancelResponse: {
+            /** @constant */
+            ok: true;
+            run: components["schemas"]["RunRecord"];
+            cancelledWaitCount: number;
+            cancelledChildRunCount: number;
+            cancelledServiceAskCount: number;
+            hadActiveLease: boolean;
+            stoppedEnvelopeCount?: number;
+            hadInFlightTurn?: boolean;
+        };
+        SignalSendResponse: {
+            /** @constant */
+            ok: true;
+            signal: unknown;
+        };
+        ProjectSnapshotReferencesResponse: {
+            /** @constant */
+            ok: true;
+            project: string | null;
+            snapshotPaths: string[];
+        };
         StatusResponse: {
             /** @constant */
             ok: true;

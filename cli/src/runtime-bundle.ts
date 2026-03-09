@@ -12,6 +12,7 @@ export interface RuntimeBundlePaths {
 
 export interface RuntimeBundleManifest {
   bundleVersion: string;
+  bundleContentHash?: string;
   cliVersion: string;
   runtimeVersion: string;
   protocolVersion: number;

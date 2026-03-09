@@ -161,6 +161,19 @@ components:
             - $ref: '#/components/schemas/WorkflowActivation'
             - $ref: '#/components/schemas/ServiceTurnActivation'
             - type: 'null'
+    HeartbeatResponse:
+      type: object
+      required: [ok, lease]
+      properties:
+        ok:
+          const: true
+        lease:
+          type: object
+          required: [leaseExpiresAt]
+          properties:
+            leaseExpiresAt:
+              type: string
+              format: date-time
     LeaseStatusActive:
       type: object
       required: [active, runId, status, definitionKind, leaseExpiresAt]
@@ -334,6 +347,29 @@ components:
             - $ref: '#/components/schemas/ChildCompleted'
             - $ref: '#/components/schemas/ChildFailed'
             - $ref: '#/components/schemas/WaitSuspended'
+    SpawnResolveResponse:
+      type: object
+      required: [ok, spawn]
+      properties:
+        ok:
+          const: true
+        spawn:
+          type: object
+          required: [status, childRun]
+          properties:
+            status:
+              type: string
+              enum: [created, existing]
+            childRun:
+              type: object
+              required: [id, status]
+              properties:
+                id:
+                  type: string
+                status:
+                  type: string
+                output: {}
+                error: {}
     RunStatusResponse:
       type: object
       required: [ok, run]
@@ -397,6 +433,27 @@ components:
           enum: [retry_waiting]
         wait:
           $ref: '#/components/schemas/WaitRef'
+    ServiceTurnCompleteResponse:
+      type: object
+      required: [ok, run]
+      properties:
+        ok:
+          const: true
+        run: {}
+    RunMutationResponse:
+      type: object
+      required: [ok, run]
+      properties:
+        ok:
+          const: true
+        run: {}
+    SignalResponse:
+      type: object
+      required: [ok, signal]
+      properties:
+        ok:
+          const: true
+        signal: {}
 security:
   - daemonToken: []
 paths:
@@ -452,6 +509,10 @@ paths:
       responses:
         '200':
           description: Lease heartbeat accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeartbeatResponse'
   /v1/leases/{leaseId}/status:
     get:
       summary: Inspect whether a lease is still active.
@@ -517,6 +578,10 @@ paths:
       responses:
         '200':
           description: Child signal accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignalResponse'
   /v1/leases/{leaseId}/complete:
     post:
       summary: Complete a workflow activation.
@@ -538,6 +603,10 @@ paths:
       responses:
         '200':
           description: Workflow completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunMutationResponse'
   /v1/leases/{leaseId}/fail:
     post:
       summary: Fail a workflow activation.
@@ -559,6 +628,10 @@ paths:
       responses:
         '200':
           description: Workflow failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunMutationResponse'
   /v1/leases/{leaseId}/steps/resolve:
     post:
       summary: Resolve or create a durable step boundary.
@@ -634,6 +707,10 @@ paths:
       responses:
         '200':
           description: Step completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StepResolveResponse'
   /v1/leases/{leaseId}/steps/fail:
     post:
       summary: Fail a durable step.
@@ -748,6 +825,10 @@ paths:
       responses:
         '200':
           description: Exec completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecResolveResponse'
   /v1/leases/{leaseId}/execs/fail:
     post:
       summary: Fail a durable exec.
@@ -886,18 +967,22 @@ paths:
           application/json:
             schema:
               type: object
-              required: [project, workflow, input, key]
+              required: [name, key, childRunId, input]
               properties:
-                project:
+                name:
                   type: string
-                workflow:
-                  type: string
-                input: {}
                 key:
                   type: string
+                childRunId:
+                  type: string
+                input: {}
       responses:
         '200':
           description: Spawn state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpawnResolveResponse'
   /v1/leases/{leaseId}/children/result:
     post:
       summary: Resolve or suspend on a child workflow result.
@@ -913,9 +998,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [key]
+              required: [key, childRunId]
               properties:
                 key:
+                  type: string
+                childRunId:
                   type: string
       responses:
         '200':
@@ -939,11 +1026,13 @@ paths:
           application/json:
             schema:
               type: object
-              required: [serviceRunId, message, payload]
+              required: [serviceRunId, name, key]
               properties:
                 serviceRunId:
                   type: string
-                message:
+                name:
+                  type: string
+                key:
                   type: string
                 payload: {}
       responses:
@@ -968,11 +1057,13 @@ paths:
           application/json:
             schema:
               type: object
-              required: [serviceRunId, message]
+              required: [serviceRunId, name, key]
               properties:
                 serviceRunId:
                   type: string
-                message:
+                name:
+                  type: string
+                key:
                   type: string
                 payload: {}
                 timeoutMs:
@@ -999,11 +1090,13 @@ paths:
           application/json:
             schema:
               type: object
-              required: [serviceRunId, signal]
+              required: [serviceRunId, name, key]
               properties:
                 serviceRunId:
                   type: string
-                signal:
+                name:
+                  type: string
+                key:
                   type: string
                 payload: {}
       responses:
@@ -1033,7 +1126,6 @@ paths:
           application/json:
             schema:
               type: object
-              required: [reply]
               properties:
                 reply: {}
                 state: {}
@@ -1042,6 +1134,10 @@ paths:
       responses:
         '200':
           description: Service turn completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceTurnCompleteResponse'
   /v1/leases/{leaseId}/service-turns/{envelopeId}/fail:
     post:
       summary: Fail a service turn.

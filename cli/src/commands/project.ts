@@ -1,12 +1,13 @@
 import {
   addProject,
   inspectProject,
+  listReferencedProjectSnapshots,
   listProjects,
   removeProject,
   syncProject,
 } from "../daemon-client.ts";
 import { renderProject, renderProjectSummary, writeOutput } from "../output.ts";
-import { materializeProjectSnapshot } from "../project-snapshot.ts";
+import { materializeProjectSnapshot, pruneProjectSnapshots } from "../project-snapshot.ts";
 import { buildProjectManifest } from "../registry.ts";
 import { CliError } from "../cli-error.ts";
 
@@ -32,6 +33,7 @@ export async function handleProjectCommand(
       const manifest = await buildProjectManifest(nameFlag, projectPath, { regenerate: true });
       manifest.snapshotPath = await materializeProjectSnapshot(nameFlag, manifest.path);
       const response = await addProject(manifest);
+      await pruneRegisteredProjectSnapshots(response.project.name);
       writeOutput(flags, response, (body) => renderProject(body.project));
       return 0;
     }
@@ -66,6 +68,7 @@ export async function handleProjectCommand(
       });
       manifest.snapshotPath = await materializeProjectSnapshot(existing.project.name, manifest.path);
       const response = await syncProject(manifest);
+      await pruneRegisteredProjectSnapshots(response.project.name);
       writeOutput(flags, response, (body) => renderProject(body.project));
       return 0;
     }
@@ -76,10 +79,16 @@ export async function handleProjectCommand(
       }
 
       const response = await removeProject(projectName);
+      await pruneRegisteredProjectSnapshots(projectName);
       writeOutput(flags, response, (body) => `Removed project ${body.project.name}`);
       return 0;
     }
     default:
       throw new CliError("Usage: vilano project add|list|inspect|sync|remove");
   }
+}
+
+async function pruneRegisteredProjectSnapshots(projectName: string): Promise<void> {
+  const references = await listReferencedProjectSnapshots(projectName);
+  await pruneProjectSnapshots(projectName, references.snapshotPaths);
 }

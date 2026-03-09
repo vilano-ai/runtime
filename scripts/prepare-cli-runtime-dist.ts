@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import crypto from "node:crypto";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dir, "..");
@@ -54,12 +55,14 @@ async function writeBundleManifest(): Promise<void> {
   const protocolVersion = await readProtocolVersion(path.join(ROOT, "kernel", "lib", "vilano_kernel", "version.ex"));
   const runtimeVersion = kernelVersion ?? cliPackage.version ?? workerPackage.version ?? "0.0.0";
   const bundleVersion = `cli-${cliPackage.version ?? "0.0.0"}-runtime-${runtimeVersion}-protocol-${protocolVersion}`;
+  const bundleContentHash = await hashRuntimeDistContents();
 
   await fs.writeFile(
     path.join(RUNTIME_DIST_DIR, "bundle-manifest.json"),
     `${JSON.stringify(
       {
         bundleVersion,
+        bundleContentHash,
         cliVersion: cliPackage.version ?? "0.0.0",
         runtimeVersion,
         protocolVersion,
@@ -86,4 +89,39 @@ async function readProtocolVersion(filePath: string): Promise<number> {
   const source = await fs.readFile(filePath, "utf8");
   const match = source.match(/@protocol_version\s+(\d+)/);
   return match ? Number.parseInt(match[1] ?? "1", 10) : 1;
+}
+
+async function hashRuntimeDistContents(): Promise<string> {
+  const hash = crypto.createHash("sha256");
+  const files = await collectFiles(RUNTIME_DIST_DIR);
+
+  for (const filePath of files) {
+    const relativePath = path.relative(RUNTIME_DIST_DIR, filePath);
+    hash.update(relativePath);
+    hash.update("\0");
+    hash.update(await fs.readFile(filePath));
+    hash.update("\0");
+  }
+
+  return hash.digest("hex").slice(0, 16);
+}
+
+async function collectFiles(rootPath: string): Promise<string[]> {
+  const entries = await fs.readdir(rootPath, { withFileTypes: true });
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(rootPath, entry.name);
+
+    if (entry.isDirectory()) {
+      files.push(...(await collectFiles(fullPath)));
+      continue;
+    }
+
+    if (entry.isFile()) {
+      files.push(fullPath);
+    }
+  }
+
+  return files.sort();
 }

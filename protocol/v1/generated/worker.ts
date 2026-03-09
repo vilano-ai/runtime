@@ -114,7 +114,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["HeartbeatResponse"];
+                    };
                 };
             };
         };
@@ -235,7 +237,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["SignalResponse"];
+                    };
                 };
             };
         };
@@ -277,7 +281,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["RunMutationResponse"];
+                    };
                 };
             };
         };
@@ -319,7 +325,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["RunMutationResponse"];
+                    };
                 };
             };
         };
@@ -418,7 +426,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["StepResolveResponse"];
+                    };
                 };
             };
         };
@@ -568,7 +578,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ExecResolveResponse"];
+                    };
                 };
             };
         };
@@ -753,10 +765,10 @@ export interface paths {
             requestBody: {
                 content: {
                     "application/json": {
-                        project: string;
-                        workflow: string;
-                        input: unknown;
+                        name: string;
                         key: string;
+                        childRunId: string;
+                        input: unknown;
                     };
                 };
             };
@@ -766,7 +778,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["SpawnResolveResponse"];
+                    };
                 };
             };
         };
@@ -799,6 +813,7 @@ export interface paths {
                 content: {
                     "application/json": {
                         key: string;
+                        childRunId: string;
                     };
                 };
             };
@@ -843,8 +858,9 @@ export interface paths {
                 content: {
                     "application/json": {
                         serviceRunId: string;
-                        message: string;
-                        payload: unknown;
+                        name: string;
+                        key: string;
+                        payload?: unknown;
                     };
                 };
             };
@@ -889,7 +905,8 @@ export interface paths {
                 content: {
                     "application/json": {
                         serviceRunId: string;
-                        message: string;
+                        name: string;
+                        key: string;
                         payload?: unknown;
                         timeoutMs?: number | null;
                     };
@@ -936,7 +953,8 @@ export interface paths {
                 content: {
                     "application/json": {
                         serviceRunId: string;
-                        signal: string;
+                        name: string;
+                        key: string;
                         payload?: unknown;
                     };
                 };
@@ -982,7 +1000,7 @@ export interface paths {
             requestBody: {
                 content: {
                     "application/json": {
-                        reply: unknown;
+                        reply?: unknown;
                         state?: unknown;
                         stop?: boolean;
                     };
@@ -994,7 +1012,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["ServiceTurnCompleteResponse"];
+                    };
                 };
             };
         };
@@ -1191,6 +1211,14 @@ export interface components {
             ok: true;
             activation: components["schemas"]["WorkflowActivation"] | components["schemas"]["ServiceTurnActivation"] | null;
         };
+        HeartbeatResponse: {
+            /** @constant */
+            ok: true;
+            lease: {
+                /** Format: date-time */
+                leaseExpiresAt: string;
+            };
+        };
         LeaseStatusActive: {
             /** @constant */
             active: true;
@@ -1293,6 +1321,20 @@ export interface components {
             ok: true;
             child: components["schemas"]["ChildCompleted"] | components["schemas"]["ChildFailed"] | components["schemas"]["WaitSuspended"];
         };
+        SpawnResolveResponse: {
+            /** @constant */
+            ok: true;
+            spawn: {
+                /** @enum {string} */
+                status: "created" | "existing";
+                childRun: {
+                    id: string;
+                    status: string;
+                    output?: unknown;
+                    error?: unknown;
+                };
+            };
+        };
         RunStatusResponse: {
             /** @constant */
             ok: true;
@@ -1330,6 +1372,21 @@ export interface components {
             /** @enum {string} */
             status?: "retry_waiting";
             wait?: components["schemas"]["WaitRef"];
+        };
+        ServiceTurnCompleteResponse: {
+            /** @constant */
+            ok: true;
+            run: unknown;
+        };
+        RunMutationResponse: {
+            /** @constant */
+            ok: true;
+            run: unknown;
+        };
+        SignalResponse: {
+            /** @constant */
+            ok: true;
+            signal: unknown;
         };
     };
     responses: never;
