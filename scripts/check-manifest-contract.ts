@@ -10,7 +10,9 @@ const ROOT = path.resolve(import.meta.dir, "..");
 const exampleProjectPath = path.join(ROOT, "examples", "bootstrap-demo");
 
 const manifest = await buildProjectManifestFile(exampleProjectPath);
-const validation = await validateProjectManifest(manifest);
+const validation = await validateProjectManifest(manifest, {
+  projectPath: exampleProjectPath,
+});
 
 if (!validation.ok) {
   throw new Error(

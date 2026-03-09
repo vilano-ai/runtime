@@ -95,3 +95,80 @@ test("generated manifest fallback records javascript source files correctly", as
     await fs.rm(projectDir, { recursive: true, force: true });
   }
 });
+
+test("explicit manifests cannot point outside the project root", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-manifest-outside-"));
+
+  try {
+    await fs.mkdir(path.join(projectDir, "src"), { recursive: true });
+    await fs.writeFile(path.join(projectDir, "..", "outside.ts"), "export const outside = 1;\n", "utf8");
+    await fs.writeFile(
+      path.join(projectDir, "vilano.manifest.json"),
+      `${JSON.stringify(
+        {
+          manifestVersion: 1,
+          definitions: {
+            workflows: [
+              {
+                kind: "workflow",
+                name: "outsideWorkflow",
+                exportName: "outsideWorkflow",
+                file: "../outside.ts",
+                runtimeKind: "javascript",
+                sourceLanguage: "typescript",
+              },
+            ],
+            services: [],
+          },
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    await expect(buildProjectManifest("demo", projectDir, { regenerate: true })).rejects.toThrow(
+      "must stay within the project root"
+    );
+  } finally {
+    await fs.rm(projectDir, { recursive: true, force: true });
+    await fs.rm(path.join(projectDir, "..", "outside.ts"), { force: true });
+  }
+});
+
+test("explicit manifests must reference files that exist", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-manifest-missing-"));
+
+  try {
+    await fs.writeFile(
+      path.join(projectDir, "vilano.manifest.json"),
+      `${JSON.stringify(
+        {
+          manifestVersion: 1,
+          definitions: {
+            workflows: [
+              {
+                kind: "workflow",
+                name: "missingWorkflow",
+                exportName: "missingWorkflow",
+                file: "src/missing.ts",
+                runtimeKind: "javascript",
+                sourceLanguage: "typescript",
+              },
+            ],
+            services: [],
+          },
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    await expect(buildProjectManifest("demo", projectDir, { regenerate: true })).rejects.toThrow(
+      "file does not exist"
+    );
+  } finally {
+    await fs.rm(projectDir, { recursive: true, force: true });
+  }
+});

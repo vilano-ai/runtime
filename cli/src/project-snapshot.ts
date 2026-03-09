@@ -5,7 +5,7 @@ import path from "node:path";
 import { ensureDir, writeJsonFileAtomic } from "./json-file.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
 
-const SNAPSHOT_EXCLUDED_NAMES = new Set([".git", ".hg", ".svn", ".vilano"]);
+const SNAPSHOT_EXCLUDED_NAMES = new Set([".git", ".hg", ".svn", ".vilano", "tmp"]);
 
 interface ProjectSnapshotMetadata {
   version: 1;
@@ -58,7 +58,10 @@ async function ensureDependencyResolution(sourcePath: string, snapshotRoot: stri
     return;
   }
 
-  await fs.symlink(sourceNodeModules, snapshotNodeModules, "dir");
+  await fs.cp(sourceNodeModules, snapshotNodeModules, {
+    recursive: true,
+    force: true,
+  });
 }
 
 async function findNearestNodeModules(startPath: string): Promise<string | null> {

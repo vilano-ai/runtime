@@ -38,6 +38,10 @@ try {
   const manifestProjectDir = path.join(installDir, "manifest-project");
   await fs.mkdir(path.join(manifestProjectDir, "src"), { recursive: true });
   await fs.writeFile(
+    path.join(manifestProjectDir, "src", "definitions.ts"),
+    "export const smokeWorkflow = { kind: 'workflow' };\n"
+  );
+  await fs.writeFile(
     path.join(manifestProjectDir, "vilano.manifest.json"),
     `${JSON.stringify(
       {

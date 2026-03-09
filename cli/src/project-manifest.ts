@@ -55,7 +55,9 @@ export async function loadExplicitProjectManifest(
     return null;
   }
 
-  const validated = await assertValidProjectManifest(manifest, manifestPath);
+  const validated = await assertValidProjectManifest(manifest, manifestPath, {
+    projectPath: resolvedPath,
+  });
   return toProjectRecord(projectName, resolvedPath, validated, {
     generatedAt: null,
     definitionsManifestHash: hashDefinitions(validated.definitions),
@@ -121,10 +123,9 @@ export async function buildProjectManifestFile(projectPath: string): Promise<Pro
     definitions: definitions.definitions,
   };
 
-  return await assertValidProjectManifest(
-    manifest,
-    `generated manifest for ${resolvedPath}`
-  );
+  return await assertValidProjectManifest(manifest, `generated manifest for ${resolvedPath}`, {
+    projectPath: resolvedPath,
+  });
 }
 
 async function buildGeneratedProjectManifestCacheFile(

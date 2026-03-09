@@ -6,7 +6,6 @@ import {
   askService,
   cancelRun,
   ensureServiceRun,
-  inspectProject,
   inspectRun,
   inspectServiceEnvelope,
   inspectServiceRun,
@@ -21,7 +20,6 @@ import {
   sendServiceSignal,
   startWorkflowRun,
   stopServiceRun,
-  syncProject,
 } from "./daemon-client.ts";
 import { CliError } from "./cli-error.ts";
 import { handleProjectCommand } from "./commands/project.ts";
@@ -36,8 +34,7 @@ import {
   renderDefinitionList,
   writeOutput,
 } from "./output.ts";
-import { materializeProjectSnapshot } from "./project-snapshot.ts";
-import { buildProjectManifest, findDefinition, resolveProjectForCwd } from "./registry.ts";
+import { findDefinition, resolveProjectForCwd } from "./registry.ts";
 import {
   decorateRunInspect,
   renderRun,
@@ -131,11 +128,6 @@ async function handleWorkflow(
   switch (command) {
     case "list": {
       const project = await resolveProjectScope(flags);
-      if (project) {
-        const existing = await inspectProject(project);
-        await syncProject(await buildAndMaterializeProjectManifest(existing.project.name, existing.project.path));
-      }
-
       const response = await listDefinitions("workflow", project);
       writeOutput(flags, response, (body) => renderDefinitionList("workflow", body.project, body.definitions));
       return 0;
@@ -146,7 +138,7 @@ async function handleWorkflow(
         throw new CliError("Usage: vilano workflow inspect <workflow-ref>");
       }
 
-      const { project, definition } = await resolveWorkflowReference(reference, flags, { syncDefinition: true });
+      const { project, definition } = await resolveWorkflowReference(reference, flags);
       const response = await inspectWorkflowDefinition(project.name, definition.name);
       writeOutput(flags, response, (body) => renderDefinitionInspect(body.project, body.definition));
       return 0;
@@ -166,9 +158,7 @@ async function handleRun(args: string[], flags: Record<string, string | boolean>
         throw new CliError("Usage: vilano run start <workflow-ref> [--input '{...}']");
       }
 
-      const { project, definition } = await resolveWorkflowReference(reference, flags, {
-        syncDefinition: true,
-      });
+      const { project, definition } = await resolveWorkflowReference(reference, flags);
       const input = parseJsonFlag(flags.input, "input", {});
       const response = await startWorkflowRun(project.name, definition.name, input);
       writeOutput(flags, response, (body) => renderRun(body.run));
@@ -255,11 +245,6 @@ async function handleService(
       }
 
       const project = await resolveProjectScope(flags);
-      if (project) {
-        const existing = await inspectProject(project);
-        await syncProject(await buildAndMaterializeProjectManifest(existing.project.name, existing.project.path));
-      }
-
       const response = await listDefinitions("service", project);
       writeOutput(flags, response, (body) => renderDefinitionList("service", body.project, body.definitions));
       return 0;
@@ -270,7 +255,7 @@ async function handleService(
         throw new CliError("Usage: vilano service ensure <service-ref> --key-json '{...}'");
       }
 
-      const target = await resolveServiceTarget(reference, flags, { syncDefinition: true });
+      const target = await resolveServiceTarget(reference, flags);
       const response = await ensureServiceRun(
         target.project.name,
         target.definition.name,
@@ -288,7 +273,7 @@ async function handleService(
         throw new CliError("Usage: vilano service inspect <service-ref> --key-json '{...}'");
       }
 
-      const target = await resolveServiceTarget(reference, flags, { syncDefinition: true });
+      const target = await resolveServiceTarget(reference, flags);
       const response = decorateRunInspect(
         await inspectServiceRun(
         target.project.name,
@@ -319,7 +304,7 @@ async function handleService(
         throw new CliError("Usage: vilano service send <service-ref> <message-name> --key-json '{...}' [--input '{...}']");
       }
 
-      const target = await resolveServiceTarget(reference, flags, { syncDefinition: true });
+      const target = await resolveServiceTarget(reference, flags);
       const payload = parseJsonFlag(flags.input, "input", null);
       const response = await sendServiceMessage(
         target.project.name,
@@ -347,7 +332,7 @@ async function handleService(
         throw new CliError("Usage: vilano service ask <service-ref> <ask-name> --key-json '{...}' [--input '{...}'] [--timeout 30s]");
       }
 
-      const target = await resolveServiceTarget(reference, flags, { syncDefinition: true });
+      const target = await resolveServiceTarget(reference, flags);
       const payload = parseJsonFlag(flags.input, "input", null);
       const initial = await askService(
         target.project.name,
@@ -395,7 +380,7 @@ async function handleService(
         throw new CliError("Usage: vilano service stop <service-ref> --key-json '{...}'");
       }
 
-      const target = await resolveServiceTarget(reference, flags, { syncDefinition: true });
+      const target = await resolveServiceTarget(reference, flags);
       const response = await stopServiceRun(
         target.project.name,
         target.definition.name,
@@ -423,7 +408,7 @@ async function handleService(
         throw new CliError("Usage: vilano service signal <service-ref> <signal-name> --key-json '{...}' [--input '{...}']");
       }
 
-      const target = await resolveServiceTarget(reference, flags, { syncDefinition: true });
+      const target = await resolveServiceTarget(reference, flags);
       const payload = parseJsonFlag(flags.input, "input", null);
       const response = await sendServiceSignal(
         target.project.name,
@@ -527,68 +512,32 @@ async function resolveRunProjectScope(
 
 async function resolveWorkflowReference(
   reference: string,
-  flags: Record<string, string | boolean>,
-  options: { syncDefinition?: boolean } = {}
+  flags: Record<string, string | boolean>
 ): Promise<{ project: ProjectRecord; definition: DefinitionRecord }> {
   const explicitProject = typeof flags.project === "string" ? flags.project : undefined;
-  let projects = (await listProjects()).projects;
-  const projectName = resolveReferenceProjectName(projects, reference, explicitProject);
-
-  if (options.syncDefinition && projectName) {
-    const project = projects.find((entry) => entry.name === projectName);
-    if (!project) {
-      throw new CliError(`Unknown project: ${projectName}`);
-    }
-
-    await syncProject(await buildAndMaterializeProjectManifest(project.name, project.path));
-    projects = (await listProjects()).projects;
-  }
-
+  const projects = (await listProjects()).projects;
   return findDefinition(projects, "workflow", reference, process.cwd(), explicitProject);
 }
 
 async function resolveServiceReference(
   reference: string,
-  flags: Record<string, string | boolean>,
-  options: { syncDefinition?: boolean } = {}
+  flags: Record<string, string | boolean>
 ): Promise<{ project: ProjectRecord; definition: DefinitionRecord }> {
   const explicitProject = typeof flags.project === "string" ? flags.project : undefined;
-  let projects = (await listProjects()).projects;
-  const projectName = resolveReferenceProjectName(projects, reference, explicitProject);
-
-  if (options.syncDefinition && projectName) {
-    const project = projects.find((entry) => entry.name === projectName);
-    if (!project) {
-      throw new CliError(`Unknown project: ${projectName}`);
-    }
-
-    await syncProject(await buildAndMaterializeProjectManifest(project.name, project.path));
-    projects = (await listProjects()).projects;
-  }
-
+  const projects = (await listProjects()).projects;
   return findDefinition(projects, "service", reference, process.cwd(), explicitProject);
-}
-
-async function buildAndMaterializeProjectManifest(
-  projectName: string,
-  projectPath: string
-): Promise<ProjectRecord> {
-  const manifest = await buildProjectManifest(projectName, projectPath, { regenerate: true });
-  manifest.snapshotPath = await materializeProjectSnapshot(projectName, manifest.path);
-  return manifest;
 }
 
 async function resolveServiceTarget(
   reference: string,
-  flags: Record<string, string | boolean>,
-  options: { syncDefinition?: boolean } = {}
+  flags: Record<string, string | boolean>
 ): Promise<{
   project: ProjectRecord;
   definition: DefinitionRecord;
   keyInput: unknown;
   serviceKey: string;
 }> {
-  const { project, definition } = await resolveServiceReference(reference, flags, options);
+  const { project, definition } = await resolveServiceReference(reference, flags);
   const keyInput = parseRequiredJsonFlag(flags["key-json"] ?? flags.key, "key-json");
   const definitionValue = await loadServiceDefinition(project, definition);
   const serviceKey = definitionValue.key(keyInput);
@@ -648,7 +597,7 @@ async function loadServiceDefinition(
   project: ProjectRecord,
   definition: DefinitionRecord
 ): Promise<ServiceDefinition<any, any, any, any, any>> {
-  const absolutePath = path.resolve(project.path, definition.file);
+  const absolutePath = path.resolve(project.snapshotPath || project.path, definition.file);
   const moduleUrl = pathToFileURL(absolutePath).href;
   const moduleExports = (await import(moduleUrl)) as Record<string, unknown>;
   const value = moduleExports[definition.exportName];
