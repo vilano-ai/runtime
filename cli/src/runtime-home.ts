@@ -39,10 +39,9 @@ export function getRuntimePaths(): RuntimePaths {
 
 export function deriveExecutionHomeDir(homeDir: string): string {
   const resolvedHomeDir = path.resolve(homeDir);
-  const parentDir = path.dirname(resolvedHomeDir);
   const baseName = sanitizePathSegment(path.basename(resolvedHomeDir) || "vilano");
   const suffix = crypto.createHash("sha256").update(resolvedHomeDir).digest("hex").slice(0, 12);
-  return path.join(parentDir, `.${baseName}-execution-${suffix}`);
+  return path.join(os.tmpdir(), "vilano-runtime", "execution", `${baseName}-${suffix}`);
 }
 
 function sanitizePathSegment(value: string): string {

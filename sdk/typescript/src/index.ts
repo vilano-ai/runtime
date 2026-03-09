@@ -70,6 +70,7 @@ export interface RetryOptions {
 }
 
 export interface StepContext {
+  readonly attempt: number;
   readonly signal: AbortSignal;
   checkCancelled(): void;
   yield(): Promise<void>;
@@ -108,6 +109,7 @@ export type SignalResult<TState> = void | { state?: TState; stop?: true };
 
 export interface ServiceTurnContext {
   readonly runId: string;
+  readonly turnAttempt: number;
   step<TOutput>(
     name: string,
     fn: (step: StepContext) => Promise<TOutput> | TOutput,

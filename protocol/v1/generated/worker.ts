@@ -1190,6 +1190,7 @@ export interface components {
                 /** @enum {unknown} */
                 kind: "send" | "ask" | "signal";
                 name: string;
+                attempt: number;
                 payload: unknown;
                 correlationId?: string | null;
                 senderRunId?: string | null;
@@ -1240,6 +1241,7 @@ export interface components {
         StepStatePending: {
             /** @constant */
             status: "pending";
+            attempt: number;
         };
         StepStateCompleted: {
             /** @constant */

@@ -5,6 +5,8 @@ import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
 
+import { deriveExecutionHomeDir } from "../cli/src/runtime-home.ts";
+
 const ROOT = path.resolve(import.meta.dir, "..");
 const CLI_DIR = path.join(ROOT, "cli");
 const SDK_DIR = path.join(ROOT, "sdk", "typescript");
@@ -184,6 +186,8 @@ try {
   );
 } finally {
   await makeTreeWritable(installDir).catch(() => undefined);
+  await makeTreeWritable(deriveExecutionHomeDir(runtimeHome)).catch(() => undefined);
+  await fs.rm(deriveExecutionHomeDir(runtimeHome), { recursive: true, force: true }).catch(() => undefined);
   await fs.rm(installDir, { recursive: true, force: true });
   await cleanupTarball(cliTarball);
   await cleanupTarball(sdkTarball);

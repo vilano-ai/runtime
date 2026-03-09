@@ -144,8 +144,12 @@ async function executeActivation(
   }, heartbeatIntervalMs);
   let serviceDefinition: ServiceDefinition<any, any, any, any, any> | null = null;
   let serviceRetry: ServiceDefinition<any, any, any, any, any>["retry"] | undefined;
-  const activationWorkspace = await ensureActivationWorkspace(workerHomePath, activation);
   const activationImportRoot = await ensureActivationImportRoot(workerHomePath, activation);
+  const activationWorkspace = await ensureActivationWorkspace(
+    workerHomePath,
+    activation,
+    activationImportRoot
+  );
 
   try {
     if (activation.kind === "workflow") {
@@ -223,6 +227,7 @@ async function executeActivation(
   } finally {
     clearInterval(heartbeat);
     client.clearLeaseAuthToken(activation.leaseId);
+    await fs.rm(activationWorkspace, { recursive: true, force: true }).catch(() => undefined);
     await fs.rm(activationImportRoot, { recursive: true, force: true }).catch(() => undefined);
   }
 }
@@ -330,6 +335,9 @@ function createTurnContext(
       ) as ServiceRef<TSend, TAsk, TSignal>;
     },
     runId: activation.run.id,
+    turnAttempt: activation.kind === "service_turn"
+      ? (((activation.envelope as { attempt?: number }).attempt ?? 1))
+      : 1,
     async step<TOutput>(
       name: string,
       fn: (step: StepContext) => Promise<TOutput> | TOutput,
@@ -367,6 +375,7 @@ function createTurnContext(
       const controller = createStepController(adapter, client, activation, {
         name,
         key,
+        attempt: existing.attempt,
         timeoutMs,
       });
 
@@ -803,6 +812,7 @@ function createStepController(
   step: {
     name: string;
     key: string;
+    attempt: number;
     timeoutMs?: number;
   }
 ): {
@@ -876,6 +886,7 @@ function createStepController(
 
   return {
     context: {
+      attempt: step.attempt,
       signal: abortController.signal,
       checkCancelled,
       async yield() {

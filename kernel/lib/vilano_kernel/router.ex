@@ -350,6 +350,7 @@ defmodule VilanoKernel.Router do
               id: envelope["id"],
               kind: envelope["kind"],
               name: envelope["name"],
+              attempt: envelope["attempt"],
               payload: envelope["payload"],
               correlationId: envelope["correlationId"],
               senderRunId: envelope["senderRunId"]

@@ -7,22 +7,11 @@ type Activation = WorkflowActivation | ServiceTurnActivation;
 
 export async function ensureActivationWorkspace(
   workerHome: string,
-  activation: Activation
+  activation: Activation,
+  activationImportRoot: string
 ): Promise<string> {
   const workspacesRoot = path.join(workerHome, "run-workspaces");
-  const workspacePath = path.join(workspacesRoot, activation.run.id);
-  const workspaceMetadataPath = path.join(workspacePath, ".vilano-workspace.json");
-
-  try {
-    const stat = await fs.stat(workspacePath);
-    if (stat.isDirectory()) {
-      return workspacePath;
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
-    }
-  }
+  const workspacePath = path.join(workspacesRoot, activation.leaseId);
 
   await fs.mkdir(workspacesRoot, { recursive: true });
 
@@ -37,15 +26,17 @@ export async function ensureActivationWorkspace(
     });
 
     await makeWorkspaceWritable(tempWorkspacePath);
-    await linkWorkspaceNodeModules(activation.project.path, tempWorkspacePath);
+    await linkActivationNodeModules(activationImportRoot, tempWorkspacePath);
 
     await fs.writeFile(
       workspaceMetadataPathFor(tempWorkspacePath),
       `${JSON.stringify(
         {
           version: 1,
+          leaseId: activation.leaseId,
           runId: activation.run.id,
           sourceSnapshotPath: activation.project.path,
+          sourceImportRoot: activationImportRoot,
           createdAt: new Date().toISOString(),
         },
         null,
@@ -78,31 +69,14 @@ export async function ensureActivationImportRoot(
   const importsRoot = path.join(workerHome, "activation-imports");
   const importRoot = path.join(importsRoot, activation.leaseId);
 
-  try {
-    const stat = await fs.stat(importRoot);
-    if (stat.isDirectory()) {
-      return importRoot;
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
-    }
-  }
-
   await fs.mkdir(importsRoot, { recursive: true });
   const tempImportRoot = `${importRoot}.tmp-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 
   try {
-    await fs.cp(activation.project.path, tempImportRoot, {
-      recursive: true,
-      force: true,
-      dereference: true,
-      filter: (_src, dest) => path.basename(dest) !== "node_modules",
-    });
+    await copyActivationTree(activation.project.path, tempImportRoot);
 
     const importRootStat = await fs.stat(tempImportRoot);
     await fs.chmod(tempImportRoot, importRootStat.mode | 0o200);
-    await linkWorkspaceNodeModules(activation.project.path, tempImportRoot);
 
     await fs.writeFile(
       workspaceMetadataPathFor(tempImportRoot),
@@ -139,14 +113,29 @@ export async function ensureActivationImportRoot(
   }
 }
 
-async function makeWorkspaceWritable(rootPath: string): Promise<void> {
+async function copyActivationTree(sourcePath: string, destinationPath: string): Promise<void> {
+  await fs.cp(sourcePath, destinationPath, {
+    recursive: true,
+    force: true,
+    dereference: true,
+  });
+}
+
+async function makeWorkspaceWritable(rootPath: string, rootRelativePath = ""): Promise<void> {
   const entries = await fs.readdir(rootPath, { withFileTypes: true });
 
   for (const entry of entries) {
     const entryPath = path.join(rootPath, entry.name);
+    const entryRelativePath =
+      rootRelativePath.length === 0 ? entry.name : path.join(rootRelativePath, entry.name);
+    const topLevelSegment = entryRelativePath.split(path.sep)[0];
+
+    if (topLevelSegment === "node_modules") {
+      continue;
+    }
 
     if (entry.isDirectory()) {
-      await makeWorkspaceWritable(entryPath);
+      await makeWorkspaceWritable(entryPath, entryRelativePath);
     }
 
     if (entry.isSymbolicLink()) {
@@ -165,11 +154,11 @@ function workspaceMetadataPathFor(workspacePath: string): string {
   return path.join(workspacePath, ".vilano-workspace.json");
 }
 
-async function linkWorkspaceNodeModules(snapshotPath: string, workspacePath: string): Promise<void> {
-  const snapshotNodeModules = path.join(snapshotPath, "node_modules");
+async function linkActivationNodeModules(importRoot: string, workspacePath: string): Promise<void> {
+  const importNodeModules = path.join(importRoot, "node_modules");
 
   try {
-    const stat = await fs.stat(snapshotNodeModules);
+    const stat = await fs.stat(importNodeModules);
     if (!stat.isDirectory()) {
       return;
     }
@@ -182,5 +171,5 @@ async function linkWorkspaceNodeModules(snapshotPath: string, workspacePath: str
   }
 
   const workspaceNodeModules = path.join(workspacePath, "node_modules");
-  await fs.symlink(snapshotNodeModules, workspaceNodeModules, "dir");
+  await fs.symlink(importNodeModules, workspaceNodeModules, "dir");
 }

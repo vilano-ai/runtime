@@ -177,12 +177,10 @@ export const retryingStep = workflow({
     },
     ctx
   ) => {
-    const markerPath = `tmp/retrying-step-${input.token}.txt`;
-
     return await ctx.step(
       "retrying-step",
-      async () => {
-        const attempt = await bumpMarkerAttempt(markerPath);
+      async (step) => {
+        const attempt = step.attempt;
         if (attempt <= (input.failuresBeforeSuccess ?? 1)) {
           throw new Error("transient step failure");
         }
@@ -216,12 +214,10 @@ export const timeoutRetryingStep = workflow({
     },
     ctx
   ) => {
-    const markerPath = `tmp/timeout-retrying-step-${input.token}.txt`;
-
     return await ctx.step(
       "timeout-retrying-step",
       async (step) => {
-        const attempt = await bumpMarkerAttempt(markerPath);
+        const attempt = step.attempt;
 
         if (attempt === 1) {
           const deadline = Date.now() + 5_000;
@@ -251,12 +247,10 @@ export const timeoutRetryingStep = workflow({
 export const nonRetryingStep = workflow({
   name: "nonRetryingStep",
   run: async (input: { token: string }, ctx) => {
-    const markerPath = `tmp/non-retrying-step-${input.token}.txt`;
-
     return await ctx.step(
       "non-retrying-step",
-      async () => {
-        const attempt = await bumpMarkerAttempt(markerPath);
+      async (step) => {
+        const attempt = step.attempt;
         throw nonRetryable(new Error(`non-retryable step failure on attempt ${attempt}`));
       },
       {
@@ -580,9 +574,8 @@ export const retryingResponder = service({
   },
   key: (input: { sessionId: string }) => input.sessionId,
   onAsk: {
-    unstable: async (payload: { token: string }) => {
-      const markerPath = `tmp/retrying-service-${payload.token}.txt`;
-      const attempt = await bumpMarkerAttempt(markerPath);
+    unstable: async (payload: { token: string }, _state, ctx) => {
+      const attempt = ctx.turnAttempt;
 
       if (attempt === 1) {
         throw new Error("transient service failure");
@@ -693,14 +686,18 @@ export const optionsPayloadProbe = service({
 export const serviceTurnIsolationProbe = service({
   name: "serviceTurnIsolationProbe",
   key: (input: { sessionId: string }) => input.sessionId,
+  init: async () => ({
+    counter: 0,
+  }),
   onAsk: {
-    sequence: async (payload: { token: string }, _state, ctx) => {
-      const markerPath = `tmp/service-turn-isolation-${payload.token}.txt`;
-
-      const first = await ctx.step("repeat-step", async () => await bumpMarkerAttempt(markerPath));
-      const second = await ctx.step("repeat-step", async () => await bumpMarkerAttempt(markerPath));
+    sequence: async (_payload: { token: string }, state, ctx) => {
+      const first = await ctx.step("repeat-step", async () => state.counter + 1);
+      const second = await ctx.step("repeat-step", async () => state.counter + 2);
 
       return {
+        state: {
+          counter: state.counter + 2,
+        },
         reply: {
           attempts: [first, second],
         },
@@ -718,9 +715,8 @@ export const timeoutOnlyResponder = service({
   },
   key: (input: { sessionId: string }) => input.sessionId,
   onAsk: {
-    unstable: async (payload: { token: string }) => {
-      const markerPath = `tmp/timeout-only-service-${payload.token}.txt`;
-      const attempt = await bumpMarkerAttempt(markerPath);
+    unstable: async (payload: { token: string }, _state, ctx) => {
+      const attempt = ctx.turnAttempt;
       throw new Error(`application failure on attempt ${attempt}`);
     },
   },
@@ -734,9 +730,8 @@ export const nonRetryingResponder = service({
   },
   key: (input: { sessionId: string }) => input.sessionId,
   onAsk: {
-    unstable: async (payload: { token: string }) => {
-      const markerPath = `tmp/non-retrying-service-${payload.token}.txt`;
-      const attempt = await bumpMarkerAttempt(markerPath);
+    unstable: async (payload: { token: string }, _state, ctx) => {
+      const attempt = ctx.turnAttempt;
       throw nonRetryable(new Error(`non-retryable service failure on attempt ${attempt}`));
     },
   },
@@ -835,6 +830,10 @@ export const snapshotIsolationProbe = workflow({
 
         let snapshotWritable = true;
         let snapshotWriteErrorCode: string | null = null;
+        let dependencyWritable = true;
+        let dependencyWriteErrorCode: string | null = null;
+        let workspaceNodeModulesSymlink = false;
+        let workspaceNodeModulesRealPath: string | null = null;
 
         try {
           await fs.access(new URL(import.meta.url), fsConstants.W_OK);
@@ -843,15 +842,79 @@ export const snapshotIsolationProbe = workflow({
           snapshotWriteErrorCode = (error as NodeJS.ErrnoException).code ?? "unknown";
         }
 
+        try {
+          await fs.writeFile("node_modules/.vilano-dependency-marker", "blocked", "utf8");
+        } catch (error) {
+          dependencyWritable = false;
+          dependencyWriteErrorCode = (error as NodeJS.ErrnoException).code ?? "unknown";
+        }
+
+        try {
+          workspaceNodeModulesSymlink = (await fs.lstat("node_modules")).isSymbolicLink();
+          workspaceNodeModulesRealPath = await fs.realpath("node_modules");
+        } catch {
+          workspaceNodeModulesSymlink = false;
+          workspaceNodeModulesRealPath = null;
+        }
+
         return {
           cwd: process.cwd(),
           workspaceMarkerPresent: true,
           snapshotWritable,
           snapshotWriteErrorCode,
+          dependencyWritable,
+          dependencyWriteErrorCode,
+          workspaceNodeModulesSymlink,
+          workspaceNodeModulesRealPath,
         };
       },
       { key: "snapshot-isolation-probe" }
     );
+  },
+});
+
+export const activationWorkspaceProbe = workflow({
+  name: "activationWorkspaceProbe",
+  run: async (_input, ctx) => {
+    const seeded = await ctx.step(
+      "seed-workspace",
+      async () => {
+        await fs.mkdir("tmp", { recursive: true });
+        await fs.writeFile("tmp/activation-marker.txt", "marker", "utf8");
+
+        return {
+          cwd: process.cwd(),
+        };
+      },
+      { key: "seed-workspace" }
+    );
+
+    await ctx.sleep("50ms", { key: "resume-gap" });
+
+    const resumed = await ctx.step(
+      "check-workspace",
+      async () => {
+        let markerPresent = true;
+
+        try {
+          await fs.access("tmp/activation-marker.txt", fsConstants.F_OK);
+        } catch {
+          markerPresent = false;
+        }
+
+        return {
+          cwd: process.cwd(),
+          markerPresent,
+        };
+      },
+      { key: "check-workspace" }
+    );
+
+    return {
+      firstCwd: seeded.cwd,
+      secondCwd: resumed.cwd,
+      markerPresentAfterResume: resumed.markerPresent,
+    };
   },
 });
 
@@ -954,8 +1017,6 @@ export const retryingExec = workflow({
     },
     ctx
   ) => {
-    const markerPath = `tmp/retrying-exec-${input.token}.txt`;
-
     return await ctx.exec({
       name: "retrying-exec",
       key: `retrying-exec:${input.token}`,
@@ -968,14 +1029,7 @@ export const retryingExec = workflow({
       args: [
         "-e",
         [
-          "const fs = require('node:fs');",
-          "fs.mkdirSync('tmp', { recursive: true });",
-          `const markerPath = ${JSON.stringify(markerPath)};`,
-          "let attempt = 1;",
-          "if (fs.existsSync(markerPath)) {",
-          "  attempt = Number(fs.readFileSync(markerPath, 'utf8').trim() || '0') + 1;",
-          "}",
-          "fs.writeFileSync(markerPath, String(attempt));",
+          "const attempt = Number(process.env.VILANO_EXEC_ATTEMPT || '1');",
           `if (attempt <= ${input.failuresBeforeSuccess ?? 1}) {`,
           "  console.error('transient exec failure');",
           "  process.exit(1);",

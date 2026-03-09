@@ -119,7 +119,7 @@ components:
             state: {}
         envelope:
           type: object
-          required: [id, kind, name, payload]
+          required: [id, kind, name, attempt, payload]
           properties:
             id:
               type: string
@@ -127,6 +127,8 @@ components:
               enum: [send, ask, signal]
             name:
               type: string
+            attempt:
+              type: integer
             payload: {}
             correlationId:
               type: [string, "null"]
@@ -207,10 +209,12 @@ components:
             - $ref: '#/components/schemas/LeaseStatusInactive'
     StepStatePending:
       type: object
-      required: [status]
+      required: [status, attempt]
       properties:
         status:
           const: pending
+        attempt:
+          type: integer
     StepStateCompleted:
       type: object
       required: [status, output]

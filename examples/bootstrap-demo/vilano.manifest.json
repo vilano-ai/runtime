@@ -4,6 +4,14 @@
     "workflows": [
       {
         "kind": "workflow",
+        "name": "activationWorkspaceProbe",
+        "exportName": "activationWorkspaceProbe",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "askTimeoutCoordinator",
         "exportName": "askTimeoutCoordinator",
         "file": "src/definitions.ts",

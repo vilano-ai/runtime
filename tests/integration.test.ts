@@ -304,13 +304,43 @@ test("activations execute from writable workspaces while snapshots stay read-onl
       workspaceMarkerPresent: boolean;
       snapshotWritable: boolean;
       snapshotWriteErrorCode: string | null;
+      dependencyWritable: boolean;
+      dependencyWriteErrorCode: string | null;
+      workspaceNodeModulesSymlink: boolean;
+      workspaceNodeModulesRealPath: string | null;
     };
 
     expect(output.workspaceMarkerPresent).toBe(true);
     expect(output.snapshotWritable).toBe(false);
     expect(output.snapshotWriteErrorCode).toBeTruthy();
+    expect(output.dependencyWritable).toBe(false);
+    expect(output.dependencyWriteErrorCode).toBeTruthy();
+    expect(output.workspaceNodeModulesSymlink).toBe(true);
+    expect(output.workspaceNodeModulesRealPath).toBeTruthy();
+    expect(output.workspaceNodeModulesRealPath).not.toBe(
+      path.join(completed.run.projectSnapshotPath ?? "", "node_modules")
+    );
     expect(output.cwd).not.toBe(completed.run.projectSnapshotPath);
-    await fs.access(path.join(output.cwd, "tmp", "workspace-marker.txt"));
+    await expect(fs.access(path.join(output.cwd, "tmp", "workspace-marker.txt"))).rejects.toThrow();
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("runs resume into a fresh workspace after durable suspension", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/activationWorkspaceProbe", {});
+    const completed = await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed");
+    const output = completed.run.output as {
+      firstCwd: string;
+      secondCwd: string;
+      markerPresentAfterResume: boolean;
+    };
+
+    expect(output.firstCwd).not.toBe(output.secondCwd);
+    expect(output.markerPresentAfterResume).toBe(false);
   } finally {
     await harness.dispose();
   }
