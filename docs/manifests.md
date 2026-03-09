@@ -41,6 +41,9 @@ Each definition entry currently includes:
 That contract is validated by [cli/src/project-manifest-contract.ts](../cli/src/project-manifest-contract.ts)
 and checked in CI through `bun run check:manifest`.
 
+Vilano treats `exportName` as authoritative. The definition file must export that exact symbol, and
+the exported value must match the declared `kind` and `name`.
+
 ## Runtime Behavior
 
 When a project is registered or synced, the CLI resolves its manifest in this order:
@@ -56,8 +59,9 @@ That means the runtime already prefers explicit manifests over discovery magic.
 For the current OSS release:
 
 - explicit manifest consumption is supported
-- generated cache fallback is supported
-- source scanning is still the default way to produce the cache for TS/JS repos
+- generated cache fallback is supported as a convenience path for TS/JS repos
+- source scanning fallback is still regex-based and should be treated as a compatibility bridge,
+  not as the long-term portable manifest story
 
 For broader language support later:
 

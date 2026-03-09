@@ -10,25 +10,14 @@ export async function loadWorkflowDefinition(
   activation: WorkflowActivation,
   options: { cacheKey?: string; importRoot?: string } = {}
 ): Promise<WorkflowDefinition<any, any>> {
-  const moduleExports = await loadDefinitionModule(
+  const definition = await loadDefinitionExport(
     options.importRoot ?? activation.project.path,
     activation.definition.file,
     activation.definition.exportName,
+    activation.definition.name,
+    "workflow",
     options.cacheKey
   );
-  const definition = selectDefinitionExport(
-    moduleExports,
-    activation.definition.exportName,
-    activation.definition.name,
-    "workflow"
-  );
-
-  if (!definition || typeof definition !== "object" || (definition as { kind?: string }).kind !== "workflow") {
-    const exportsList = Object.keys(moduleExports).sort().join(", ");
-    throw new Error(
-      `Export '${activation.definition.exportName}' from ${activation.definition.file} is not a workflow definition (exports: ${exportsList})`
-    );
-  }
 
   return definition as WorkflowDefinition<any, any>;
 }
@@ -37,35 +26,26 @@ export async function loadServiceDefinition(
   activation: ServiceTurnActivation,
   options: { cacheKey?: string; importRoot?: string } = {}
 ): Promise<ServiceDefinition<any, any, any, any, any>> {
-  const moduleExports = await loadDefinitionModule(
+  const definition = await loadDefinitionExport(
     options.importRoot ?? activation.project.path,
     activation.definition.file,
     activation.definition.exportName,
+    activation.definition.name,
+    "service",
     options.cacheKey
   );
-  const definition = selectDefinitionExport(
-    moduleExports,
-    activation.definition.exportName,
-    activation.definition.name,
-    "service"
-  );
-
-  if (!definition || typeof definition !== "object" || (definition as { kind?: string }).kind !== "service") {
-    const exportsList = Object.keys(moduleExports).sort().join(", ");
-    throw new Error(
-      `Export '${activation.definition.exportName}' from ${activation.definition.file} is not a service definition (exports: ${exportsList})`
-    );
-  }
 
   return definition as ServiceDefinition<any, any, any, any, any>;
 }
 
-async function loadDefinitionModule(
+async function loadDefinitionExport(
   projectPath: string,
   file: string,
   exportName: string,
+  definitionName: string,
+  kind: "workflow" | "service",
   cacheKey?: string
-): Promise<Record<string, unknown>> {
+): Promise<unknown> {
   const absolutePath = path.join(projectPath, file);
   const [projectRealPath, absoluteRealPath] = await Promise.all([
     fs.realpath(projectPath),
@@ -86,49 +66,25 @@ async function loadDefinitionModule(
       ? `${pathToFileURL(absoluteRealPath).href}?vilano_activation=${encodeURIComponent(cacheKey)}`
       : pathToFileURL(absoluteRealPath).href;
   const moduleExports = (await import(moduleUrl)) as Record<string, unknown>;
+  const value = moduleExports[exportName];
+
   if (!(exportName in moduleExports)) {
-    return moduleExports;
+    const exportsList = Object.keys(moduleExports).sort().join(", ");
+    throw new Error(
+      `Definition file '${file}' does not export '${exportName}' (exports: ${exportsList})`
+    );
   }
 
-  return moduleExports;
-}
-
-function selectDefinitionExport(
-  moduleExports: Record<string, unknown>,
-  exportName: string,
-  definitionName: string,
-  kind: "workflow" | "service"
-): unknown {
-  const candidates: unknown[] = [];
-  const defaultExports =
-    moduleExports.default && typeof moduleExports.default === "object" && !Array.isArray(moduleExports.default)
-      ? (moduleExports.default as Record<string, unknown>)
-      : null;
-
-  candidates.push(moduleExports[exportName]);
-
-  if (defaultExports) {
-    candidates.push(defaultExports[exportName]);
+  if (!value || typeof value !== "object") {
+    throw new Error(`Export '${exportName}' from ${file} is not a ${kind} definition`);
   }
 
-  candidates.push(...Object.values(moduleExports));
-
-  if (defaultExports) {
-    candidates.push(...Object.values(defaultExports));
+  const record = value as { kind?: string; name?: string };
+  if (record.kind !== kind || record.name !== definitionName) {
+    throw new Error(
+      `Export '${exportName}' from ${file} does not match declared ${kind} '${definitionName}'`
+    );
   }
 
-  return candidates.find((candidate) => isDefinitionLike(candidate, definitionName, kind));
-}
-
-function isDefinitionLike(
-  candidate: unknown,
-  definitionName: string,
-  kind: "workflow" | "service"
-): candidate is WorkflowDefinition<any, any> | ServiceDefinition<any, any, any, any, any> {
-  if (!candidate || typeof candidate !== "object") {
-    return false;
-  }
-
-  const record = candidate as { kind?: string; name?: string };
-  return record.kind === kind && record.name === definitionName;
+  return value;
 }

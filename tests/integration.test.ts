@@ -388,6 +388,62 @@ test("kernel rejects persisted project definitions that escape the snapshot root
   }
 });
 
+test("project add rejects explicit manifests whose export does not match the declared definition", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const projectDir = await fs.mkdtemp(path.join(harness.homeDir, "manifest-project-"));
+    await fs.mkdir(path.join(projectDir, "src"), { recursive: true });
+    await fs.writeFile(
+      path.join(projectDir, "src", "definitions.ts"),
+      [
+        "export const actualWorkflow = {",
+        "  kind: 'workflow',",
+        "  name: 'actualWorkflow',",
+        "  run: async () => ({ ok: true }),",
+        "};",
+        "",
+      ].join("\n")
+    );
+    await fs.writeFile(
+      path.join(projectDir, "vilano.manifest.json"),
+      `${JSON.stringify(
+        {
+          manifestVersion: 1,
+          definitions: {
+            workflows: [
+              {
+                kind: "workflow",
+                name: "declaredWorkflow",
+                exportName: "missingWorkflow",
+                file: "src/definitions.ts",
+                runtimeKind: "javascript",
+                sourceLanguage: "typescript",
+              },
+            ],
+            services: [],
+          },
+        },
+        null,
+        2
+      )}\n`
+    );
+
+    const result = await harness.spawnCliCommand([
+      "project",
+      "add",
+      projectDir,
+      "--name",
+      "bad-manifest",
+    ]).wait();
+
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("missingWorkflow");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("lease-scoped child status and signals work inside workflow execution", async () => {
   const harness = await RuntimeHarness.create();
 

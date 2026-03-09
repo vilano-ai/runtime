@@ -14,8 +14,16 @@ test("project registration respects explicit vilano.manifest.json even during re
     await fs.writeFile(
       path.join(projectDir, "src", "definitions.ts"),
       [
+        "function workflow(definition) {",
+        "  return { kind: 'workflow', ...definition };",
+        "}",
+        "",
         'export const scannedWorkflow = workflow({',
         '  name: "scannedWorkflow",',
+        "});",
+        "",
+        'export const ignoredWorkflow = workflow({',
+        '  name: "ignoredWorkflow",',
         "});",
         "",
       ].join("\n"),
@@ -30,7 +38,7 @@ test("project registration respects explicit vilano.manifest.json even during re
             workflows: [
               {
                 kind: "workflow",
-                name: "explicitWorkflow",
+                name: "scannedWorkflow",
                 exportName: "scannedWorkflow",
                 file: "src/definitions.ts",
                 runtimeKind: "javascript",
@@ -51,7 +59,7 @@ test("project registration respects explicit vilano.manifest.json even during re
     expect(manifest.definitions.workflows).toEqual([
       {
         kind: "workflow",
-        name: "explicitWorkflow",
+        name: "scannedWorkflow",
         exportName: "scannedWorkflow",
         file: "src/definitions.ts",
         runtimeKind: "javascript",
@@ -71,6 +79,10 @@ test("generated manifest fallback records javascript source files correctly", as
     await fs.writeFile(
       path.join(projectDir, "src", "definitions.js"),
       [
+        "function workflow(definition) {",
+        "  return { kind: 'workflow', ...definition };",
+        "}",
+        "",
         'export const jsWorkflow = workflow({',
         '  name: "jsWorkflow",',
         "});",
