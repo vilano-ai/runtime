@@ -144,9 +144,9 @@ defmodule VilanoKernel.ManagedWorker do
       {~c"VILANO_KERNEL_PORT", String.to_charlist(Integer.to_string(runtime.port))}
     ]
 
-    case runtime.auth_token do
+    case runtime.worker_auth_token do
       token when is_binary(token) and token != "" ->
-        [{~c"VILANO_DAEMON_TOKEN", String.to_charlist(token)} | base_env]
+        [{~c"VILANO_WORKER_TOKEN", String.to_charlist(token)} | base_env]
 
       _ ->
         base_env

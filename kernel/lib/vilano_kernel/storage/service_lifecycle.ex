@@ -8,6 +8,7 @@ defmodule VilanoKernel.Storage.ServiceLifecycle do
     if lease_expires_at >= now, do: "active", else: "pending"
   end
 
+  def enqueue_status("waiting", _lease_expires_at, _now), do: "waiting"
   def enqueue_status(_current_status, _lease_expires_at, _now), do: "pending"
 
   def next_status("stopped", _has_queued_envelopes, _stop?), do: "stopped"

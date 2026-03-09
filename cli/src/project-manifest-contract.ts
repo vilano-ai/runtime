@@ -102,6 +102,7 @@ async function collectProjectScopedManifestErrors(
 ): Promise<string[]> {
   const errors: string[] = [];
   const seen = new Set<string>();
+  const projectRealPath = await fs.realpath(projectPath);
 
   for (const definition of [...manifest.definitions.workflows, ...manifest.definitions.services]) {
     const relativeFile = definition.file;
@@ -133,9 +134,25 @@ async function collectProjectScopedManifestErrors(
     seen.add(resolvedFile);
 
     try {
-      const stat = await fs.stat(resolvedFile);
+      const stat = await fs.lstat(resolvedFile);
+      if (stat.isSymbolicLink()) {
+        errors.push(`definition '${definition.name}' file must not be a symbolic link: ${relativeFile}`);
+        continue;
+      }
+
       if (!stat.isFile()) {
         errors.push(`definition '${definition.name}' file does not resolve to a file: ${relativeFile}`);
+        continue;
+      }
+
+      const realFilePath = await fs.realpath(resolvedFile);
+      const relativeToRealProject = path.relative(projectRealPath, realFilePath);
+      if (
+        relativeToRealProject === "" ||
+        relativeToRealProject.startsWith("..") ||
+        path.isAbsolute(relativeToRealProject)
+      ) {
+        errors.push(`definition '${definition.name}' file must resolve within the project root`);
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {

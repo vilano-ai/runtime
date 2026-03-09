@@ -40,6 +40,7 @@ export interface DaemonState {
   startedAt: string;
   runtimeDbPath: string;
   authToken?: string;
+  workerAuthToken?: string;
   runtimeVersion?: string;
   protocolVersion?: number;
   schemaVersion?: number;

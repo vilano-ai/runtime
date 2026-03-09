@@ -52,7 +52,7 @@ Supported today:
 - BEAM kernel
 - TypeScript SDK
 - Bun CLI
-- JS/TS worker core running under Bun or Node
+- JS/TS worker core running under Bun, with Node worker support in preview
 
 Not supported yet:
 

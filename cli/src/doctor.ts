@@ -9,6 +9,7 @@ import { CLI_PROTOCOL_VERSION, getCliVersion } from "./runtime-version.ts";
 export interface DoctorCheck {
   name: string;
   ok: boolean;
+  required: boolean;
   detail: string;
 }
 
@@ -76,6 +77,7 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
     {
       name: "runtime_bundle",
       ok: true,
+      required: true,
       detail: bundle.source.bundled
         ? `Using packaged runtime bundle from ${bundle.source.runtimeRoot} materialized at ${bundle.runtimeRoot}`
         : `Using repo runtime bundle at ${bundle.runtimeRoot}`,
@@ -83,36 +85,45 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
     {
       name: "bun",
       ok: bunTool.found,
+      required: true,
       detail: bunTool.found ? `${bunTool.path} (${bunTool.version ?? "unknown"})` : "bun not found on PATH",
     },
     {
       name: "node",
       ok: nodeTool.found,
-      detail: nodeTool.found ? `${nodeTool.path} (${nodeTool.version ?? "unknown"})` : "node not found on PATH",
+      required: false,
+      detail: nodeTool.found
+        ? `${nodeTool.path} (${nodeTool.version ?? "unknown"})`
+        : "node not found on PATH (optional for preview Node workers)",
     },
     {
       name: "mix",
       ok: mixTool.found,
+      required: true,
       detail: mixTool.found ? `${mixTool.path} (${mixTool.version ?? "unknown"})` : "mix not found on PATH",
     },
     {
       name: "elixir",
       ok: elixirTool.found,
+      required: true,
       detail: elixirTool.found ? `${elixirTool.path} (${elixirTool.version ?? "unknown"})` : "elixir not found on PATH",
     },
     {
       name: "kernel_deps",
       ok: depsReady,
+      required: true,
       detail: depsReady ? "kernel deps directory is present" : "kernel deps are missing; run `vilano doctor --fix` or `mix deps.get`",
     },
     {
       name: "kernel_build",
       ok: true,
+      required: true,
       detail: buildReady ? "kernel build artifacts are present" : "kernel has not been compiled yet; it can compile on first start",
     },
     {
       name: "daemon",
       ok: daemonError === null,
+      required: true,
       detail:
         daemonError !== null
           ? daemonError
@@ -123,7 +134,7 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
   ];
 
   return {
-    ok: checks.every((check) => check.ok),
+    ok: checks.every((check) => !check.required || check.ok),
     cliVersion: getCliVersion(),
     protocolVersion: CLI_PROTOCOL_VERSION,
     runtimeHome: runtimePaths.homeDir,

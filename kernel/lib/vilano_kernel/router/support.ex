@@ -33,6 +33,14 @@ defmodule VilanoKernel.Router.Support do
     end
   end
 
+  def fetch_optional_integer(body_params, key) do
+    case Map.get(body_params, key) do
+      nil -> nil
+      value when is_integer(value) -> value
+      _ -> raise ArgumentError, "expected '#{key}' to be an integer when provided"
+    end
+  end
+
   def list_definitions(kind, nil), do: {:ok, Storage.list_definitions(kind)}
 
   def list_definitions(kind, project_name) do

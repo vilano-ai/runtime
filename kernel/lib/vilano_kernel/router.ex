@@ -45,26 +45,55 @@ defmodule VilanoKernel.Router do
 
   defp authenticate_request(conn, _opts) do
     runtime = Application.fetch_env!(:vilano_kernel, :runtime)
+    provided =
+      conn
+      |> Conn.get_req_header("x-vilano-token")
+      |> List.first()
 
-    case runtime.auth_token do
-      token when is_binary(token) and token != "" ->
-        provided =
-          conn
-          |> Conn.get_req_header("x-vilano-token")
-          |> List.first()
+    cond do
+      valid_auth_token?(provided, runtime.auth_token) ->
+        Conn.assign(conn, :auth_scope, :daemon)
 
-        if valid_auth_token?(provided, token) do
-          conn
+      valid_auth_token?(provided, runtime.worker_auth_token) ->
+        if worker_scoped_request?(conn.method, conn.request_path) do
+          Conn.assign(conn, :auth_scope, :worker)
         else
           conn
-          |> send_error(401, "unauthorized", "Vilano kernel access token is missing or invalid")
+          |> send_error(401, "unauthorized", "Vilano worker token cannot access this endpoint")
           |> Conn.halt()
         end
 
-      _ ->
+      auth_configured?(runtime) ->
         conn
+        |> send_error(401, "unauthorized", "Vilano kernel access token is missing or invalid")
+        |> Conn.halt()
+
+      conn.request_path == "/v1/status" ->
+        conn
+
+      true ->
+        conn
+        |> send_error(503, "unconfigured_auth", "Vilano kernel access tokens are not configured")
+        |> Conn.halt()
     end
   end
+
+  defp auth_configured?(runtime) do
+    non_empty_token?(runtime.auth_token) or non_empty_token?(runtime.worker_auth_token)
+  end
+
+  defp non_empty_token?(token) when is_binary(token), do: token != ""
+  defp non_empty_token?(_token), do: false
+
+  defp worker_scoped_request?("GET", "/v1/status"), do: true
+  defp worker_scoped_request?("POST", "/v1/activations/lease"), do: true
+  defp worker_scoped_request?("POST", "/v1/activations/heartbeat"), do: true
+  defp worker_scoped_request?("POST", "/v1/services/ensure"), do: true
+  defp worker_scoped_request?("GET", path), do: Regex.match?(~r{^/v1/leases/[^/]+/status$}, path) or Regex.match?(~r{^/v1/runs/[^/]+$}, path)
+  defp worker_scoped_request?("POST", path) do
+    Regex.match?(~r{^/v1/leases/[^/]+/}, path) or Regex.match?(~r{^/v1/runs/[^/]+/signals$}, path)
+  end
+  defp worker_scoped_request?(_method, _path), do: false
 
   defp valid_auth_token?(provided, expected)
        when is_binary(provided) and is_binary(expected) and byte_size(provided) == byte_size(expected) do
@@ -89,8 +118,13 @@ defmodule VilanoKernel.Router do
   end
 
   post "/v1/projects" do
-    project = Storage.upsert_project!(project_payload(conn.body_params))
-    send_json(conn, 200, %{ok: true, project: project})
+    case Storage.create_project!(project_payload(conn.body_params)) do
+      nil ->
+        send_error(conn, 409, "project_exists", "Project already exists")
+
+      project ->
+        send_json(conn, 200, %{ok: true, project: project})
+    end
   end
 
   get "/v1/projects/:name" do
@@ -472,10 +506,23 @@ defmodule VilanoKernel.Router do
     service_run_id = fetch_required_string(conn.body_params, "serviceRunId")
     name = fetch_required_string(conn.body_params, "name")
     key = fetch_required_string(conn.body_params, "key")
+    timeout_ms = fetch_optional_integer(conn.body_params, "timeoutMs")
 
-    case Storage.resolve_service_ask(lease_id, service_run_id, name, key, Map.get(conn.body_params, "payload")) do
+    case Storage.resolve_service_ask(
+           lease_id,
+           service_run_id,
+           name,
+           key,
+           Map.get(conn.body_params, "payload"),
+           timeout_ms
+         ) do
       nil -> send_error(conn, 404, "not_found", "Unknown active lease or service: #{lease_id}")
-      result -> send_json(conn, 200, %{ok: true, result: result})
+      %{"status" => "suspended", "wait" => %{"wakeAt" => wake_at} = wait} = result when not is_nil(wake_at) ->
+        WaitManager.schedule_timed_wait(wait)
+        send_json(conn, 200, %{ok: true, result: result})
+
+      result ->
+        send_json(conn, 200, %{ok: true, result: result})
     end
   end
 

@@ -98,7 +98,7 @@ export function renderDoctorReport(body: {
     error?: string | null;
   };
   appliedFixes: string[];
-  checks: Array<{ name: string; ok: boolean; detail: string }>;
+  checks: Array<{ name: string; ok: boolean; required: boolean; detail: string }>;
 }): string {
   return [
     `doctor: ${body.ok ? "ok" : "needs attention"}`,
@@ -123,7 +123,9 @@ export function renderDoctorReport(body: {
       : "kernel_status: not running",
     ...(body.appliedFixes.length > 0 ? [`applied_fixes: ${body.appliedFixes.join(", ")}`] : []),
     "checks:",
-    ...body.checks.map((check) => `  [${check.ok ? "ok" : "fail"}] ${check.name}: ${check.detail}`),
+    ...body.checks.map((check) =>
+      `  [${check.ok ? "ok" : "fail"}${check.required ? "" : "/optional"}] ${check.name}: ${check.detail}`
+    ),
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");

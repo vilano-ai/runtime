@@ -338,7 +338,7 @@ export class WorkerClient {
 
   async resolveServiceAsk(
     leaseId: string,
-    spec: { serviceRunId: string; name: string; key: string; payload: unknown }
+    spec: { serviceRunId: string; name: string; key: string; payload: unknown; timeoutMs?: number }
   ): Promise<ServiceCallResolveResponse["result"]> {
     const response = await this.request<ServiceCallResolveResponse>(
       "POST",

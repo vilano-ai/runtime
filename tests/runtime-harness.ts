@@ -23,6 +23,7 @@ const ROOT = path.resolve(import.meta.dir, "..");
 const CLI_ENTRY = path.join(ROOT, "cli", "bin", "vilano.ts");
 const WORKER_ROOT = path.join(ROOT, "worker");
 const BOOTSTRAP_DEMO_ROOT = path.join(ROOT, "examples", "bootstrap-demo");
+const SDK_ROOT = path.join(ROOT, "sdk", "typescript");
 
 export class RuntimeHarness {
   private readonly serviceAddressCache = new Map<string, { project: string; name: string; key: string }>();
@@ -221,7 +222,7 @@ export class RuntimeHarness {
     return this.spawnCommand(
       args,
       {
-        VILANO_DAEMON_TOKEN: await this.readDaemonToken(),
+        VILANO_WORKER_TOKEN: await this.readWorkerToken(),
       },
       this.runtimeHome
     );
@@ -305,6 +306,11 @@ export class RuntimeHarness {
   private async readDaemonToken(): Promise<string> {
     const daemonState = await readDaemonState(this.runtimeHome);
     return daemonState?.authToken ?? "";
+  }
+
+  private async readWorkerToken(): Promise<string> {
+    const daemonState = await readDaemonState(this.runtimeHome);
+    return daemonState?.workerAuthToken ?? "";
   }
 
   private async resolveServiceAddress(
@@ -461,18 +467,9 @@ async function cloneBootstrapDemoProject(projectDir: string): Promise<void> {
     },
   });
 
-  const sourceNodeModules = path.join(ROOT, "node_modules");
-  const projectNodeModules = path.join(projectDir, "node_modules");
-
-  try {
-    await fs.lstat(projectNodeModules);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
-    }
-
-    await fs.symlink(sourceNodeModules, projectNodeModules, "dir");
-  }
+  const runtimePackageDir = path.join(projectDir, "node_modules", "@vilano", "runtime");
+  await fs.mkdir(path.dirname(runtimePackageDir), { recursive: true });
+  await fs.symlink(SDK_ROOT, runtimePackageDir, "dir");
 }
 
 function choosePortCandidate(): number {

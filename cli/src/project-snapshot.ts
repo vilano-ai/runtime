@@ -27,6 +27,7 @@ export async function materializeProjectSnapshot(
   await fs.cp(sourcePath, snapshotRoot, {
     recursive: true,
     force: true,
+    dereference: true,
     filter: (_src, dest) => !SNAPSHOT_EXCLUDED_NAMES.has(path.basename(dest)),
   });
   await ensureDependencyResolution(sourcePath, snapshotRoot);
@@ -53,39 +54,27 @@ async function ensureDependencyResolution(sourcePath: string, snapshotRoot: stri
     }
   }
 
-  const sourceNodeModules = await findNearestNodeModules(sourcePath);
-  if (!sourceNodeModules) {
-    return;
+  const sourceNodeModules = path.join(sourcePath, "node_modules");
+  try {
+    const stat = await fs.lstat(sourceNodeModules);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Project node_modules must not be a symbolic link: ${sourceNodeModules}`);
+    }
+
+    if (!stat.isDirectory()) {
+      return;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+
+    throw error;
   }
 
   await fs.cp(sourceNodeModules, snapshotNodeModules, {
     recursive: true,
     force: true,
+    dereference: true,
   });
-}
-
-async function findNearestNodeModules(startPath: string): Promise<string | null> {
-  let current = path.resolve(startPath);
-
-  while (true) {
-    const candidate = path.join(current, "node_modules");
-
-    try {
-      const stat = await fs.stat(candidate);
-      if (stat.isDirectory()) {
-        return candidate;
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
-      }
-    }
-
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return null;
-    }
-
-    current = parent;
-  }
 }

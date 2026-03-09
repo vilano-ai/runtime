@@ -26,6 +26,8 @@ defmodule VilanoKernel.Storage do
 
   def get_project(name), do: Projects.get_project(name)
 
+  def create_project!(project), do: Projects.create_project(project)
+
   def upsert_project!(project), do: Projects.upsert_project!(project)
 
   def remove_project(name), do: Projects.remove_project(name)
@@ -266,7 +268,7 @@ defmodule VilanoKernel.Storage do
                       child_run["status"] == "completed" ->
                         %{"status" => "completed", "output" => child_run["output"]}
 
-                      child_run["status"] == "failed" ->
+                      child_run["status"] in ["failed", "cancelled"] ->
                         %{"status" => "failed", "error" => child_run["error"]}
 
                       true ->
@@ -505,8 +507,9 @@ defmodule VilanoKernel.Storage do
     |> unwrap_transaction_result()
   end
 
-  def resolve_service_ask(lease_id, service_run_id, name, op_key, payload) do
+  def resolve_service_ask(lease_id, service_run_id, name, op_key, payload, timeout_ms \\ nil) do
     now = Infrastructure.now_iso8601()
+    wake_at = wait_deadline(now, timeout_ms)
 
     Repo.transaction(fn ->
       case {get_run_by_lease(lease_id), get_service_run_by_id(service_run_id)} do
@@ -543,7 +546,7 @@ defmodule VilanoKernel.Storage do
                       "kind" => "ask_reply",
                       "name" => correlation_id,
                       "status" => "waiting",
-                      "wakeAt" => nil,
+                      "wakeAt" => wake_at,
                       "output" => nil
                     }
                   }
@@ -603,16 +606,16 @@ defmodule VilanoKernel.Storage do
                       output_json,
                       created_at,
                       updated_at
-                    ) values (?, ?, 'ask_reply', ?, 'waiting', null, null, ?, ?)
+                    ) values (?, ?, 'ask_reply', ?, 'waiting', ?, null, ?, ?)
                     on conflict(run_id, op_key) do update set
                       wait_kind = excluded.wait_kind,
                       wait_name = excluded.wait_name,
                       status = 'waiting',
-                      wake_at = null,
+                      wake_at = excluded.wake_at,
                       output_json = null,
                       updated_at = excluded.updated_at
                     """,
-                    [caller_run["id"], "ask_reply:" <> correlation_id, correlation_id, now, now]
+                    [caller_run["id"], "ask_reply:" <> correlation_id, correlation_id, wake_at, now, now]
                   )
 
                   SQL.query!(
@@ -646,7 +649,12 @@ defmodule VilanoKernel.Storage do
                   append_event!(
                     caller_run["id"],
                     "WaitRegistered",
-                    %{"kind" => "ask_reply", "key" => "ask_reply:" <> correlation_id, "correlationId" => correlation_id},
+                    %{
+                      "kind" => "ask_reply",
+                      "key" => "ask_reply:" <> correlation_id,
+                      "correlationId" => correlation_id,
+                      "wakeAt" => wake_at
+                    },
                     now
                   )
 
@@ -663,7 +671,8 @@ defmodule VilanoKernel.Storage do
                       "waitKind" => "ask_reply",
                       "key" => "ask_reply:" <> correlation_id,
                       "name" => correlation_id,
-                      "correlationId" => correlation_id
+                      "correlationId" => correlation_id,
+                      "wakeAt" => wake_at
                     },
                     now
                   )
@@ -676,7 +685,7 @@ defmodule VilanoKernel.Storage do
                       "kind" => "ask_reply",
                       "name" => correlation_id,
                       "status" => "waiting",
-                      "wakeAt" => nil,
+                      "wakeAt" => wake_at,
                       "output" => nil
                     }
                   }
@@ -1865,50 +1874,56 @@ defmodule VilanoKernel.Storage do
           if wait["status"] != "waiting" or is_nil(wait["wake_at"]) do
             nil
           else
-            SQL.query!(
-              Repo,
-              """
-              update run_waits
-              set
-                status = 'completed',
-                updated_at = ?
-              where run_id = ? and op_key = ?
-              """,
-              [now, run_id, op_key]
-            )
+            case wait["wait_kind"] do
+              "ask_reply" ->
+                timeout_service_ask_wait!(run_id, op_key, wait, now)
 
-            SQL.query!(
-              Repo,
-              """
-              update runs
-              set
-                status = 'pending',
-                updated_at = ?
-              where id = ? and status = 'waiting'
-              """,
-              [now, run_id]
-            )
+              _ ->
+                SQL.query!(
+                  Repo,
+                  """
+                  update run_waits
+                  set
+                    status = 'completed',
+                    updated_at = ?
+                  where run_id = ? and op_key = ?
+                  """,
+                  [now, run_id, op_key]
+                )
 
-            append_event!(
-              run_id,
-              "TimerFired",
-              %{"kind" => wait["wait_kind"], "key" => op_key, "wakeAt" => wait["wake_at"]},
-              now
-            )
+                SQL.query!(
+                  Repo,
+                  """
+                  update runs
+                  set
+                    status = 'pending',
+                    updated_at = ?
+                  where id = ? and status = 'waiting'
+                  """,
+                  [now, run_id]
+                )
 
-            append_event!(
-              run_id,
-              "WaitSatisfied",
-              %{
-                "kind" => wait["wait_kind"],
-                "key" => op_key,
-                "name" => wait["wait_name"],
-                "wakeAt" => wait["wake_at"]
-              },
-              now
-            )
+                append_event!(
+                  run_id,
+                  "TimerFired",
+                  %{"kind" => wait["wait_kind"], "key" => op_key, "wakeAt" => wait["wake_at"]},
+                  now
+                )
 
-            wait_from_row(get_run_wait(run_id, op_key))
+                append_event!(
+                  run_id,
+                  "WaitSatisfied",
+                  %{
+                    "kind" => wait["wait_kind"],
+                    "key" => op_key,
+                    "name" => wait["wait_name"],
+                    "wakeAt" => wait["wake_at"]
+                  },
+                  now
+                )
+
+                wait_from_row(get_run_wait(run_id, op_key))
+            end
           end
       end
     end)
@@ -2398,6 +2413,12 @@ defmodule VilanoKernel.Storage do
 
   defp first_integer(%{rows: [[value]]}) when is_integer(value), do: value
   defp first_integer(_), do: 0
+
+  defp wait_deadline(_now, nil), do: nil
+  defp wait_deadline(now, timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0 do
+    shift_milliseconds(now, timeout_ms)
+  end
+  defp wait_deadline(_now, _timeout_ms), do: nil
 
   defp decode_json_list(nil), do: []
   defp decode_json_list(value) when is_binary(value), do: Jason.decode!(value)
@@ -4457,7 +4478,7 @@ defmodule VilanoKernel.Storage do
       |> rows_to_maps()
       |> List.first()
 
-    if op do
+    if op && op["status"] == "waiting" do
       case status do
         "completed" ->
           SQL.query!(
@@ -4525,6 +4546,83 @@ defmodule VilanoKernel.Storage do
         now
       )
     end
+  end
+
+  defp timeout_service_ask_wait!(run_id, op_key, wait, now) do
+    correlation_id = wait["wait_name"]
+    error_body = %{
+      "message" => "Service ask timed out",
+      "reason" => "ask_timeout",
+      "correlationId" => correlation_id
+    }
+
+    SQL.query!(
+      Repo,
+      """
+      update run_service_ops
+      set
+        status = 'failed',
+        response_json = null,
+        error_json = ?,
+        updated_at = ?
+      where caller_run_id = ? and correlation_id = ? and status = 'waiting'
+      """,
+      [maybe_encode_json(error_body), now, run_id, correlation_id]
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      update run_waits
+      set
+        status = 'failed',
+        output_json = ?,
+        updated_at = ?
+      where run_id = ? and op_key = ?
+      """,
+      [maybe_encode_json(error_body), now, run_id, op_key]
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      update runs
+      set
+        status = 'pending',
+        updated_at = ?
+      where id = ? and status = 'waiting'
+      """,
+      [now, run_id]
+    )
+
+    append_event!(
+      run_id,
+      "TimerFired",
+      %{"kind" => wait["wait_kind"], "key" => op_key, "wakeAt" => wait["wake_at"]},
+      now
+    )
+
+    append_event!(
+      run_id,
+      "AskTimedOut",
+      %{"key" => op_key, "correlationId" => correlation_id, "wakeAt" => wait["wake_at"]},
+      now
+    )
+
+    append_event!(
+      run_id,
+      "WaitFailed",
+      %{
+        "kind" => wait["wait_kind"],
+        "key" => op_key,
+        "name" => wait["wait_name"],
+        "wakeAt" => wait["wake_at"],
+        "error" => error_body
+      },
+      now
+    )
+
+    wait_from_row(get_run_wait(run_id, op_key))
   end
 
   defp service_next_status(service_run_id, stop?) do

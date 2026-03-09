@@ -111,12 +111,12 @@ export async function handleWorkerCommand(
     case "start": {
       const workerRuntime =
         typeof flags.runtime === "string" ? flags.runtime : process.env.VILANO_WORKER_RUNTIME ?? "bun";
-      const serverUrl =
-        typeof flags.server === "string"
-          ? flags.server
-          : typeof flags.url === "string"
-            ? flags.url
-            : "http://127.0.0.1:4141";
+      if (workerRuntime !== "bun" && workerRuntime !== "node") {
+        throw new CliError("Usage: vilano worker start [--runtime <bun|node>] [--once] [--worker-id <id>] [--server <url>]");
+      }
+
+      const daemonState = await readJsonFile<DaemonState | null>(getRuntimePaths().daemonStateFile, null);
+      const serverUrl = resolveWorkerServerUrl(flags, daemonState);
       const bundle = await prepareRuntimeBundle();
       const workerEntry = path.join(bundle.workerDir, workerRuntime, "src", "cli.ts");
       const executable = workerRuntime === "node" ? "node" : "bun";
@@ -153,7 +153,7 @@ export async function handleWorkerCommand(
 
 async function resolveWorkerAuthEnv(serverUrl: string): Promise<Record<string, string>> {
   const daemonState = await readJsonFile<DaemonState | null>(getRuntimePaths().daemonStateFile, null);
-  if (!daemonState?.authToken) {
+  if (!daemonState?.workerAuthToken) {
     return {};
   }
 
@@ -164,7 +164,7 @@ async function resolveWorkerAuthEnv(serverUrl: string): Promise<Record<string, s
 
     if (isLoopback && port === daemonState.port) {
       return {
-        VILANO_DAEMON_TOKEN: daemonState.authToken,
+        VILANO_WORKER_TOKEN: daemonState.workerAuthToken,
       };
     }
   } catch {
@@ -172,4 +172,23 @@ async function resolveWorkerAuthEnv(serverUrl: string): Promise<Record<string, s
   }
 
   return {};
+}
+
+function resolveWorkerServerUrl(
+  flags: Record<string, string | boolean>,
+  daemonState: DaemonState | null
+): string {
+  if (typeof flags.server === "string") {
+    return flags.server;
+  }
+
+  if (typeof flags.url === "string") {
+    return flags.url;
+  }
+
+  if (daemonState?.port) {
+    return `http://127.0.0.1:${daemonState.port}`;
+  }
+
+  return "http://127.0.0.1:4141";
 }

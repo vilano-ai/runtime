@@ -62,8 +62,21 @@ async function loadDefinitionModule(
   exportName: string
 ): Promise<Record<string, unknown>> {
   const absolutePath = path.join(projectPath, file);
-  await fs.stat(absolutePath);
-  const moduleUrl = pathToFileURL(absolutePath).href;
+  const [projectRealPath, absoluteRealPath] = await Promise.all([
+    fs.realpath(projectPath),
+    fs.realpath(absolutePath),
+  ]);
+  const relativeToProject = path.relative(projectRealPath, absoluteRealPath);
+
+  if (
+    relativeToProject === "" ||
+    relativeToProject.startsWith("..") ||
+    path.isAbsolute(relativeToProject)
+  ) {
+    throw new Error(`Definition file '${file}' resolved outside the project root`);
+  }
+
+  const moduleUrl = pathToFileURL(absoluteRealPath).href;
   const moduleExports = (await import(moduleUrl)) as Record<string, unknown>;
   if (!(exportName in moduleExports)) {
     return moduleExports;

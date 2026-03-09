@@ -97,10 +97,7 @@ export async function executeProcess<TOutput>(
       cmd: spec.cmd,
       args: spec.args ?? [],
       cwd: execution.cwd,
-      env: {
-        ...process.env,
-        ...spec.env,
-      },
+      env: buildExecEnv(spec.env),
     });
   } catch (error) {
     return {
@@ -332,6 +329,20 @@ export async function executeProcess<TOutput>(
       artifacts: captures.artifacts,
     };
   }
+}
+
+function buildExecEnv(
+  overrides: Record<string, string | undefined> | undefined
+): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    ...overrides,
+  };
+
+  delete env.VILANO_DAEMON_TOKEN;
+  delete env.VILANO_WORKER_TOKEN;
+
+  return env;
 }
 
 export function toFailureBody(error: unknown): Record<string, unknown> {

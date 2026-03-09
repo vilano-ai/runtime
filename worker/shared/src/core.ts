@@ -72,7 +72,7 @@ export async function startWorker(
 
   const workerId = options.workerId ?? `worker-${crypto.randomUUID()}`;
   const serverUrl = options.serverUrl ?? "http://127.0.0.1:4141";
-  const authToken = options.authToken ?? process.env.VILANO_DAEMON_TOKEN;
+  const authToken = options.authToken ?? process.env.VILANO_WORKER_TOKEN;
   const pollIntervalMs = options.pollIntervalMs ?? 1000;
   const client = new WorkerClient(serverUrl, workerId, authToken);
   const status = await client.assertCompatible(WORKER_PROTOCOL_VERSION);
@@ -532,12 +532,13 @@ function createServiceRef(
     name,
     async (...args: any[]) => {
       const { payload, options } = splitPayloadAndOptions(args, "ask");
+      const askOptions = options as AskOptions | undefined;
       const key = nextImplicitServiceOpKey(
         implicitOpCounters,
         serviceRunId,
         "ask",
         name,
-        options?.key
+        askOptions?.key
       );
       const scopedKey = scopeActivationOpKey(activation, key);
       const resolved = await client.resolveServiceAsk(activation.leaseId, {
@@ -545,6 +546,7 @@ function createServiceRef(
         name,
         key: scopedKey,
         payload: payload ?? null,
+        timeoutMs: typeof askOptions?.timeout === "string" ? parseDurationToMs(askOptions.timeout) : undefined,
       });
 
       if (resolved.status === "completed") {

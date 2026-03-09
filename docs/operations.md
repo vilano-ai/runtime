@@ -30,7 +30,8 @@ vilano doctor
 vilano doctor --fix
 ```
 
-`doctor --fix` can bootstrap local Mix/Hex state and compile kernel dependencies when needed.
+`doctor --fix` can bootstrap local Mix/Hex state and compile kernel dependencies when needed. Node
+is reported as optional unless you are validating the preview Node worker lane.
 
 ## Daemon Lifecycle
 
@@ -62,6 +63,8 @@ vilano project inspect demo
 ```
 
 The registry is machine-local. It is not a remote catalog or package index.
+`project add` creates a new registration. If the project name already exists, use `project sync`
+to refresh the registered snapshot and definition set.
 
 ## Operator Commands
 

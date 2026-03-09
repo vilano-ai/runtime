@@ -57,6 +57,40 @@ defmodule VilanoKernel.Storage.Projects do
   end
 
   def upsert_project!(project) do
+    persist_project!(project, :upsert)
+    get_project(Map.fetch!(project, "name"))
+  end
+
+  def create_project(project) do
+    project_name = Map.fetch!(project, "name")
+
+    Repo.transaction(fn ->
+      case get_project(project_name) do
+        nil ->
+          persist_project!(project, :upsert)
+          get_project(project_name)
+
+        _existing ->
+          nil
+      end
+    end)
+    |> case do
+      {:ok, result} -> result
+      {:error, reason} -> raise(reason)
+    end
+  end
+
+  def remove_project(name) do
+    project = get_project(name)
+
+    if project do
+      SQL.query!(Repo, "delete from projects where name = ?", [name])
+    end
+
+    project
+  end
+
+  defp persist_project!(project, mode) do
     workflows_json = Jason.encode!(get_in(project, ["definitions", "workflows"]) || [])
     services_json = Jason.encode!(get_in(project, ["definitions", "services"]) || [])
 
@@ -73,13 +107,7 @@ defmodule VilanoKernel.Storage.Projects do
           workflows_json,
           services_json
         ) values (?, ?, ?, ?, ?, ?, ?)
-        on conflict(name) do update set
-          path = excluded.path,
-          snapshot_path = excluded.snapshot_path,
-          last_synced_at = excluded.last_synced_at,
-          definitions_manifest_hash = excluded.definitions_manifest_hash,
-          workflows_json = excluded.workflows_json,
-          services_json = excluded.services_json
+        #{project_insert_conflict_clause(mode)}
         """,
         [
           Map.fetch!(project, "name"),
@@ -91,21 +119,26 @@ defmodule VilanoKernel.Storage.Projects do
           services_json
         ]
       )
+
+      :ok
     end)
-
-    get_project(Map.fetch!(project, "name"))
-  end
-
-  def remove_project(name) do
-    project = get_project(name)
-
-    if project do
-      SQL.query!(Repo, "delete from projects where name = ?", [name])
+    |> case do
+      {:ok, result} -> result
+      {:error, reason} -> raise(reason)
     end
-
-    project
   end
 
+  defp project_insert_conflict_clause(:upsert) do
+    """
+    on conflict(name) do update set
+      path = excluded.path,
+      snapshot_path = excluded.snapshot_path,
+      last_synced_at = excluded.last_synced_at,
+      definitions_manifest_hash = excluded.definitions_manifest_hash,
+      workflows_json = excluded.workflows_json,
+      services_json = excluded.services_json
+    """
+  end
   def list_definitions(kind, project_name \\ nil)
 
   def list_definitions(kind, nil) do

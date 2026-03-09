@@ -56,5 +56,5 @@ vilano service ask demo/reviewer status --key-json '{"repoId":"repo_123"}'
 
 ## Release Notes
 
-The CLI currently supports the Bun-first release path. Worker processes may be launched under Bun or
-Node, but the CLI itself remains Bun-oriented today.
+The CLI currently supports the Bun-first release path. Bun workers are the supported OSS v1 lane.
+Node workers remain preview, and the CLI itself remains Bun-oriented today.

@@ -172,3 +172,45 @@ test("explicit manifests must reference files that exist", async () => {
     await fs.rm(projectDir, { recursive: true, force: true });
   }
 });
+
+test("explicit manifests reject symlinked definition files", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-manifest-symlink-"));
+  const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-manifest-symlink-target-"));
+
+  try {
+    await fs.mkdir(path.join(projectDir, "src"), { recursive: true });
+    await fs.writeFile(path.join(outsideDir, "outside.ts"), "export const outsideWorkflow = 1;\n", "utf8");
+    await fs.symlink(path.join(outsideDir, "outside.ts"), path.join(projectDir, "src", "outside.ts"));
+    await fs.writeFile(
+      path.join(projectDir, "vilano.manifest.json"),
+      `${JSON.stringify(
+        {
+          manifestVersion: 1,
+          definitions: {
+            workflows: [
+              {
+                kind: "workflow",
+                name: "outsideWorkflow",
+                exportName: "outsideWorkflow",
+                file: "src/outside.ts",
+                runtimeKind: "javascript",
+                sourceLanguage: "typescript",
+              },
+            ],
+            services: [],
+          },
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    await expect(buildProjectManifest("demo", projectDir, { regenerate: true })).rejects.toThrow(
+      "must not be a symbolic link"
+    );
+  } finally {
+    await fs.rm(projectDir, { recursive: true, force: true });
+    await fs.rm(outsideDir, { recursive: true, force: true });
+  }
+});

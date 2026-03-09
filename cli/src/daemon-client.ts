@@ -66,6 +66,7 @@ export async function ensureDaemonStarted(
   const kernelDir = bundle.kernelDir;
   const projectRoot = bundle.runtimeRoot;
   const authToken = generateDaemonAuthToken();
+  const workerAuthToken = generateDaemonAuthToken();
   const mixArgs =
     process.env.VILANO_KERNEL_NO_COMPILE === "1"
       ? ["run", "--no-compile", "--no-halt"]
@@ -81,6 +82,7 @@ export async function ensureDaemonStarted(
       VILANO_KERNEL_PORT: String(port),
       VILANO_ROOT: projectRoot,
       VILANO_DAEMON_TOKEN: authToken,
+      VILANO_WORKER_TOKEN: workerAuthToken,
     },
   });
 
@@ -114,6 +116,7 @@ export async function ensureDaemonStarted(
         startedAt: kernelStatus.startedAt,
         runtimeDbPath: kernelStatus.runtimeDbPath,
         authToken,
+        workerAuthToken,
         runtimeVersion: kernelStatus.runtimeVersion,
         protocolVersion: kernelStatus.protocolVersion,
         schemaVersion: kernelStatus.schemaVersion,

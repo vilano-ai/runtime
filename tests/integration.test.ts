@@ -76,6 +76,33 @@ test("run cancel propagates to spawned child workflows", async () => {
   }
 });
 
+test("cancelled child results fail the waiting parent", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/cancelledChildParent", { token: "cancelled-child" });
+    const waiting = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "waiting" && inspect.children.length === 1
+    );
+
+    const childRunId = waiting.children[0]?.childRunId;
+    expect(childRunId).toBeTruthy();
+
+    await harness.cancelRun(childRunId as string);
+
+    const failed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "failed"
+    );
+
+    expect(failed.run.error).toBeTruthy();
+    expect(failed.events.map((event) => event.type)).toContain("RunFailed");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("run cancel propagates through outbound service asks", async () => {
   const harness = await RuntimeHarness.create();
   const keyInput = { sessionId: "cancel-session" };
@@ -160,6 +187,28 @@ test("kernel rejects unauthenticated localhost requests", async () => {
 
     const authorized = await harness.requestKernel("/v1/status");
     expect(authorized.status).toBe(200);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("worker tokens cannot access daemon-only routes", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const daemonState = JSON.parse(
+      await Bun.file(`${harness.homeDir}/daemon.json`).text()
+    ) as { workerAuthToken?: string };
+
+    const response = await fetch(`${harness.serverUrl}/v1/projects`, {
+      headers: daemonState.workerAuthToken
+        ? {
+            "x-vilano-token": daemonState.workerAuthToken,
+          }
+        : {},
+    });
+
+    expect(response.status).toBe(401);
   } finally {
     await harness.dispose();
   }
@@ -1185,6 +1234,92 @@ test("service turns isolate implicit durable ops across envelopes", async () => 
 
     expect(first).toEqual({ attempts: [1, 2] });
     expect(second).toEqual({ attempts: [3, 4] });
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("queued envelopes do not re-lease waiting service turns", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { sessionId: "service-waiting-queue" };
+
+  try {
+    await harness.ensureService("demo/operator", keyInput);
+
+    const waitingAsk = harness.spawnCliCommand([
+      "service",
+      "ask",
+      "demo/operator",
+      "awaitApproval",
+      "--key-json",
+      JSON.stringify(keyInput),
+      "--timeout",
+      "20s",
+      "--json",
+    ]);
+
+    const waiting = await harness.waitForService(
+      "demo/operator",
+      keyInput,
+      (inspect) =>
+        inspect.run.status === "waiting" &&
+        inspect.envelopes.some((envelope) => envelope.name === "awaitApproval" && envelope.status === "processing"),
+      20_000
+    );
+
+    const queuedAsk = harness.spawnCliCommand([
+      "service",
+      "ask",
+      "demo/operator",
+      "pipeline",
+      "--key-json",
+      JSON.stringify(keyInput),
+      "--input",
+      JSON.stringify({ topic: "queued-while-waiting" }),
+      "--timeout",
+      "20s",
+      "--json",
+    ]);
+
+    const queued = await harness.waitForService(
+      "demo/operator",
+      keyInput,
+      (inspect) =>
+        inspect.run.status === "waiting" &&
+        inspect.envelopes.some((envelope) => envelope.name === "awaitApproval" && envelope.status === "processing") &&
+        inspect.envelopes.some((envelope) => envelope.name === "pipeline" && envelope.status === "queued"),
+      20_000
+    );
+
+    expect((queued.turns ?? []).some((turn) => turn.phase === "waiting")).toBe(true);
+
+    await harness.sendSignal(waiting.run.id, "approved", { source: "queued-envelope-test" });
+
+    expect((await waitingAsk.wait()).exitCode).toBe(0);
+    expect((await queuedAsk.wait()).exitCode).toBe(0);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("in-run service asks honor timeout options durably", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/askTimeoutCoordinator", { sessionId: "ask-timeout" });
+    const failed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "failed"
+    );
+
+    expect(failed.run.error).toMatchObject({
+      message: "Service ask timed out",
+      cause: {
+        reason: "ask_timeout",
+      },
+    });
+    expect(failed.events.map((event) => event.type)).toContain("AskTimedOut");
+    expect(failed.waits.some((wait) => wait.kind === "ask_reply" && wait.status === "failed")).toBe(true);
   } finally {
     await harness.dispose();
   }

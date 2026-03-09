@@ -314,6 +314,25 @@ export const slowChildTask = workflow({
   },
 });
 
+export const waitingChild = workflow({
+  name: "waitingChild",
+  run: async (input: { token: string }, ctx) => {
+    await ctx.waitForSignal("continue", { key: `continue:${input.token}` });
+
+    return {
+      token: input.token,
+    };
+  },
+});
+
+export const cancelledChildParent = workflow({
+  name: "cancelledChildParent",
+  run: async (input: { token: string }, ctx) => {
+    const child = ctx.spawn(waitingChild, { token: input.token }, { key: `child:${input.token}` });
+    return await child.result();
+  },
+});
+
 export const slowDelegator = workflow({
   name: "slowDelegator",
   run: async (input: { topic: string; duration?: string }, ctx) => {
@@ -719,6 +738,14 @@ export const approvalCoordinator = workflow({
       operatorRunId: operatorRef.id,
       approval,
     };
+  },
+});
+
+export const askTimeoutCoordinator = workflow({
+  name: "askTimeoutCoordinator",
+  run: async (input: { sessionId: string }, ctx) => {
+    const operatorRef = await ctx.connect(operator, { sessionId: input.sessionId });
+    return await operatorRef.ask.awaitApproval(undefined, { timeout: "100ms" });
   },
 });
 

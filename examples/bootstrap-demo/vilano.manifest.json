@@ -4,6 +4,14 @@
     "workflows": [
       {
         "kind": "workflow",
+        "name": "askTimeoutCoordinator",
+        "exportName": "askTimeoutCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "approvalCoordinator",
         "exportName": "approvalCoordinator",
         "file": "src/definitions.ts",
@@ -14,6 +22,14 @@
         "kind": "workflow",
         "name": "blockingStep",
         "exportName": "blockingStep",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "cancelledChildParent",
+        "exportName": "cancelledChildParent",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"
@@ -190,6 +206,14 @@
         "kind": "workflow",
         "name": "timeoutRetryingStep",
         "exportName": "timeoutRetryingStep",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "waitingChild",
+        "exportName": "waitingChild",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"
