@@ -29,6 +29,7 @@ export interface DoctorReport {
   };
   tools: {
     bun: ToolCheck;
+    node: ToolCheck;
     mix: ToolCheck;
     elixir: ToolCheck;
   };
@@ -58,8 +59,9 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
     appliedFixes.push(...(await applyDoctorFixes(bundle.kernelDir)));
   }
 
-  const [bunTool, mixTool, elixirTool, daemonState, depsReady, buildReady] = await Promise.all([
+  const [bunTool, nodeTool, mixTool, elixirTool, daemonState, depsReady, buildReady] = await Promise.all([
     inspectTool("bun", ["--version"]),
+    inspectTool("node", ["--version"]),
     inspectTool("mix", ["--version"]),
     inspectTool("elixir", ["--version"]),
     getDaemonStatusReport(),
@@ -82,6 +84,11 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
       name: "bun",
       ok: bunTool.found,
       detail: bunTool.found ? `${bunTool.path} (${bunTool.version ?? "unknown"})` : "bun not found on PATH",
+    },
+    {
+      name: "node",
+      ok: nodeTool.found,
+      detail: nodeTool.found ? `${nodeTool.path} (${nodeTool.version ?? "unknown"})` : "node not found on PATH",
     },
     {
       name: "mix",
@@ -132,6 +139,7 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
     },
     tools: {
       bun: bunTool,
+      node: nodeTool,
       mix: mixTool,
       elixir: elixirTool,
     },

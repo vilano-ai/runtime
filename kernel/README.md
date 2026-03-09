@@ -16,7 +16,7 @@ It runs on Elixir/BEAM and currently owns:
 
 ## What the Kernel Does
 
-The kernel is the source of truth. Bun workers do not own workflow state.
+The kernel is the source of truth. JS/TS workers do not own workflow state.
 
 At a high level:
 
@@ -68,7 +68,7 @@ Schema evolution is now explicit:
 The kernel exposes a local HTTP API used by:
 
 - the CLI
-- Bun workers
+- JavaScript/TypeScript workers running under Bun or Node
 
 That API currently supports:
 

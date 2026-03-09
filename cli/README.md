@@ -12,7 +12,7 @@ Current commands cover:
 - run start / inspect / replay / cancel
 - service ensure / inspect / send / ask / signal / stop
 
-The CLI talks to the local BEAM kernel and is intended to run with Bun.
+The CLI talks to the local BEAM kernel and is intended to run with Bun. Worker processes can be launched under Bun or Node with `vilano worker start --runtime <bun|node>`.
 
 The local kernel is loopback-only and protected with a per-runtime token stored under `VILANO_HOME`, which the CLI and managed workers pass automatically.
 

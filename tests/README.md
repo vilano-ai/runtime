@@ -49,6 +49,7 @@ Current coverage:
 - `service stop` failing queued backlog behind an active turn
 - service ask correlation isolation across concurrent caller runs
 - handler-triggered service stop draining queued backlog
+- Node worker parity for unmanaged and managed JS worker paths
 
 Run it from the dev shell:
 

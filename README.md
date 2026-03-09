@@ -1,13 +1,13 @@
 # Vilano Runtime
 
-Vilano Runtime is a TypeScript-first durable execution runtime with a BEAM kernel and Bun workers.
+Vilano Runtime is a TypeScript-first durable execution runtime with a BEAM kernel and JavaScript/TypeScript workers.
 
 Today, this repo already has a working local runtime with:
 
 - durable workflows
 - durable services with inboxes and typed `send` / `ask` / `signal`
 - BEAM-owned leasing, waits, timers, routing, and supervision
-- Bun workers for TypeScript execution and subprocess execution
+- JavaScript/TypeScript workers for TypeScript execution and subprocess execution
 - project registry, `run inspect`, and `run replay`
 - integration coverage for cancellation, replay, retries, signals, and hard-stop fallback paths
 
@@ -54,6 +54,13 @@ Run the integration suite:
 
 ```bash
 direnv exec . bun test tests --timeout 120000 --max-concurrency 1
+```
+
+Run a manual worker under a specific JS runtime:
+
+```bash
+./cli/bin/vilano.ts worker start --runtime bun
+./cli/bin/vilano.ts worker start --runtime node
 ```
 
 Packaging and release smoke checks:
@@ -176,7 +183,7 @@ Use `ctx.exec()` for:
 - `step.checkCancelled()`
 - `await step.yield()`
 
-For managed local workers, the kernel also has a hard-stop fallback for timed, non-cooperative blocking steps: it fails the step, revokes the lease, and kills the stuck Bun worker so the runtime can continue.
+For managed local workers, the kernel also has a hard-stop fallback for timed, non-cooperative blocking steps: it fails the step, revokes the lease, and kills the stuck worker process so the runtime can continue.
 
 For unmanaged workers, the kernel still marks the activation as failed or cancelled durably, but it cannot force-kill that external worker process.
 
