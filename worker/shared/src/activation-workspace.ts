@@ -28,23 +28,6 @@ export async function ensureActivationWorkspace(
     await makeWorkspaceWritable(tempWorkspacePath);
     await linkActivationNodeModules(activationImportRoot, tempWorkspacePath);
 
-    await fs.writeFile(
-      workspaceMetadataPathFor(tempWorkspacePath),
-      `${JSON.stringify(
-        {
-          version: 1,
-          leaseId: activation.leaseId,
-          runId: activation.run.id,
-          sourceSnapshotPath: activation.project.path,
-          sourceImportRoot: activationImportRoot,
-          createdAt: new Date().toISOString(),
-        },
-        null,
-        2
-      )}\n`,
-      "utf8"
-    );
-
     try {
       await fs.rename(tempWorkspacePath, workspacePath);
     } catch (error) {
@@ -74,25 +57,8 @@ export async function ensureActivationImportRoot(
 
   try {
     await copyActivationTree(activation.project.path, tempImportRoot);
-
     const importRootStat = await fs.stat(tempImportRoot);
     await fs.chmod(tempImportRoot, importRootStat.mode | 0o200);
-
-    await fs.writeFile(
-      workspaceMetadataPathFor(tempImportRoot),
-      `${JSON.stringify(
-        {
-          version: 1,
-          leaseId: activation.leaseId,
-          runId: activation.run.id,
-          sourceSnapshotPath: activation.project.path,
-          createdAt: new Date().toISOString(),
-        },
-        null,
-        2
-      )}\n`,
-      "utf8"
-    );
 
     try {
       await fs.rename(tempImportRoot, importRoot);
@@ -148,10 +114,6 @@ async function makeWorkspaceWritable(rootPath: string, rootRelativePath = ""): P
 
   const rootStat = await fs.stat(rootPath);
   await fs.chmod(rootPath, rootStat.mode | 0o200);
-}
-
-function workspaceMetadataPathFor(workspacePath: string): string {
-  return path.join(workspacePath, ".vilano-workspace.json");
 }
 
 async function linkActivationNodeModules(importRoot: string, workspacePath: string): Promise<void> {

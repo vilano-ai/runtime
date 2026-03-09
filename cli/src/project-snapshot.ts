@@ -2,17 +2,10 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { ensurePrivateDir, writeJsonFileAtomic } from "./json-file.ts";
+import { ensurePrivateDir } from "./json-file.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
 
 const SNAPSHOT_EXCLUDED_NAMES = new Set([".git", ".hg", ".svn", ".vilano", "tmp"]);
-
-interface ProjectSnapshotMetadata {
-  version: 1;
-  projectName: string;
-  sourcePath: string;
-  createdAt: string;
-}
 
 export async function materializeProjectSnapshot(
   projectName: string,
@@ -31,13 +24,6 @@ export async function materializeProjectSnapshot(
     filter: (_src, dest) => !SNAPSHOT_EXCLUDED_NAMES.has(path.basename(dest)),
   });
   await ensureDependencyResolution(sourcePath, snapshotRoot);
-
-  await writeJsonFileAtomic(path.join(snapshotRoot, ".vilano-snapshot.json"), {
-    version: 1,
-    projectName,
-    sourcePath,
-    createdAt: new Date().toISOString(),
-  } satisfies ProjectSnapshotMetadata);
   await sealSnapshot(snapshotRoot);
 
   return snapshotRoot;
@@ -137,6 +123,8 @@ async function ensureDependencyResolution(sourcePath: string, snapshotRoot: stri
     force: true,
     dereference: true,
   });
+
+  await sealSnapshot(snapshotNodeModules);
 }
 
 async function resolveDependencySource(sourcePath: string): Promise<string | null> {
