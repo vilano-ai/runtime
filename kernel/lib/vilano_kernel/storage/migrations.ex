@@ -8,6 +8,7 @@ defmodule VilanoKernel.Storage.Migrations do
     AddRunStepRetryColumns,
     AddRunSnapshotsAndProjectSnapshots,
     AddServiceEnvelopeAttemptColumn,
+    FailUnpinnedRuns,
     CreateRunEventSequences,
     CreateRunServiceRefs,
     CreateRuntimeMetadata
@@ -20,7 +21,8 @@ defmodule VilanoKernel.Storage.Migrations do
     AddRunSnapshotsAndProjectSnapshots,
     CreateRunEventSequences,
     CreateRunServiceRefs,
-    AddRunLeaseAuthToken
+    AddRunLeaseAuthToken,
+    FailUnpinnedRuns
   ]
 
   def ensure_tracking_table! do

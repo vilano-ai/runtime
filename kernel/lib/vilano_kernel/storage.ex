@@ -121,7 +121,7 @@ defmodule VilanoKernel.Storage do
       caller_run_id =
         case lease_id do
           value when is_binary(value) and value != "" ->
-            case get_run_by_lease(value) do
+            case get_fenced_run_by_lease(value, now) do
               nil -> nil
               run -> run["id"]
             end
@@ -148,7 +148,9 @@ defmodule VilanoKernel.Storage do
   end
 
   def get_related_run_status(lease_id, run_id) do
-    with caller_run when not is_nil(caller_run) <- get_run_by_lease(lease_id),
+    now = Infrastructure.now_iso8601()
+
+    with caller_run when not is_nil(caller_run) <- get_fenced_run_by_lease(lease_id, now),
          true <- related_run?(caller_run["id"], run_id),
          run when not is_nil(run) <- get_run(run_id) do
       %{"status" => run["status"]}
@@ -158,7 +160,9 @@ defmodule VilanoKernel.Storage do
   end
 
   def send_child_run_signal(lease_id, child_run_id, signal_name, payload) do
-    with caller_run when not is_nil(caller_run) <- get_run_by_lease(lease_id),
+    now = Infrastructure.now_iso8601()
+
+    with caller_run when not is_nil(caller_run) <- get_fenced_run_by_lease(lease_id, now),
          child_ref when not is_nil(child_ref) <- get_run_child_by_child(caller_run["id"], child_run_id) do
       _ = child_ref
       send_run_signal(child_run_id, signal_name, payload)
