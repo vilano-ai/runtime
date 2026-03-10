@@ -115,6 +115,38 @@ export async function writeGeneratedProjectManifest(
   });
 }
 
+export async function writeExplicitProjectManifest(
+  projectPath: string,
+  options: { force?: boolean } = {}
+): Promise<{
+  manifestPath: string;
+  manifest: ProjectManifestFile;
+}> {
+  const resolvedPath = path.resolve(projectPath);
+  const manifestPath = getProjectManifestPath(resolvedPath);
+
+  if (!options.force) {
+    try {
+      await fs.access(manifestPath);
+      throw new Error(
+        `Refusing to overwrite existing Vilano manifest at ${manifestPath}. Re-run with --force to replace it.`
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+
+  const manifest = await buildProjectManifestFile(resolvedPath);
+  await writeJsonFileAtomic(manifestPath, manifest);
+
+  return {
+    manifestPath,
+    manifest,
+  };
+}
+
 export async function buildProjectManifestFile(projectPath: string): Promise<ProjectManifestFile> {
   const resolvedPath = path.resolve(projectPath);
   const definitions = await scanProjectDefinitions(resolvedPath);

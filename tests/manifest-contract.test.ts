@@ -5,6 +5,7 @@ import path from "node:path";
 import { expect, test } from "bun:test";
 
 import { buildProjectManifest } from "../cli/src/registry.ts";
+import { writeExplicitProjectManifest } from "../cli/src/project-manifest.ts";
 
 test("project registration respects explicit vilano.manifest.json even during regeneration", async () => {
   const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-manifest-explicit-"));
@@ -235,6 +236,43 @@ test("explicit manifests must reference files that exist", async () => {
     await expect(buildProjectManifest("demo", projectDir, { regenerate: true })).rejects.toThrow(
       "file does not exist"
     );
+  } finally {
+    await fs.rm(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("project init-manifest writes an explicit vilano.manifest.json contract", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-manifest-init-"));
+
+  try {
+    await fs.mkdir(path.join(projectDir, "src"), { recursive: true });
+    await fs.writeFile(
+      path.join(projectDir, "src", "definitions.ts"),
+      [
+        "function workflow(definition) {",
+        "  return { kind: 'workflow', ...definition };",
+        "}",
+        "",
+        "function service(definition) {",
+        "  return { kind: 'service', ...definition };",
+        "}",
+        "",
+        'export const planner = workflow({',
+        '  name: "planner",',
+        "});",
+        "",
+        'export const reviewer = service({',
+        '  name: "reviewer",',
+        "});",
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await writeExplicitProjectManifest(projectDir);
+    expect(result.manifestPath).toBe(path.join(projectDir, "vilano.manifest.json"));
+    expect(result.manifest.definitions.workflows).toHaveLength(1);
+    expect(result.manifest.definitions.services).toHaveLength(1);
+    expect(JSON.parse(await fs.readFile(result.manifestPath, "utf8"))).toEqual(result.manifest);
   } finally {
     await fs.rm(projectDir, { recursive: true, force: true });
   }

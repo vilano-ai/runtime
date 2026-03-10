@@ -55,28 +55,37 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
   const runtimePaths = getRuntimePaths();
   const bundle = await prepareRuntimeBundleWithOptions({ materialize: Boolean(options.fix) });
   const appliedFixes: string[] = [];
+  const depsReady = await fileExists(`${bundle.kernelDir}/deps`);
+  const buildReady = await fileExists(`${bundle.kernelDir}/_build`);
 
   if (options.fix) {
-    const requiredTools = await Promise.all([
-      inspectTool("mix", ["--version"]),
-      inspectTool("elixir", ["--version"]),
-    ]);
+    const needsKernelTooling = !bundle.source.bundled || !depsReady || !buildReady;
+    if (needsKernelTooling) {
+      const requiredTools = await Promise.all([
+        inspectTool("mix", ["--version"]),
+        inspectTool("elixir", ["--version"]),
+      ]);
 
-    if (!requiredTools[0].found || !requiredTools[1].found) {
-      throw new Error("vilano doctor --fix requires both 'mix' and 'elixir' on PATH");
+      if (!requiredTools[0].found || !requiredTools[1].found) {
+        throw new Error("vilano doctor --fix requires both 'mix' and 'elixir' on PATH");
+      }
     }
 
-    appliedFixes.push(...(await applyDoctorFixes(bundle.kernelDir)));
+    appliedFixes.push(
+      ...(await applyDoctorFixes(bundle.kernelDir, {
+        bundled: bundle.source.bundled,
+        depsReady,
+        buildReady,
+      }))
+    );
   }
 
-  const [bunTool, nodeTool, mixTool, elixirTool, daemonState, depsReady, buildReady] = await Promise.all([
+  const [bunTool, nodeTool, mixTool, elixirTool, daemonState] = await Promise.all([
     inspectTool("bun", ["--version"]),
     inspectTool("node", ["--version"]),
     inspectTool("mix", ["--version"]),
     inspectTool("elixir", ["--version"]),
     getDaemonStatusReport(),
-    fileExists(`${bundle.kernelDir}/deps`),
-    fileExists(`${bundle.kernelDir}/_build`),
   ]);
 
   const daemonStatus = daemonState.status;
@@ -175,8 +184,20 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
   };
 }
 
-async function applyDoctorFixes(kernelDir: string): Promise<string[]> {
+async function applyDoctorFixes(
+  kernelDir: string,
+  options: {
+    bundled: boolean;
+    depsReady: boolean;
+    buildReady: boolean;
+  }
+): Promise<string[]> {
   const fixes: string[] = [];
+
+  if (options.bundled && options.depsReady && options.buildReady) {
+    fixes.push("packaged runtime already contains vendored kernel deps and build artifacts");
+    return fixes;
+  }
 
   await runCommand("mix", ["local.hex", "--force"], kernelDir);
   fixes.push("mix local.hex --force");
@@ -184,13 +205,15 @@ async function applyDoctorFixes(kernelDir: string): Promise<string[]> {
   await runCommand("mix", ["local.rebar", "--force"], kernelDir);
   fixes.push("mix local.rebar --force");
 
-  if (!(await fileExists(`${kernelDir}/deps`))) {
+  if (!options.depsReady) {
     await runCommand("mix", ["deps.get"], kernelDir);
     fixes.push("mix deps.get");
   }
 
-  await runCommand("mix", ["compile"], kernelDir);
-  fixes.push("mix compile");
+  if (!options.buildReady) {
+    await runCommand("mix", ["compile"], kernelDir);
+    fixes.push("mix compile");
+  }
 
   return fixes;
 }

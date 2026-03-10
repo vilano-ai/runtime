@@ -65,7 +65,7 @@ function renderHelp(): string {
     "  vilano version",
     "  vilano doctor [--fix]",
     "  vilano daemon start|status|stop",
-    "  vilano project add|list|inspect|sync|remove",
+    "  vilano project add|list|init-manifest|inspect|sync|remove",
     "  vilano workflow list|inspect",
     "  vilano run start|list|inspect|replay|cancel",
     "  vilano worker start",

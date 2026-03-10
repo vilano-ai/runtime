@@ -10,7 +10,7 @@ import {
 } from "../daemon-client.ts";
 import { renderProject, renderProjectSummary, writeOutput } from "../output.ts";
 import { materializeProjectSnapshot, pruneAllProjectSnapshots } from "../project-snapshot.ts";
-import { getProjectManifestPath } from "../project-manifest.ts";
+import { getProjectManifestPath, writeExplicitProjectManifest } from "../project-manifest.ts";
 import { buildProjectManifest } from "../registry.ts";
 import { CliError } from "../cli-error.ts";
 
@@ -56,6 +56,23 @@ export async function handleProjectCommand(
       );
       return 0;
     }
+    case "init-manifest": {
+      const projectPath = args[1] ?? ".";
+      const result = await writeExplicitProjectManifest(projectPath, {
+        force: Boolean(flags.force),
+      });
+      writeOutput(
+        flags,
+        { ok: true, manifestPath: result.manifestPath, manifest: result.manifest },
+        (body) =>
+          [
+            `Wrote ${body.manifestPath}`,
+            `workflows: ${body.manifest.definitions.workflows.length}`,
+            `services: ${body.manifest.definitions.services.length}`,
+          ].join("\n")
+      );
+      return 0;
+    }
     case "inspect": {
       const projectName = args[1];
       if (!projectName) {
@@ -95,7 +112,7 @@ export async function handleProjectCommand(
       return 0;
     }
     default:
-      throw new CliError("Usage: vilano project add|list|inspect|sync|remove");
+      throw new CliError("Usage: vilano project add|list|init-manifest|inspect|sync|remove");
   }
 }
 
@@ -110,7 +127,7 @@ async function warnIfUsingGeneratedManifestFallback(projectPath: string): Promis
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       process.stderr.write(
-        "Vilano is using generated manifest fallback for this project. Add `vilano.manifest.json` for the recommended explicit contract.\n"
+        "Vilano is using generated manifest fallback for this project. Run `vilano project init-manifest <path>` to create the recommended explicit contract.\n"
       );
       return;
     }

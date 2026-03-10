@@ -53,30 +53,7 @@ try {
       "  run: async (input) => ({ ok: true, value: input?.value ?? 'smoke' }),",
       "});",
       "",
-    ].join("\n")
-  );
-  await fs.writeFile(
-    path.join(manifestProjectDir, "vilano.manifest.json"),
-    `${JSON.stringify(
-      {
-        manifestVersion: 1,
-        definitions: {
-          workflows: [
-            {
-              kind: "workflow",
-              name: "smokeWorkflow",
-              exportName: "smokeWorkflow",
-              file: "src/definitions.ts",
-              runtimeKind: "javascript",
-              sourceLanguage: "typescript",
-            },
-          ],
-          services: [],
-        },
-      },
-      null,
-      2
-    )}\n`
+      ].join("\n")
   );
 
   const version = JSON.parse((await run(cliEntry, ["version", "--json"], installDir, baseEnv)).stdout) as {
@@ -125,10 +102,48 @@ try {
     );
   }
 
+  const doctorFix = JSON.parse(
+    (
+      await run(
+        cliEntry,
+        ["doctor", "--fix", "--json"],
+        installDir,
+        baseEnv,
+        { allowFailure: true, timeoutMs: 240_000 }
+      )
+    ).stdout
+  ) as { ok: boolean; appliedFixes?: string[] };
+
+  if (!doctorFix.ok) {
+    throw new Error(
+      `Packaged CLI doctor --fix did not succeed:\n${JSON.stringify(doctorFix, null, 2)}`
+    );
+  }
+
+  const packagedBundleHashAfterDoctorFix = await hashDirectoryContents(packagedRuntimeDist);
+  if (packagedBundleHashBefore !== packagedBundleHashAfterDoctorFix) {
+    throw new Error("Packaged runtime-dist contents changed during doctor --fix");
+  }
+
   const { env, status } = await startDaemonWithRetry(cliEntry, installDir, runtimeHome, version.protocolVersion);
 
   if (status.protocolVersion !== version.protocolVersion) {
     throw new Error("Packaged CLI started a kernel with a mismatched protocol version");
+  }
+
+  const initManifest = JSON.parse(
+    (await run(cliEntry, ["project", "init-manifest", "./manifest-project", "--json"], installDir, env)).stdout
+  ) as {
+    manifestPath: string;
+    manifest: {
+      definitions: {
+        workflows: Array<{ name: string }>;
+      };
+    };
+  };
+
+  if (!initManifest.manifest.definitions.workflows.some((definition) => definition.name === "smokeWorkflow")) {
+    throw new Error("Packaged CLI did not generate an explicit manifest for the smoke project");
   }
 
   await run(cliEntry, ["project", "add", "./manifest-project", "--name", "smoke"], installDir, env);
