@@ -169,7 +169,9 @@ defmodule VilanoKernel.Storage do
            child_ref when not is_nil(child_ref) <- get_run_child_by_child(caller_run["id"], child_run_id) do
         _ = child_ref
         ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
-        send_run_signal(child_run_id, signal_name, payload)
+        result = send_run_signal(child_run_id, signal_name, payload)
+        ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
+        result
       else
         _ -> nil
       end
@@ -349,6 +351,8 @@ defmodule VilanoKernel.Storage do
               },
               now
             )
+
+            ensure_fenced_run_ownership!(parent_run["id"], lease_id, now)
 
             %{"status" => "created", "childRun" => get_run(child_run_id)}
           end
@@ -551,6 +555,8 @@ defmodule VilanoKernel.Storage do
                     now
                   )
 
+                  ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
+
                   %{"status" => "completed"}
 
                 {:error, error} ->
@@ -618,6 +624,8 @@ defmodule VilanoKernel.Storage do
                     %{"key" => op_key, "serviceRunId" => service_run_id, "name" => name, "payload" => payload},
                     now
                   )
+
+                  ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
 
                   %{"status" => "completed"}
 
@@ -804,6 +812,8 @@ defmodule VilanoKernel.Storage do
                     },
                     now
                   )
+
+                  ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
 
                   %{
                     "status" => "suspended",
@@ -3151,6 +3161,11 @@ defmodule VilanoKernel.Storage do
 
       resolved ->
         record_service_ref!(caller_run_id, resolved["id"], now)
+
+        if is_binary(caller_run_id) and caller_run_id != "" and is_binary(lease_id) and lease_id != "" do
+          ensure_fenced_run_ownership!(caller_run_id, lease_id, now)
+        end
+
         resolved
     end
   end
