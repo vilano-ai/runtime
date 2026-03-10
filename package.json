@@ -22,7 +22,9 @@
     "test:kernel": "bash -lc 'export VILANO_HOME=\"$(mktemp -d)\"; trap \"rm -rf \\\"$VILANO_HOME\\\"\" EXIT; cd kernel && VILANO_KERNEL_PORT=0 VILANO_MANAGED_WORKERS=0 mix test'",
     "test:soak": "bun test tests/soak.test.ts --timeout 360000 --max-concurrency 1",
     "prepare:cli-package": "bun scripts/prepare-cli-runtime-dist.ts",
+    "build:release": "bun run build:sdk && bun run prepare:cli-package && bun scripts/build-release-distribution.ts",
     "smoke:install": "bun run build:sdk && bun scripts/smoke-install.ts",
+    "smoke:release-install": "bun run build:release && bun scripts/smoke-release-install.ts",
     "pack:sdk": "cd sdk/typescript && bun pm pack --dry-run",
     "pack:cli": "bun run prepare:cli-package && cd cli && bun pm pack --dry-run",
     "pack": "bun run pack:sdk && bun run pack:cli"
