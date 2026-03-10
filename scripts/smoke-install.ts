@@ -386,7 +386,6 @@ async function buildUpdateArtifact(
   targetVersion: string
 ): Promise<{ path: string; sha256: string; tempDir: string }> {
   const sourceCliRoot = path.join(installDir, "node_modules", "vilano");
-  const sourceAjvRoot = path.join(installDir, "node_modules", "ajv");
   const stagingRoot = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-update-artifact-"));
   const artifactRoot = path.join(stagingRoot, `vilano-${targetVersion}`);
   const archivePath = path.join(stagingRoot, `vilano-${targetVersion}.tar.gz`);
@@ -395,10 +394,10 @@ async function buildUpdateArtifact(
     recursive: true,
     force: true,
   });
-  await fs.cp(sourceAjvRoot, path.join(artifactRoot, "node_modules", "ajv"), {
-    recursive: true,
-    force: true,
-  });
+  await copyDependencyTree(sourceCliRoot, artifactRoot);
+  await fs.mkdir(path.join(artifactRoot, "bun"), { recursive: true });
+  await fs.copyFile(process.execPath, path.join(artifactRoot, "bun", "bun"));
+  await fs.chmod(path.join(artifactRoot, "bun", "bun"), 0o755);
 
   const packageJsonPath = path.join(artifactRoot, "package.json");
   const runtimeInstallManifestPath = path.join(artifactRoot, "runtime-dist", "install-manifest.json");
@@ -437,6 +436,71 @@ async function makeTreeWritable(rootPath: string): Promise<void> {
 
   if (stat.isFile()) {
     await fs.chmod(rootPath, stat.mode | 0o200);
+  }
+}
+
+async function copyDependencyTree(sourceRoot: string, targetRoot: string): Promise<void> {
+  const packageJson = JSON.parse(await fs.readFile(path.join(sourceRoot, "package.json"), "utf8")) as {
+    dependencies?: Record<string, string>;
+  };
+  const queue = Object.keys(packageJson.dependencies ?? {}).map((dependency) => ({
+    name: dependency,
+    resolveFrom: sourceRoot,
+  }));
+  const seen = new Set<string>();
+
+  while (queue.length > 0) {
+    const next = queue.shift();
+    if (!next || seen.has(next.name)) {
+      continue;
+    }
+
+    const resolved = await resolveDependencyInstallPath(next.resolveFrom, next.name);
+    if (!resolved) {
+      continue;
+    }
+
+    seen.add(next.name);
+    const sourcePath = await fs.realpath(resolved);
+    const dependencyTarget = path.join(targetRoot, "node_modules", next.name);
+    await fs.mkdir(path.dirname(dependencyTarget), { recursive: true });
+    await fs.cp(sourcePath, dependencyTarget, {
+      recursive: true,
+      force: true,
+    });
+
+    const nestedPackageJson = JSON.parse(
+      await fs.readFile(path.join(sourcePath, "package.json"), "utf8")
+    ) as { dependencies?: Record<string, string> };
+    queue.push(
+      ...Object.keys(nestedPackageJson.dependencies ?? {}).map((dependency) => ({
+        name: dependency,
+        resolveFrom: sourcePath,
+      }))
+    );
+  }
+}
+
+async function resolveDependencyInstallPath(startDir: string, dependency: string): Promise<string | null> {
+  let currentDir = path.resolve(startDir);
+
+  while (true) {
+    const candidate = path.join(currentDir, "node_modules", dependency);
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    const parent = path.dirname(currentDir);
+    if (parent === currentDir) {
+      return null;
+    }
+
+    currentDir = parent;
   }
 }
 

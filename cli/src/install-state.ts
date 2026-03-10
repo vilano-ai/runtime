@@ -4,6 +4,7 @@ import process from "node:process";
 import { spawn } from "node:child_process";
 
 import { CliError } from "./cli-error.ts";
+import { copyPackageDependencyTree } from "./dependency-tree.ts";
 import type { ReleaseChannel, RuntimeInstallManifest } from "./distribution-contract.ts";
 import { ensureDir, readJsonFile, writeJsonFileAtomic } from "./json-file.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
@@ -121,7 +122,14 @@ async function writeManagedLauncher(): Promise<void> {
     'SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"',
     'INSTALL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"',
     'CURRENT_ROOT="$INSTALL_ROOT/current"',
-    'exec bun "$CURRENT_ROOT/bin/vilano.ts" "$@"',
+    'BUN_BIN="$CURRENT_ROOT/bun/bun"',
+    'export VILANO_INSTALL_ROOT="${VILANO_INSTALL_ROOT:-$INSTALL_ROOT}"',
+    'export VILANO_HOME="${VILANO_HOME:-$INSTALL_ROOT/state}"',
+    'if [ ! -x "$BUN_BIN" ]; then',
+    '  echo "Vilano install is missing bundled bun at $BUN_BIN" >&2',
+    '  exit 1',
+    'fi',
+    'exec "$BUN_BIN" "$CURRENT_ROOT/bin/vilano.ts" "$@"',
     "",
   ].join("\n");
 
@@ -130,55 +138,12 @@ async function writeManagedLauncher(): Promise<void> {
 }
 
 async function vendorCliDependencies(sourceCliRoot: string, targetRoot: string): Promise<void> {
-  const packageJson = await readJsonFile<{ dependencies?: Record<string, string> }>(
-    path.join(sourceCliRoot, "package.json"),
-    {}
-  );
-  const dependencies = Object.keys(packageJson.dependencies ?? {});
+  await copyPackageDependencyTree(sourceCliRoot, targetRoot);
 
-  if (dependencies.length === 0) {
-    return;
-  }
-
-  for (const dependency of dependencies) {
-    const resolved = await resolveDependencyInstallPath(sourceCliRoot, dependency);
-    if (!resolved) {
-      continue;
-    }
-
-    const dependencyTarget = path.join(targetRoot, "node_modules", dependency);
-    await ensureDir(path.dirname(dependencyTarget));
-    await fs.cp(resolved, dependencyTarget, {
-      recursive: true,
-      force: true,
-    });
-  }
-}
-
-async function resolveDependencyInstallPath(
-  startDir: string,
-  dependency: string
-): Promise<string | null> {
-  let currentDir = startDir;
-
-  while (true) {
-    const candidate = path.join(currentDir, "node_modules", dependency);
-    try {
-      await fs.access(candidate);
-      return candidate;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
-      }
-    }
-
-    const parent = path.dirname(currentDir);
-    if (parent === currentDir) {
-      return null;
-    }
-
-    currentDir = parent;
-  }
+  const bundledBunDir = path.join(targetRoot, "bun");
+  await ensureDir(bundledBunDir);
+  await fs.copyFile(process.execPath, path.join(bundledBunDir, "bun"));
+  await fs.chmod(path.join(bundledBunDir, "bun"), 0o755);
 }
 
 async function runTarExtract(archivePath: string, targetDir: string): Promise<void> {
