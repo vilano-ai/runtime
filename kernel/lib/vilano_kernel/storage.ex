@@ -433,61 +433,159 @@ defmodule VilanoKernel.Storage do
                             [parent_run["id"], wait_key, child_run_id, now, now]
                           )
 
-                          ensure_fenced_run_write!(
-                            parent_run["id"],
-                            lease_id,
-                            now,
-                            """
-                            update runs
-                            set
-                              status = 'waiting',
-                              lease_id = null,
-                              lease_auth_token = null,
-                              lease_worker_id = null,
-                              lease_expires_at = null,
-                              updated_at = ?
-                            where id = ?
-                            """,
-                            [now, parent_run["id"]]
-                          )
+                          maybe_run_storage_test_hook(:child_wait_registered, %{
+                            "parentRunId" => parent_run["id"],
+                            "childRunId" => child_run_id,
+                            "waitKey" => wait_key,
+                            "leaseId" => lease_id
+                          })
 
-                          append_event!(
-                            parent_run["id"],
-                            "WaitRegistered",
-                            %{"kind" => "child_result", "key" => wait_key, "childRunId" => child_run_id},
-                            now
-                          )
+                          case get_run(child_run_id) do
+                            nil ->
+                              nil
 
-                          append_event!(
-                            parent_run["id"],
-                            "RunSuspended",
-                            %{"reason" => "child_result", "key" => wait_key, "childRunId" => child_run_id},
-                            now
-                          )
+                            rechecked_child_run ->
+                              cond do
+                                rechecked_child_run["status"] == "completed" ->
+                                  SQL.query!(
+                                    Repo,
+                                    """
+                                    update run_waits
+                                    set
+                                      status = 'completed',
+                                      output_json = ?,
+                                      updated_at = ?
+                                    where run_id = ? and op_key = ?
+                                    """,
+                                    [
+                                      maybe_encode_json(rechecked_child_run["output"]),
+                                      now,
+                                      parent_run["id"],
+                                      wait_key
+                                    ]
+                                  )
 
-                          maybe_append_service_turn_waiting!(
-                            parent_run,
-                            %{
-                              "waitKind" => "child_result",
-                              "key" => wait_key,
-                              "name" => child_run_id,
-                              "childRunId" => child_run_id
-                            },
-                            now
-                          )
+                                  append_event!(
+                                    parent_run["id"],
+                                    "WaitRegistered",
+                                    %{"kind" => "child_result", "key" => wait_key, "childRunId" => child_run_id},
+                                    now
+                                  )
 
-                          %{
-                            "status" => "suspended",
-                            "wait" => %{
-                              "runId" => parent_run["id"],
-                              "key" => wait_key,
-                              "kind" => "child_result",
-                              "name" => child_run_id,
-                              "status" => "waiting",
-                              "wakeAt" => nil,
-                              "output" => nil
-                            }
-                          }
+                                  append_event!(
+                                    parent_run["id"],
+                                    "WaitSatisfied",
+                                    %{
+                                      "kind" => "child_result",
+                                      "key" => wait_key,
+                                      "childRunId" => child_run_id,
+                                      "childStatus" => "completed",
+                                      "payload" => rechecked_child_run["output"]
+                                    },
+                                    now
+                                  )
+
+                                  %{"status" => "completed", "output" => rechecked_child_run["output"]}
+
+                                rechecked_child_run["status"] in ["failed", "cancelled"] ->
+                                  SQL.query!(
+                                    Repo,
+                                    """
+                                    update run_waits
+                                    set
+                                      status = 'failed',
+                                      output_json = ?,
+                                      updated_at = ?
+                                    where run_id = ? and op_key = ?
+                                    """,
+                                    [
+                                      maybe_encode_json(rechecked_child_run["error"]),
+                                      now,
+                                      parent_run["id"],
+                                      wait_key
+                                    ]
+                                  )
+
+                                  append_event!(
+                                    parent_run["id"],
+                                    "WaitRegistered",
+                                    %{"kind" => "child_result", "key" => wait_key, "childRunId" => child_run_id},
+                                    now
+                                  )
+
+                                  append_event!(
+                                    parent_run["id"],
+                                    "WaitSatisfied",
+                                    %{
+                                      "kind" => "child_result",
+                                      "key" => wait_key,
+                                      "childRunId" => child_run_id,
+                                      "childStatus" => rechecked_child_run["status"],
+                                      "payload" => rechecked_child_run["error"]
+                                    },
+                                    now
+                                  )
+
+                                  %{"status" => "failed", "error" => rechecked_child_run["error"]}
+
+                                true ->
+                                  ensure_fenced_run_write!(
+                                    parent_run["id"],
+                                    lease_id,
+                                    now,
+                                    """
+                                    update runs
+                                    set
+                                      status = 'waiting',
+                                      lease_id = null,
+                                      lease_auth_token = null,
+                                      lease_worker_id = null,
+                                      lease_expires_at = null,
+                                      updated_at = ?
+                                    where id = ?
+                                    """,
+                                    [now, parent_run["id"]]
+                                  )
+
+                                  append_event!(
+                                    parent_run["id"],
+                                    "WaitRegistered",
+                                    %{"kind" => "child_result", "key" => wait_key, "childRunId" => child_run_id},
+                                    now
+                                  )
+
+                                  append_event!(
+                                    parent_run["id"],
+                                    "RunSuspended",
+                                    %{"reason" => "child_result", "key" => wait_key, "childRunId" => child_run_id},
+                                    now
+                                  )
+
+                                  maybe_append_service_turn_waiting!(
+                                    parent_run,
+                                    %{
+                                      "waitKind" => "child_result",
+                                      "key" => wait_key,
+                                      "name" => child_run_id,
+                                      "childRunId" => child_run_id
+                                    },
+                                    now
+                                  )
+
+                                  %{
+                                    "status" => "suspended",
+                                    "wait" => %{
+                                      "runId" => parent_run["id"],
+                                      "key" => wait_key,
+                                      "kind" => "child_result",
+                                      "name" => child_run_id,
+                                      "status" => "waiting",
+                                      "wakeAt" => nil,
+                                      "output" => nil
+                                    }
+                                  }
+                              end
+                          end
                         end
                     end
                 end
@@ -512,7 +610,13 @@ defmodule VilanoKernel.Storage do
         {caller_run, service_run} ->
           case get_run_service_op(caller_run["id"], op_key) do
             existing when not is_nil(existing) ->
-              %{"status" => existing["status"]}
+              case existing["status"] do
+                "failed" ->
+                  %{"status" => "failed", "error" => decode_json_value(existing["error_json"], nil)}
+
+                _ ->
+                  %{"status" => existing["status"]}
+              end
 
             nil ->
               ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
@@ -560,6 +664,18 @@ defmodule VilanoKernel.Storage do
                   %{"status" => "completed"}
 
                 {:error, error} ->
+                  persist_failed_service_op!(
+                    caller_run["id"],
+                    op_key,
+                    service_run_id,
+                    "send",
+                    name,
+                    nil,
+                    payload,
+                    error,
+                    now
+                  )
+
                   %{"status" => "failed", "error" => error}
               end
           end
@@ -582,7 +698,13 @@ defmodule VilanoKernel.Storage do
         {caller_run, service_run} ->
           case get_run_service_op(caller_run["id"], op_key) do
             existing when not is_nil(existing) ->
-              %{"status" => existing["status"]}
+              case existing["status"] do
+                "failed" ->
+                  %{"status" => "failed", "error" => decode_json_value(existing["error_json"], nil)}
+
+                _ ->
+                  %{"status" => existing["status"]}
+              end
 
             nil ->
               ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
@@ -630,6 +752,18 @@ defmodule VilanoKernel.Storage do
                   %{"status" => "completed"}
 
                 {:error, error} ->
+                  persist_failed_service_op!(
+                    caller_run["id"],
+                    op_key,
+                    service_run_id,
+                    "signal",
+                    name,
+                    nil,
+                    payload,
+                    error,
+                    now
+                  )
+
                   %{"status" => "failed", "error" => error}
               end
           end
@@ -827,6 +961,18 @@ defmodule VilanoKernel.Storage do
                   }
 
                 {:error, error} ->
+                  persist_failed_service_op!(
+                    caller_run["id"],
+                    op_key,
+                    service_run_id,
+                    "ask",
+                    name,
+                    correlation_id,
+                    payload,
+                    error,
+                    now
+                  )
+
                   %{"status" => "failed", "error" => error}
               end
           end
@@ -2173,90 +2319,108 @@ defmodule VilanoKernel.Storage do
               }
 
             true ->
-              case get_pending_signal(run["id"], name) do
-                nil ->
-                  SQL.query!(
-                    Repo,
-                    """
-                    insert into run_waits (
-                      run_id,
-                      op_key,
-                      wait_kind,
-                      wait_name,
-                      status,
-                      wake_at,
-                      output_json,
-                      created_at,
-                      updated_at
-                    ) values (?, ?, 'signal', ?, 'waiting', null, null, ?, ?)
-                    on conflict(run_id, op_key) do update set
-                      wait_kind = excluded.wait_kind,
-                      wait_name = excluded.wait_name,
-                      status = 'waiting',
-                      wake_at = null,
-                      output_json = null,
-                      updated_at = excluded.updated_at
-                    """,
-                    [run["id"], op_key, name, now, now]
-                  )
+              SQL.query!(
+                Repo,
+                """
+                insert into run_waits (
+                  run_id,
+                  op_key,
+                  wait_kind,
+                  wait_name,
+                  status,
+                  wake_at,
+                  output_json,
+                  created_at,
+                  updated_at
+                ) values (?, ?, 'signal', ?, 'waiting', null, null, ?, ?)
+                on conflict(run_id, op_key) do update set
+                  wait_kind = excluded.wait_kind,
+                  wait_name = excluded.wait_name,
+                  status = 'waiting',
+                  wake_at = null,
+                  output_json = null,
+                  updated_at = excluded.updated_at
+                """,
+                [run["id"], op_key, name, now, now]
+              )
 
-                  ensure_fenced_run_write!(
-                    run["id"],
-                    lease_id,
-                    now,
-                    """
-                    update runs
-                    set
-                      status = 'waiting',
-                      lease_id = null,
-                      lease_auth_token = null,
-                      lease_worker_id = null,
-                      lease_expires_at = null,
-                      updated_at = ?
-                    where id = ?
-                    """,
-                    [now, run["id"]]
-                  )
+              maybe_run_storage_test_hook(:signal_wait_registered, %{
+                "runId" => run["id"],
+                "signal" => name,
+                "opKey" => op_key,
+                "leaseId" => lease_id
+              })
 
-                  append_event!(
-                    run["id"],
-                    "WaitRegistered",
-                    %{"kind" => "signal", "key" => op_key, "signal" => name},
-                    now
-                  )
+              current_wait = get_run_wait(run["id"], op_key)
 
-                  append_event!(
-                    run["id"],
-                    "RunSuspended",
-                    %{"reason" => "signal", "key" => op_key, "signal" => name},
-                    now
-                  )
-
-                  maybe_append_service_turn_waiting!(
-                    run,
-                    %{
-                      "waitKind" => "signal",
-                      "key" => op_key,
-                      "name" => name,
-                      "signal" => name
-                    },
-                    now
-                  )
-
+              cond do
+                current_wait && current_wait["status"] == "completed" ->
                   %{
-                    "status" => "suspended",
-                    "wait" => %{
-                      "runId" => run["id"],
-                      "key" => op_key,
-                      "kind" => "signal",
-                      "name" => name,
-                      "status" => "waiting",
-                      "wakeAt" => nil,
-                      "output" => nil
-                    }
+                    "status" => "completed",
+                    "wait" => wait_from_row(current_wait),
+                    "output" => decode_json_value(current_wait["output_json"], nil)
                   }
 
-                signal ->
+                true ->
+                  case get_pending_signal(run["id"], name) do
+                    nil ->
+                      ensure_fenced_run_write!(
+                        run["id"],
+                        lease_id,
+                        now,
+                        """
+                        update runs
+                        set
+                          status = 'waiting',
+                          lease_id = null,
+                          lease_auth_token = null,
+                          lease_worker_id = null,
+                          lease_expires_at = null,
+                          updated_at = ?
+                        where id = ?
+                        """,
+                        [now, run["id"]]
+                      )
+
+                      append_event!(
+                        run["id"],
+                        "WaitRegistered",
+                        %{"kind" => "signal", "key" => op_key, "signal" => name},
+                        now
+                      )
+
+                      append_event!(
+                        run["id"],
+                        "RunSuspended",
+                        %{"reason" => "signal", "key" => op_key, "signal" => name},
+                        now
+                      )
+
+                      maybe_append_service_turn_waiting!(
+                        run,
+                        %{
+                          "waitKind" => "signal",
+                          "key" => op_key,
+                          "name" => name,
+                          "signal" => name
+                        },
+                        now
+                      )
+
+                      %{
+                        "status" => "suspended",
+                        "wait" => %{
+                          "runId" => run["id"],
+                          "key" => op_key,
+                          "kind" => "signal",
+                          "name" => name,
+                          "status" => "waiting",
+                          "wakeAt" => nil,
+                          "output" => nil
+                        }
+                      }
+
+                    signal ->
                   SQL.query!(
                     Repo,
                     """
@@ -2316,6 +2480,7 @@ defmodule VilanoKernel.Storage do
                     "wait" => wait_from_row(get_run_wait(run["id"], op_key)),
                     "output" => decode_json_value(signal["payload_json"], nil)
                   }
+                  end
               end
           end
       end
@@ -3044,6 +3209,50 @@ defmodule VilanoKernel.Storage do
     )
 
     :ok
+  end
+
+  defp persist_failed_service_op!(
+         caller_run_id,
+         op_key,
+         service_run_id,
+         op_kind,
+         message_name,
+         correlation_id,
+         payload,
+         error,
+         now
+       ) do
+    SQL.query!(
+      Repo,
+      """
+      insert into run_service_ops (
+        caller_run_id,
+        op_key,
+        service_run_id,
+        op_kind,
+        message_name,
+        correlation_id,
+        status,
+        payload_json,
+        response_json,
+        error_json,
+        created_at,
+        updated_at
+      ) values (?, ?, ?, ?, ?, ?, 'failed', ?, null, ?, ?, ?)
+      """,
+      [
+        caller_run_id,
+        op_key,
+        service_run_id,
+        op_kind,
+        message_name,
+        correlation_id,
+        Jason.encode!(payload),
+        maybe_encode_json(error),
+        now,
+        now
+      ]
+    )
   end
 
   defp related_run?(caller_run_id, target_run_id) do
@@ -5196,6 +5405,15 @@ defmodule VilanoKernel.Storage do
     )
     |> first_integer()
     |> Kernel.>(0)
+  end
+
+  defp maybe_run_storage_test_hook(name, payload) do
+    hooks = Application.get_env(:vilano_kernel, :storage_test_hooks, %{})
+
+    case Map.get(hooks, name) do
+      hook when is_function(hook, 1) -> hook.(payload)
+      _ -> :ok
+    end
   end
 
   defp wake_waiting_parents_for_child!(child_run_id, child_status, payload, now) do
