@@ -84,5 +84,12 @@ The current release-management surface is intentionally small:
 `vilano update` and `vilano rollback` operate on the managed install layout under `~/.vilano`
 and are designed around the same install metadata contract used by the packaged smoke path.
 
+For release-prep and distribution work, the repo also provides:
+
+- `bun run build:release`
+  - build a versioned runtime tarball, `release.json`, and `install.sh`
+- `bun run smoke:release-install`
+  - install the built artifact into a clean root and prove the installed launcher can run a real workflow
+
 For OSS `0.1`, explicit `vilano.manifest.json` files are the recommended path. Use
 `vilano project init-manifest` to bootstrap one for existing TS/JS repos.

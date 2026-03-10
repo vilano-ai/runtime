@@ -1,6 +1,7 @@
 # Distribution
 
-This document describes the intended runtime distribution model for Vilano `0.1` and later.
+This document describes the current runtime distribution model for Vilano `0.1` and the release
+artifacts it is moving toward.
 
 ## Install Layout
 
@@ -46,15 +47,37 @@ Meanings:
   - optional override for execution/workspace state
   - defaults to `<VILANO_HOME>/execution`
 
-## Current State
+## Current Release Tooling
 
-Today the repo still has a developer-oriented packaging path, but the runtime path helpers and
-materialization logic now align with the install/state split above. That keeps the `0.1`
-distribution work pointed at a stable filesystem contract.
+The repo now includes a release-artifact build path:
 
-## Intended Release Direction
+```bash
+bun run build:release
+```
 
-The installer and updater should eventually operate only on:
+That command emits:
+
+- `dist/release/vilano-v<version>-<platform>.tar.gz`
+- `dist/release/release.json`
+- `dist/release/SHA256SUMS`
+- `dist/release/install.sh`
+
+The generated installer installs the selected runtime into the managed layout described above,
+creates the stable launcher under `bin/`, and writes install state for `vilano update` /
+`vilano rollback`.
+
+The repo also includes a dedicated release-install smoke path:
+
+```bash
+bun run smoke:release-install
+```
+
+That path installs the built artifact into a clean root using the generated `install.sh`, then
+verifies that the installed runtime can start the daemon and complete a real workflow.
+
+## Install / Update Direction
+
+The installer and updater operate only on:
 
 - versioned runtime payloads under `installs/`
 - launchers under `bin/`
@@ -97,8 +120,8 @@ This manifest is the local source of truth for:
 - supported bundled worker runtimes
 - platform identity for the artifact that was installed
 
-`vilano version` should report from this manifest. Future installer/update flows should validate it
-before switching the active launcher.
+`vilano version` reports from this manifest, and install/update flows validate it before switching
+the active launcher.
 
 Current CLI support:
 
@@ -118,7 +141,7 @@ Current CLI support:
 The remote installer/update entrypoint should eventually consume a release metadata document served
 from the Vilano release endpoint.
 
-Shape:
+Current shape:
 
 ```json
 {
@@ -138,8 +161,8 @@ Shape:
       "supportedWorkerRuntimes": ["bun"],
       "releasedAt": "2026-03-10T12:00:00.000Z",
       "artifacts": {
-        "macos-aarch64": {
-          "url": "https://github.com/vilano-ai/runtime/releases/download/v0.1.0/vilano-v0.1.0-macos-aarch64.tar.gz",
+        "darwin-arm64": {
+          "url": "https://github.com/vilano-ai/runtime/releases/download/v0.1.0/vilano-v0.1.0-darwin-arm64.tar.gz",
           "sha256": "..."
         }
       }

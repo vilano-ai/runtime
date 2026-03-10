@@ -122,6 +122,8 @@ The repo includes a packaged install smoke check:
 bun run check
 bun run pack
 bun run smoke:install
+bun run build:release
+bun run smoke:release-install
 ```
 
 That path packs `vilano`, installs it into a temporary directory, verifies that read-only commands
@@ -129,6 +131,17 @@ do not mutate the vendored bundle, verifies `doctor --fix` does not rewrite pack
 contents when vendored kernel artifacts are already present, checks release metadata through
 `vilano update --check`, applies an update into the managed install root, rolls back, starts the
 daemon through the managed launcher, and confirms that runtime state is written under `VILANO_HOME`.
+
+The release-distribution path goes one step further:
+
+- `bun run build:release`
+  - builds a versioned runtime tarball under `dist/release/`
+  - emits `dist/release/release.json`
+  - emits `dist/release/install.sh`
+- `bun run smoke:release-install`
+  - installs that artifact into a clean root using the generated installer
+  - verifies the managed launcher layout
+  - runs a real workflow from the installed runtime
 
 ## Programming Model
 
