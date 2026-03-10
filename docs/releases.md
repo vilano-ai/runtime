@@ -54,3 +54,33 @@ For the first OSS release, the expected language is:
 - Node worker: preview
 
 Do not ship release notes that imply broader support than the current support matrix.
+
+## Release Checklist
+
+Before publishing a public OSS release:
+
+1. Run the supported CI matrix cleanly.
+2. Run `bun run build:release`.
+3. Run `bun run smoke:release-install`.
+4. Validate one clean-machine install path outside the repo checkout.
+5. Confirm the release notes match:
+   - supported platforms
+   - supported worker runtimes
+   - protocol/schema version
+   - known limitations
+6. Confirm `runtime.vilano.ai/install.sh` and `runtime.vilano.ai/release.json` point at the tagged
+   GitHub Release assets.
+
+## Clean-Machine Validation
+
+The minimum pre-release validation on a machine without a repo checkout should be:
+
+```bash
+curl -fsSL https://runtime.vilano.ai/install.sh | bash
+vilano version
+vilano doctor
+vilano update --check
+```
+
+Then register a real project with an explicit `vilano.manifest.json`, start the daemon, run one
+workflow, and inspect/replay the result.
