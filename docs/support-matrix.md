@@ -64,6 +64,8 @@ The repo CI is expected to enforce this matrix directly:
 - supported path jobs run on `ubuntu-latest` and `macos-latest`
 - Bun CLI + TypeScript SDK + BEAM kernel + Bun worker is the required passing path
 - Node worker coverage runs as a separate preview job
+- the heavier pre-release gate is `bun run check:launch`
+- the heavier GitHub Actions pre-release gate is `Launch Gate`
 
 If the support matrix changes, the CI matrix should change with it.
 

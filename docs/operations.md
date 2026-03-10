@@ -36,6 +36,8 @@ vilano doctor --fix
 a ready kernel release, it does not fetch Hex deps or rewrite the packaged bundle. Node is reported
 as optional unless you are validating the preview Node worker lane.
 
+If first-run commands fail, use [Troubleshooting](./troubleshooting.md).
+
 `version` and `doctor` are read-only. They do not start the daemon. `doctor --fix` is the mutating
 path when you want Vilano Runtime to prepare local Mix/Hex state.
 

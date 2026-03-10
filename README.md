@@ -1,5 +1,8 @@
 # Vilano Runtime
 
+[![CI](https://github.com/vilano-ai/runtime/actions/workflows/ci.yml/badge.svg)](https://github.com/vilano-ai/runtime/actions/workflows/ci.yml)
+[![Launch Gate](https://github.com/vilano-ai/runtime/actions/workflows/launch-gate.yml/badge.svg)](https://github.com/vilano-ai/runtime/actions/workflows/launch-gate.yml)
+
 Vilano Runtime is a local-first durable execution runtime with a BEAM kernel and external
 JavaScript/TypeScript workers.
 
@@ -77,6 +80,13 @@ Managed workers supervised by the kernel get hard-stop fallback for blocking tim
 workers currently rely on cooperative in-process step cancellation.
 
 The current support posture is documented in [docs/support-matrix.md](./docs/support-matrix.md).
+
+## Start Here
+
+- [First-Run Walkthrough](./docs/first-run.md)
+- [Support Matrix](./docs/support-matrix.md)
+- [Troubleshooting](./docs/troubleshooting.md)
+- [Trust Model](./docs/trust-model.md)
 
 ## Quick Start
 
@@ -162,6 +172,12 @@ bun run pack
 bun run smoke:install
 bun run build:release
 bun run smoke:release-install
+```
+
+For the heavier pre-release gate, run:
+
+```bash
+bun run check:launch
 ```
 
 That path packs `vilano`, installs it into a temporary directory, verifies that read-only commands

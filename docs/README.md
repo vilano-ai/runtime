@@ -10,6 +10,8 @@ ignored by git.
 
 - [Architecture](./architecture.md)
   - Runtime layers, control flow, ownership boundaries, and current coupling points.
+- [First-Run Walkthrough](./first-run.md)
+  - Canonical install-to-replay evaluation path for the repo and packaged runtime.
 - [Support Matrix](./support-matrix.md)
   - What is supported today, what is preview/experimental, and what is intentionally out of
     scope for the current OSS runtime.
@@ -17,6 +19,8 @@ ignored by git.
   - Repo layout, local commands, manifest/protocol boundaries, and contributor expectations.
 - [Operations Guide](./operations.md)
   - Runtime home layout, daemon lifecycle, health checks, and operator-facing commands.
+- [Troubleshooting](./troubleshooting.md)
+  - Likely first-release operator failures and the shortest recovery path for each.
 - [Trust Model](./trust-model.md)
   - Canonical local-first OSS trust posture, current guarantees, and non-goals.
 - [Manifest Guide](./manifests.md)
@@ -31,25 +35,30 @@ ignored by git.
   - What each release note should say about support matrix, protocol version, and manifest
     compatibility.
   - Release bodies live under `docs/release-notes/`.
+- [Debut Release Checklist](./debut-release-checklist.md)
+  - High-signal pre-release checklist for the first public Vilano Runtime launch.
 - [Tests](../tests/README.md)
   - Integration and soak coverage, including restart/churn expectations.
 
 ## Reading Order
 
 1. Start with the top-level [README](../README.md) for install and first-run usage.
-2. Read [Architecture](./architecture.md) to understand the kernel/worker/CLI split.
-3. Read [Support Matrix](./support-matrix.md) before changing packaging, worker runtimes, or
+2. Read [First-Run Walkthrough](./first-run.md) to see the canonical evaluator path.
+3. Read [Architecture](./architecture.md) to understand the kernel/worker/CLI split.
+4. Read [Support Matrix](./support-matrix.md) before changing packaging, worker runtimes, or
    release posture.
-4. Read [Development Guide](./development.md) before refactoring core modules or changing the
+5. Read [Development Guide](./development.md) before refactoring core modules or changing the
    contributor workflow.
-5. Read [Operations Guide](./operations.md) before changing daemon, runtime-home, or install
+6. Read [Operations Guide](./operations.md) before changing daemon, runtime-home, or install
    behavior.
-6. Read [Trust Model](./trust-model.md) before changing local auth, daemon exposure, registration
+7. Read [Troubleshooting](./troubleshooting.md) before changing first-run or operator-facing failure behavior.
+8. Read [Trust Model](./trust-model.md) before changing local auth, daemon exposure, registration
    behavior, or product security posture.
-7. Read [Manifest Guide](./manifests.md) before changing project registration or discovery.
-8. Read [Distribution](./distribution.md) before changing packaged install, runtime materialization,
+9. Read [Manifest Guide](./manifests.md) before changing project registration or discovery.
+10. Read [Distribution](./distribution.md) before changing packaged install, runtime materialization,
    or update behavior.
-9. Read [Protocol Guide](./protocol.md) before changing kernel/worker or CLI/kernel wire
+11. Read [Protocol Guide](./protocol.md) before changing kernel/worker or CLI/kernel wire
    contracts.
-10. Read [Release Notes Guide](./releases.md) before cutting a release or changing compatibility
+12. Read [Release Notes Guide](./releases.md) before cutting a release or changing compatibility
    expectations.
+13. Read [Debut Release Checklist](./debut-release-checklist.md) before the first public launch.
