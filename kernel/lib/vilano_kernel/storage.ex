@@ -137,6 +137,7 @@ defmodule VilanoKernel.Storage do
           key_input,
           now,
           caller_run && caller_run["id"],
+          lease_id,
           must_exist
         )
       end
@@ -163,13 +164,17 @@ defmodule VilanoKernel.Storage do
   def send_child_run_signal(lease_id, child_run_id, signal_name, payload) do
     now = Infrastructure.now_iso8601()
 
-    with caller_run when not is_nil(caller_run) <- get_fenced_run_by_lease(lease_id, now),
-         child_ref when not is_nil(child_ref) <- get_run_child_by_child(caller_run["id"], child_run_id) do
-      _ = child_ref
-      send_run_signal(child_run_id, signal_name, payload)
-    else
-      _ -> nil
-    end
+    Infrastructure.transaction_with_busy_retry(fn ->
+      with caller_run when not is_nil(caller_run) <- get_fenced_run_by_lease(lease_id, now),
+           child_ref when not is_nil(child_ref) <- get_run_child_by_child(caller_run["id"], child_run_id) do
+        _ = child_ref
+        ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
+        send_run_signal(child_run_id, signal_name, payload)
+      else
+        _ -> nil
+      end
+    end)
+    |> unwrap_transaction_result()
   end
 
   def enqueue_service_envelope!(project, definition, service_key, key_input, kind, name, payload) do
@@ -308,6 +313,8 @@ defmodule VilanoKernel.Storage do
           if existing_child do
             %{"status" => "existing", "childRun" => get_run(existing_child["child_run_id"])}
           else
+            ensure_fenced_run_ownership!(parent_run["id"], lease_id, now)
+
             definition =
               parent_run
               |> project_definitions_for_run()
@@ -504,6 +511,8 @@ defmodule VilanoKernel.Storage do
               %{"status" => existing["status"]}
 
             nil ->
+              ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
+
               case maybe_insert_service_envelope(
                      service_run,
                      "send",
@@ -570,6 +579,8 @@ defmodule VilanoKernel.Storage do
               %{"status" => existing["status"]}
 
             nil ->
+              ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
+
               case maybe_insert_service_envelope(
                      service_run,
                      "signal",
@@ -661,10 +672,12 @@ defmodule VilanoKernel.Storage do
                       "wakeAt" => wake_at,
                       "output" => nil
                     }
-                  }
+                }
               end
 
             nil ->
+              ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
+
               case maybe_insert_service_envelope(
                      service_run,
                      "ask",
@@ -3038,10 +3051,15 @@ defmodule VilanoKernel.Storage do
          key_input,
          now,
          caller_run_id \\ nil,
+         lease_id \\ nil,
          must_exist \\ false
        ) do
     project_name = Map.fetch!(project, "name")
     definition_name = Map.fetch!(definition, "name")
+
+    if is_binary(caller_run_id) and caller_run_id != "" and is_binary(lease_id) and lease_id != "" do
+      ensure_fenced_run_ownership!(caller_run_id, lease_id, now)
+    end
 
     service_run =
       case get_service_run(project_name, definition_name, service_key) do
