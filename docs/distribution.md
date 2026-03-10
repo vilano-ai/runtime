@@ -131,7 +131,7 @@ Current contract:
   "schemaMax": 9,
   "bundleVersion": "cli-0.1.0-runtime-0.1.0-protocol-1",
   "bundleContentHash": "abcd1234",
-  "supportedWorkerRuntimes": ["bun", "node"],
+  "supportedWorkerRuntimes": ["bun"],
   "platform": {
     "os": "darwin",
     "arch": "arm64"

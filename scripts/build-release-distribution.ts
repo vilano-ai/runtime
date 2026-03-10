@@ -18,7 +18,7 @@ const ROOT = path.resolve(import.meta.dir, "..");
 const CLI_DIR = path.join(ROOT, "cli");
 const DIST_DIR = path.join(ROOT, "dist", "release");
 
-const PLATFORM_KEY = `${process.platform}-${os.arch()}`;
+const PLATFORM_KEY = resolvePlatformKey();
 const RELEASE_CHANNEL = resolveReleaseChannel();
 
 await fs.rm(DIST_DIR, { recursive: true, force: true });
@@ -183,6 +183,19 @@ function resolveReleaseBaseUrl(): string {
   return new URL(`file://${DIST_DIR}/`).toString();
 }
 
+function resolvePlatformKey(): string {
+  const actual = `${process.platform}-${os.arch()}`;
+  const expected = process.env.VILANO_RELEASE_PLATFORM;
+
+  if (expected && expected !== actual) {
+    throw new Error(
+      `Release platform mismatch: expected ${expected} from VILANO_RELEASE_PLATFORM, got ${actual} from the current runner.`
+    );
+  }
+
+  return actual;
+}
+
 function renderInstallScript(manifest: ReleaseMetadataManifest): string {
   const latest = manifest.releases[manifest.latest];
   if (!latest) {
@@ -334,7 +347,7 @@ chmod 755 "$BIN_DIR/vilano"
 UPDATED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 PREVIOUS_VERSION_JSON="null"
 if [ -n "$PREVIOUS_VERSION" ]; then
-  PREVIOUS_VERSION_JSON="\"$PREVIOUS_VERSION\""
+  PREVIOUS_VERSION_JSON="\\\"$PREVIOUS_VERSION\\\""
 fi
 
 cat > "$INSTALL_STATE_FILE" <<EOF

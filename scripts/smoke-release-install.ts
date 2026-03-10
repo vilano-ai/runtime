@@ -20,6 +20,11 @@ try {
     VILANO_INSTALL_ROOT: installRoot,
   });
 
+  await run("bash", [installScriptPath], ROOT, {
+    ...process.env,
+    VILANO_INSTALL_ROOT: installRoot,
+  });
+
   const installedCli = path.join(installRoot, "bin", "vilano");
   const installState = JSON.parse(
     await fs.readFile(path.join(installRoot, "install-state.json"), "utf8")
@@ -30,6 +35,12 @@ try {
 
   if (!installState.currentVersion) {
     throw new Error("Release installer did not record the current installed version");
+  }
+
+  if (installState.previousVersion !== installState.currentVersion) {
+    throw new Error(
+      `Reinstall should record the previous version consistently, got current=${installState.currentVersion} previous=${installState.previousVersion}`
+    );
   }
 
   const version = JSON.parse((await run(installedCli, ["version", "--json"], ROOT)).stdout) as {

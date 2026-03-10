@@ -97,7 +97,7 @@ async function writeBundleManifest(): Promise<void> {
     schemaVersion,
     bundleVersion,
     bundleContentHash,
-    supportedWorkerRuntimes: ["bun", "node"],
+    supportedWorkerRuntimes: ["bun"],
   });
 
   await fs.writeFile(

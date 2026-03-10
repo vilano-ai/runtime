@@ -302,22 +302,29 @@ exec "$CURRENT_ROOT/bun/bun" "$CURRENT_ROOT/bin/vilano.ts" "$@"
 EOF
 chmod +x "$BIN_DIR/vilano"
 
+UPDATED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+PREVIOUS_VERSION_JSON="null"
+if [ -n "$PREVIOUS_VERSION" ]; then
+  PREVIOUS_VERSION_JSON="\\\"$PREVIOUS_VERSION\\\""
+fi
+
 cat > "$INSTALL_STATE_FILE" <<EOF
 {
   "version": 1,
-  "currentVersion": "$VERSION",
-  "previousVersion": \${PREVIOUS_VERSION:+\"$PREVIOUS_VERSION\"}\${PREVIOUS_VERSION:-null},
-  "installedVersions": ["$VERSION"\${PREVIOUS_VERSION:+, "$PREVIOUS_VERSION"}],
-  "updatedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "channel": "$CHANNEL"
+  "currentVersion": ${jsonQuote(latest.version)},
+  "previousVersion": $PREVIOUS_VERSION_JSON,
+  "channel": ${jsonQuote(latest.channel)},
+  "updatedAt": "$UPDATED_AT"
 }
 EOF
 
-echo "Vilano $VERSION installed to $TARGET_ROOT"
-echo
-echo "Add $BIN_DIR to your PATH if it is not already there."
-echo "Then run: vilano version"
+echo "Vilano $VERSION installed to $INSTALL_ROOT"
+echo "Run '$BIN_DIR/vilano version' to verify the install."
 `;
+}
+
+function jsonQuote(value: string): string {
+  return JSON.stringify(value);
 }
 
 function shellQuote(value: string): string {

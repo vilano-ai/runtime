@@ -53,11 +53,17 @@ jobs:
       - name: Run runtime tests
         run: bun run test
 
+      - name: Build local release artifacts
+        env:
+          VILANO_RELEASE_PLATFORM: ${{ matrix.platform }}
+        run: bun run build:release
+
       - name: Run release-install smoke
         run: bun scripts/smoke-release-install.ts
 
-      - name: Build release artifacts
+      - name: Build publish-ready release artifacts
         env:
+          VILANO_RELEASE_PLATFORM: ${{ matrix.platform }}
           VILANO_RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name || 'dry-run' }}
         run: bun run build:release
 
