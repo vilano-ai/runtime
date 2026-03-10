@@ -149,6 +149,51 @@ test("run cancel propagates through outbound service asks", async () => {
   }
 });
 
+test("first in-run service asks suspend durably before the service replies", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { sessionId: "suspend-session" };
+
+  try {
+    const run = await harness.startWorkflow("demo/approvalCoordinator", keyInput);
+
+    const waitingWorkflow = await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "waiting" &&
+        inspect.waits.some((wait) => wait.kind === "ask_reply" && wait.status === "waiting") &&
+        inspect.events.map((event) => event.type).includes("AskRequested") &&
+        inspect.events.map((event) => event.type).includes("RunSuspended")
+    );
+
+    const waitingService = await harness.waitForService(
+      "demo/operator",
+      keyInput,
+      (inspect) =>
+        inspect.run.status === "waiting" &&
+        inspect.envelopes.some(
+          (envelope) => envelope.name === "awaitApproval" && envelope.status === "processing"
+        )
+    );
+
+    expect(waitingWorkflow.waits.some((wait) => wait.kind === "ask_reply")).toBe(true);
+
+    await harness.sendSignal(waitingService.run.id, "approved", {
+      source: "suspend-regression",
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+
+    expect(completed.run.output).toMatchObject({
+      operatorRunId: waitingService.run.id,
+    });
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("run cancel marks active exec work cancelled", async () => {
   const harness = await RuntimeHarness.create();
 

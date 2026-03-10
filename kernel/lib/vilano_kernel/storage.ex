@@ -751,24 +751,6 @@ defmodule VilanoKernel.Storage do
                     [caller_run["id"], "ask_reply:" <> correlation_id, correlation_id, wake_at, now, now]
                   )
 
-                  ensure_fenced_run_write!(
-                    caller_run["id"],
-                    lease_id,
-                    now,
-                    """
-                    update runs
-                    set
-                      status = 'waiting',
-                      lease_id = null,
-                      lease_auth_token = null,
-                      lease_worker_id = null,
-                      lease_expires_at = null,
-                      updated_at = ?
-                    where id = ?
-                    """,
-                    [now, caller_run["id"]]
-                  )
-
                   append_event!(
                     caller_run["id"],
                     "AskRequested",
@@ -813,7 +795,23 @@ defmodule VilanoKernel.Storage do
                     now
                   )
 
-                  ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
+                  ensure_fenced_run_write!(
+                    caller_run["id"],
+                    lease_id,
+                    now,
+                    """
+                    update runs
+                    set
+                      status = 'waiting',
+                      lease_id = null,
+                      lease_auth_token = null,
+                      lease_worker_id = null,
+                      lease_expires_at = null,
+                      updated_at = ?
+                    where id = ?
+                    """,
+                    [now, caller_run["id"]]
+                  )
 
                   %{
                     "status" => "suspended",
