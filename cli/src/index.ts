@@ -21,7 +21,7 @@ import {
   stopServiceRun,
 } from "./daemon-client.ts";
 import { CliError } from "./cli-error.ts";
-import { handleProjectCommand } from "./commands/project.ts";
+import { handleInitCommand, handleProjectCommand } from "./commands/project.ts";
 import {
   handleDaemonCommand,
   handleDoctorCommand,
@@ -68,8 +68,9 @@ function renderHelp(): string {
     "  vilano update [--check]",
     "  vilano rollback",
     "  vilano doctor [--fix]",
+    "  vilano init [path] [--force]",
     "  vilano daemon start|status|stop",
-    "  vilano project add|list|init-manifest|inspect|sync|remove",
+    "  vilano project add|list|inspect|sync|remove",
     "  vilano workflow list|inspect",
     "  vilano run start|list|inspect|replay|cancel",
     "  vilano worker start",
@@ -99,6 +100,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         return handleRollbackCommand(parsed.flags);
       case "doctor":
         return handleDoctorCommand(parsed.flags);
+      case "init":
+        return handleInitCommand(rest, parsed.flags);
       case "daemon":
         return handleDaemonCommand(rest, parsed.flags);
       case "project":

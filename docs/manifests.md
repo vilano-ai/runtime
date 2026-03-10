@@ -60,7 +60,7 @@ That means the runtime already prefers explicit manifests over discovery magic. 
 To bootstrap an explicit manifest for an existing TS/JS repo:
 
 ```bash
-vilano project init-manifest /path/to/project
+vilano init /path/to/project
 ```
 
 That command writes `vilano.manifest.json` from the current definition set so later registration and

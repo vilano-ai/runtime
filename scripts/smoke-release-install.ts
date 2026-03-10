@@ -93,7 +93,7 @@ try {
     "utf8"
   );
 
-  await run(installedCli, ["project", "init-manifest", ".", "--json"], projectDir);
+  await run(installedCli, ["init", ".", "--json"], projectDir);
 
   const daemonPort = await reservePort();
   await run(installedCli, ["daemon", "start", "--port", String(daemonPort)], projectDir, {

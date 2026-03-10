@@ -63,7 +63,7 @@ vilano daemon stop
 Projects are registered locally:
 
 ```bash
-vilano project init-manifest /path/to/project
+vilano init /path/to/project
 vilano project add /path/to/project --name demo
 vilano project sync demo
 vilano project inspect demo

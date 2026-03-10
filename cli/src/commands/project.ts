@@ -57,21 +57,7 @@ export async function handleProjectCommand(
       return 0;
     }
     case "init-manifest": {
-      const projectPath = args[1] ?? ".";
-      const result = await writeExplicitProjectManifest(projectPath, {
-        force: Boolean(flags.force),
-      });
-      writeOutput(
-        flags,
-        { ok: true, manifestPath: result.manifestPath, manifest: result.manifest },
-        (body) =>
-          [
-            `Wrote ${body.manifestPath}`,
-            `workflows: ${body.manifest.definitions.workflows.length}`,
-            `services: ${body.manifest.definitions.services.length}`,
-          ].join("\n")
-      );
-      return 0;
+      return handleInitCommand(args.slice(1), flags);
     }
     case "inspect": {
       const projectName = args[1];
@@ -112,8 +98,34 @@ export async function handleProjectCommand(
       return 0;
     }
     default:
-      throw new CliError("Usage: vilano project add|list|init-manifest|inspect|sync|remove");
+      throw new CliError("Usage: vilano project add|list|inspect|sync|remove");
   }
+}
+
+export async function handleInitCommand(
+  args: string[],
+  flags: Record<string, string | boolean>
+): Promise<number> {
+  const projectPath = args[0] ?? ".";
+  const result = await writeExplicitProjectManifest(projectPath, {
+    force: Boolean(flags.force),
+  });
+
+  writeOutput(
+    flags,
+    { ok: true, manifestPath: result.manifestPath, manifest: result.manifest },
+    (body) =>
+      [
+        `Wrote ${body.manifestPath}`,
+        `workflows: ${body.manifest.definitions.workflows.length}`,
+        `services: ${body.manifest.definitions.services.length}`,
+        "",
+        "Next steps:",
+        `  vilano project add ${projectPath === "." ? "." : projectPath} --name <project>`,
+      ].join("\n")
+  );
+
+  return 0;
 }
 
 async function pruneRegisteredProjectSnapshots(_projectName: string): Promise<void> {
@@ -127,7 +139,7 @@ async function warnIfUsingGeneratedManifestFallback(projectPath: string): Promis
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       process.stderr.write(
-        "Vilano is using generated manifest fallback for this project. Run `vilano project init-manifest <path>` to create the recommended explicit contract.\n"
+        "Vilano is using generated manifest fallback for this project. Run `vilano init <path>` to create the recommended explicit contract.\n"
       );
       return;
     }

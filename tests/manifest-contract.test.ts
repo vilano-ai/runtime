@@ -241,7 +241,7 @@ test("explicit manifests must reference files that exist", async () => {
   }
 });
 
-test("project init-manifest writes an explicit vilano.manifest.json contract", async () => {
+test("writeExplicitProjectManifest writes an explicit vilano.manifest.json contract", async () => {
   const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-manifest-init-"));
 
   try {

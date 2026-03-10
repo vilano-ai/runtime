@@ -94,10 +94,10 @@ bun add @vilano/runtime
 For your own repo, prefer an explicit `vilano.manifest.json`:
 
 ```bash
-vilano project init-manifest /path/to/project
+vilano init /path/to/project
 ```
 
-`project init-manifest` is a generated starting point for TS/JS projects. Review the generated
+`vilano init` is a generated starting point for TS/JS projects. Review the generated
 manifest before relying on it, especially if your definitions use non-trivial export patterns.
 
 Register the project and inspect what Vilano found:

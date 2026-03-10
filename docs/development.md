@@ -96,7 +96,7 @@ generated cache under `.vilano/project-manifest.json`.
 To bootstrap an explicit manifest for an existing TS/JS repo:
 
 ```bash
-./cli/bin/vilano.ts project init-manifest /path/to/project
+./cli/bin/vilano.ts init /path/to/project
 ```
 
 - The tracked manifest contract is documented in [Manifest Guide](./manifests.md).

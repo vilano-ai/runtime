@@ -338,7 +338,7 @@ try {
   }
 
   const initManifest = JSON.parse(
-    (await run(managedCliEntry, ["project", "init-manifest", "./manifest-project", "--json"], installDir, env)).stdout
+    (await run(managedCliEntry, ["init", "./manifest-project", "--json"], installDir, env)).stdout
   ) as {
     manifestPath: string;
     manifest: {
