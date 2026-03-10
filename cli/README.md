@@ -28,7 +28,8 @@ and `doctor` do not mutate the installed package tree. When the packaged bundle 
 ready kernel release, `doctor --fix` does not fetch Hex deps or rewrite the installed bundle.
 
 The current local trust model is still single-user. The CLI reduces blind localhost access, but it
-does not claim strong isolation from arbitrary code running as the same OS user.
+does not claim strong isolation from arbitrary code running as the same OS user. See
+[docs/trust-model.md](../docs/trust-model.md) for the canonical runtime posture.
 
 ## Important Commands
 
@@ -94,4 +95,6 @@ For release-prep and distribution work, the repo also provides:
 
 For OSS `0.1`, explicit `vilano.manifest.json` files are the recommended path. Use
 `vilano init` to bootstrap one for existing TS/JS repos, and review the generated manifest before
-relying on it for non-trivial export patterns.
+relying on it for non-trivial export patterns. `vilano project add` and `vilano project sync`
+import the declared definitions from the pinned snapshot to validate export identity before the
+registration completes.

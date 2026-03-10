@@ -74,8 +74,11 @@ The registry is machine-local. It is not a remote catalog or package index.
 to refresh the registered snapshot and definition set. For OSS `0.1`, explicit manifests are the
 recommended registration path. `vilano init` generates a starting manifest from source discovery, so
 review it before relying on it for non-trivial export patterns. Registration validates the manifest
-contract, paths, and declared export names, but the worker still proves definition identity on first
-activation when it imports the module.
+contract, paths, and declared export names, then imports the declared definitions from the pinned
+snapshot to prove definition identity before registration completes. Activation still re-validates
+the same identity when the worker imports the module later.
+
+Treat `project add` and `project sync` as trusted local-code steps. See [Trust Model](./trust-model.md).
 
 ## Operator Commands
 
@@ -137,13 +140,7 @@ case, the runtime falls back to durable failure/cancellation and lease recovery.
 
 ## Local Trust Model
 
-The daemon is:
-
-- loopback-only
-- guarded by a per-runtime token under `VILANO_HOME`
-
-This is meant to prevent blind localhost access by unrelated local processes. It is not intended as
-strong isolation against fully trusted code already running as the same user.
+See [Trust Model](./trust-model.md) for the canonical OSS posture.
 
 ## Upgrade / Compatibility
 

@@ -17,6 +17,8 @@ ignored by git.
   - Repo layout, local commands, manifest/protocol boundaries, and contributor expectations.
 - [Operations Guide](./operations.md)
   - Runtime home layout, daemon lifecycle, health checks, and operator-facing commands.
+- [Trust Model](./trust-model.md)
+  - Canonical local-first OSS trust posture, current guarantees, and non-goals.
 - [Manifest Guide](./manifests.md)
   - Explicit project manifest contract, generated cache behavior, and the path away from source
     scanning.
@@ -42,10 +44,12 @@ ignored by git.
    contributor workflow.
 5. Read [Operations Guide](./operations.md) before changing daemon, runtime-home, or install
    behavior.
-6. Read [Manifest Guide](./manifests.md) before changing project registration or discovery.
-7. Read [Distribution](./distribution.md) before changing packaged install, runtime materialization,
+6. Read [Trust Model](./trust-model.md) before changing local auth, daemon exposure, registration
+   behavior, or product security posture.
+7. Read [Manifest Guide](./manifests.md) before changing project registration or discovery.
+8. Read [Distribution](./distribution.md) before changing packaged install, runtime materialization,
    or update behavior.
-8. Read [Protocol Guide](./protocol.md) before changing kernel/worker or CLI/kernel wire
+9. Read [Protocol Guide](./protocol.md) before changing kernel/worker or CLI/kernel wire
    contracts.
-9. Read [Release Notes Guide](./releases.md) before cutting a release or changing compatibility
+10. Read [Release Notes Guide](./releases.md) before cutting a release or changing compatibility
    expectations.

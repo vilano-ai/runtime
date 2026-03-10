@@ -41,6 +41,7 @@ mutable runtime state lives under `~/.vilano/state`.
 
 Vilano Runtime does not currently claim strong filesystem isolation from code running as the same OS user.
 The OSS `0.x` trust model assumes a local, single-user machine.
+See [docs/trust-model.md](./docs/trust-model.md) for the canonical current posture.
 
 Vilano Runtime is released under the [Apache-2.0 License](./LICENSE).
 
@@ -113,8 +114,11 @@ vilano project add /path/to/project --name my-project
 vilano workflow list --project my-project
 ```
 
-Registration validates the manifest contract, paths, and declared export names, but the worker still
-proves definition identity on first activation when it imports the module.
+Registration validates the manifest contract, paths, and declared export names, then imports the
+declared definitions from the pinned snapshot to prove definition identity before registration
+completes. Activation still re-validates the same identity when the worker imports the module.
+
+Because of that, treat `vilano project add` and `vilano project sync` as trusted local-code steps.
 
 Start a workflow:
 
@@ -143,6 +147,10 @@ bun install
 ./cli/bin/vilano.ts project add ./examples/bootstrap-demo --name demo
 ./cli/bin/vilano.ts workflow list
 ```
+
+For smaller reference projects, see [`examples/multi-agent-demo`](./examples/multi-agent-demo),
+[`examples/approval-loop-demo`](./examples/approval-loop-demo), and
+[`examples/fanout-demo`](./examples/fanout-demo).
 
 ### Packaged Smoke Path
 

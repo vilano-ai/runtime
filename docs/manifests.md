@@ -42,9 +42,10 @@ That contract is validated by [cli/src/project-manifest-contract.ts](../cli/src/
 and checked in CI through `bun run check:manifest`.
 
 Vilano Runtime treats `exportName` as authoritative. Registration validates schema, paths, and export-name
-syntax. The definition file must export that exact symbol, and the exported value must match the
-declared `kind` and `name`, but that final identity check still happens when the worker imports the
-module on first activation.
+syntax. During `project add` and `project sync`, the CLI then imports the declared definitions from
+the pinned project snapshot so the definition file must export that exact symbol and the exported
+value must match the declared `kind` and `name` before registration completes. Activation still
+re-validates the same identity when the worker imports the module again.
 
 ## Runtime Behavior
 
@@ -66,6 +67,9 @@ vilano init /path/to/project
 That command writes `vilano.manifest.json` from the current definition set so later registration and
 sync flows do not depend on fallback source scanning. The generated manifest is a starting point,
 not a proof that every definition export is correct.
+
+For the current trust posture, registration should be treated as a trusted local-code step because
+the CLI imports the declared definitions from the pinned snapshot. See [Trust Model](./trust-model.md).
 
 ## Direction
 

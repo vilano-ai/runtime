@@ -95,6 +95,8 @@ If the support matrix changes, the CI matrix should change with it.
 - local token auth reduces blind localhost access, but does not claim strong isolation against fully
   trusted code running as the same user
 
+See [Trust Model](./trust-model.md) for the canonical description of these assumptions.
+
 ## Release Guidance
 
 The correct OSS posture for the current codebase is:
