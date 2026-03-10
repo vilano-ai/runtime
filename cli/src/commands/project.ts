@@ -10,9 +10,11 @@ import {
 } from "../daemon-client.ts";
 import { renderProject, renderProjectSummary, writeOutput } from "../output.ts";
 import { materializeProjectSnapshot, pruneAllProjectSnapshots } from "../project-snapshot.ts";
+import { validateProjectDefinitionsIdentity } from "../project-definition-validation.ts";
 import { getProjectManifestPath, writeExplicitProjectManifest } from "../project-manifest.ts";
 import { buildProjectManifest } from "../registry.ts";
 import { CliError } from "../cli-error.ts";
+import type { ProjectRecord } from "../types.ts";
 
 const PROJECT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -41,7 +43,7 @@ export async function handleProjectCommand(
 
       await warnIfUsingGeneratedManifestFallback(projectPath);
       const manifest = await buildProjectManifest(nameFlag, projectPath, { regenerate: true });
-      manifest.snapshotPath = await materializeProjectSnapshot(nameFlag, manifest.path);
+      manifest.snapshotPath = await materializeValidatedProjectSnapshot(nameFlag, manifest.path, manifest.definitions);
       const response = await addProject(manifest);
       await pruneRegisteredProjectSnapshots(response.project.name);
       writeOutput(flags, response, (body) => renderProject(body.project));
@@ -80,7 +82,11 @@ export async function handleProjectCommand(
       const manifest = await buildProjectManifest(existing.project.name, existing.project.path, {
         regenerate: true,
       });
-      manifest.snapshotPath = await materializeProjectSnapshot(existing.project.name, manifest.path);
+      manifest.snapshotPath = await materializeValidatedProjectSnapshot(
+        existing.project.name,
+        manifest.path,
+        manifest.definitions
+      );
       const response = await syncProject(manifest);
       await pruneRegisteredProjectSnapshots(response.project.name);
       writeOutput(flags, response, (body) => renderProject(body.project));
@@ -132,6 +138,26 @@ export async function handleInitCommand(
 async function pruneRegisteredProjectSnapshots(_projectName: string): Promise<void> {
   const references = await listReferencedProjectSnapshots();
   await pruneAllProjectSnapshots(references.snapshotPaths);
+}
+
+async function materializeValidatedProjectSnapshot(
+  projectName: string,
+  projectPath: string,
+  definitions: ProjectRecord["definitions"]
+): Promise<string> {
+  const snapshotPath = await materializeProjectSnapshot(projectName, projectPath);
+
+  try {
+    await validateProjectDefinitionsIdentity(snapshotPath, [
+      ...definitions.workflows,
+      ...definitions.services,
+    ]);
+    return snapshotPath;
+  } catch (error) {
+    await fs.rm(snapshotPath, { recursive: true, force: true }).catch(() => undefined);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new CliError(`Project registration failed definition validation: ${message}`);
+  }
 }
 
 async function warnIfUsingGeneratedManifestFallback(projectPath: string): Promise<void> {

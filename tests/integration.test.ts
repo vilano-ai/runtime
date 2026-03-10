@@ -433,7 +433,7 @@ test("kernel rejects persisted project definitions that escape the snapshot root
   }
 });
 
-test("explicit manifests register statically and surface bad exports at runtime", async () => {
+test("explicit manifests fail registration when declared exports do not resolve", async () => {
   const harness = await RuntimeHarness.create();
 
   try {
@@ -482,16 +482,11 @@ test("explicit manifests register statically and surface bad exports at runtime"
       "bad-manifest",
     ]).wait();
 
-    expect(result.exitCode).toBe(0);
-
-    const run = await harness.startWorkflow("bad-manifest/declaredWorkflow", {});
-    const failed = await harness.waitForRun(
-      run.run.id,
-      (inspect) => inspect.run.status === "failed"
+    expect(result.exitCode).toBe(1);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      "Project registration failed definition validation"
     );
-
-    expect(failed.run.error).toBeTruthy();
-    expect(JSON.stringify(failed.run.error)).toContain("missingWorkflow");
+    expect(`${result.stdout}\n${result.stderr}`).toContain("missingWorkflow");
   } finally {
     await harness.dispose();
   }
