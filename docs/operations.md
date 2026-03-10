@@ -30,8 +30,9 @@ vilano doctor
 vilano doctor --fix
 ```
 
-`doctor --fix` can bootstrap local Mix/Hex state and compile kernel dependencies when needed. Node
-is reported as optional unless you are validating the preview Node worker lane.
+`doctor --fix` only mutates what is missing. For packaged installs that already contain vendored
+kernel deps and build artifacts, it does not fetch Hex deps or rewrite the packaged bundle. Node is
+reported as optional unless you are validating the preview Node worker lane.
 
 `version` and `doctor` are read-only. They do not start the daemon. `doctor --fix` is the mutating
 path when you want Vilano to prepare local Mix/Hex state.
@@ -60,6 +61,7 @@ vilano daemon stop
 Projects are registered locally:
 
 ```bash
+vilano project init-manifest /path/to/project
 vilano project add /path/to/project --name demo
 vilano project sync demo
 vilano project inspect demo
@@ -67,7 +69,8 @@ vilano project inspect demo
 
 The registry is machine-local. It is not a remote catalog or package index.
 `project add` creates a new registration. If the project name already exists, use `project sync`
-to refresh the registered snapshot and definition set.
+to refresh the registered snapshot and definition set. For OSS `0.1`, explicit manifests are the
+recommended registration path.
 
 ## Operator Commands
 

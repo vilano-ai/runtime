@@ -93,6 +93,12 @@ truth.
 Project registration now prefers an explicit `vilano.manifest.json` contract and falls back to the
 generated cache under `.vilano/project-manifest.json`.
 
+To bootstrap an explicit manifest for an existing TS/JS repo:
+
+```bash
+./cli/bin/vilano.ts project init-manifest /path/to/project
+```
+
 - The tracked manifest contract is documented in [Manifest Guide](./manifests.md).
 - The worker/kernel and CLI/kernel contracts are documented in [Protocol Guide](./protocol.md).
 - Both should be treated as release-facing contracts.

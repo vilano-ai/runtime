@@ -37,6 +37,8 @@ The runtime is intentionally local-first today:
 Vilano does not currently claim strong filesystem isolation from code running as the same OS user.
 The OSS `0.x` trust model assumes a local, single-user machine.
 
+Vilano Runtime is released under the [Apache-2.0 License](./LICENSE).
+
 ## Current Capabilities
 
 - workflows with replay-from-the-top semantics
@@ -82,6 +84,15 @@ bun install
 ./cli/bin/vilano.ts workflow list
 ```
 
+For your own repo, prefer an explicit `vilano.manifest.json`:
+
+```bash
+./cli/bin/vilano.ts project init-manifest /path/to/project
+```
+
+That generates the manifest from the current TS/JS definitions so registration does not depend on
+fallback source scanning.
+
 Start a workflow:
 
 ```bash
@@ -110,8 +121,9 @@ bun run smoke:install
 ```
 
 That path packs `vilano`, installs it into a temporary directory, verifies that read-only commands
-do not mutate the vendored bundle, starts the daemon, and confirms that runtime state is written
-under `VILANO_HOME`.
+do not mutate the vendored bundle, verifies `doctor --fix` does not rewrite packaged runtime
+contents when vendored kernel artifacts are already present, starts the daemon, and confirms that
+runtime state is written under `VILANO_HOME`.
 
 ## Programming Model
 
@@ -237,6 +249,9 @@ If a failure should never retry, throw `nonRetryable(...)`.
 - [Release notes guide](./docs/releases.md)
 - [Protocol artifacts](./protocol/README.md)
 - [Test coverage](./tests/README.md)
+- [Contributing](./CONTRIBUTING.md)
+- [Security policy](./SECURITY.md)
+- [Code of conduct](./CODE_OF_CONDUCT.md)
 
 ## Repository Layout
 

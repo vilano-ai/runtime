@@ -6,7 +6,8 @@
   "files": [
     "src",
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "types": "./dist/index.d.ts",
   "exports": {
@@ -38,5 +39,5 @@
     "beam",
     "bun"
   ],
-  "license": "UNLICENSED"
+  "license": "Apache-2.0"
 }

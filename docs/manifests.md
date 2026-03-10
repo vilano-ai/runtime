@@ -55,6 +55,15 @@ When a project is registered or synced, the CLI resolves its manifest in this or
 That means the runtime already prefers explicit manifests over discovery magic. For OSS v0.1,
 `vilano.manifest.json` should be treated as the normal path.
 
+To bootstrap an explicit manifest for an existing TS/JS repo:
+
+```bash
+vilano project init-manifest /path/to/project
+```
+
+That command writes `vilano.manifest.json` from the current definition set so later registration and
+sync flows do not depend on fallback source scanning.
+
 ## Direction
 
 For the current OSS release:

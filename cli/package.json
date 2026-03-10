@@ -10,7 +10,8 @@
     "bin",
     "src",
     "runtime-dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "types": "./src/index.ts",
   "exports": {
@@ -44,5 +45,5 @@
     "beam",
     "bun"
   ],
-  "license": "UNLICENSED"
+  "license": "Apache-2.0"
 }

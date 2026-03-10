@@ -22,7 +22,9 @@ The CLI is intentionally a client of the kernel, not a second runtime authority.
 
 When running from an installed package, the CLI materializes the bundled runtime payload under
 `VILANO_HOME` when the daemon actually needs to start. Read-only commands such as `version` and
-`doctor` do not mutate the installed package tree.
+`doctor` do not mutate the installed package tree. When the packaged bundle already contains
+vendored kernel deps and build artifacts, `doctor --fix` does not fetch Hex deps or rewrite the
+installed bundle.
 
 The current local trust model is still single-user. The CLI reduces blind localhost access, but it
 does not claim strong isolation from arbitrary code running as the same OS user.
@@ -34,6 +36,7 @@ vilano version
 vilano doctor
 vilano daemon start
 vilano daemon status
+vilano project init-manifest /path/to/project
 vilano project add /path/to/project --name demo
 vilano run start demo/planner --input '{"topic":"BEAM"}'
 vilano run inspect <run-id>
@@ -54,7 +57,7 @@ vilano service ask demo/reviewer status --service-key repo_123 --wait-timeout 30
 - [src/registry.ts](./src/registry.ts)
   - project registration and local resolution
 - [src/project-manifest.ts](./src/project-manifest.ts)
-  - generated manifest support
+  - explicit manifest helpers and generated fallback support
 - [src/runtime-materializer.ts](./src/runtime-materializer.ts)
   - packaged runtime bundle materialization
 
@@ -63,3 +66,6 @@ vilano service ask demo/reviewer status --service-key repo_123 --wait-timeout 30
 The CLI currently supports the Bun-first release path. Bun workers are the supported OSS v1 lane.
 Node workers remain preview, the CLI itself remains Bun-oriented today, and non-JS worker
 implementations are future work rather than a supported part of the current manifest/runtime story.
+
+For OSS `0.1`, explicit `vilano.manifest.json` files are the recommended path. Use
+`vilano project init-manifest` to bootstrap one for existing TS/JS repos.

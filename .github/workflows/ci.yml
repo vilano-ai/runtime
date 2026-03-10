@@ -71,6 +71,7 @@ jobs:
   preview-node-worker:
     name: Preview Node worker
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -105,4 +106,4 @@ jobs:
         run: bun run test:kernel
 
       - name: Node worker validation
-        run: bun test tests/node-worker.test.ts --timeout 60000 --max-concurrency 1
+        run: bun run test:preview-node

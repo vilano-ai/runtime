@@ -73,7 +73,9 @@ If the support matrix changes, the CI matrix should change with it.
   posture as the Bun path.
 - Protocol artifacts exist and are versioned, but generated clients/types are not yet the primary
   implementation path.
-- Project manifests are generated and cached, but generation still depends on JS/TS source scanning.
+- Explicit `vilano.manifest.json` files are the recommended project contract for OSS `0.1`.
+- Generated cache and regex fallback remain compatibility paths for TS/JS repos and should not be
+  treated as the preferred release path.
 
 ## Not Supported Yet
 
