@@ -16,6 +16,7 @@ export interface PreparedRuntimeBundle {
   runtimeRoot: string;
   kernelDir: string;
   workerDir: string;
+  installManifestFile: string;
   materialized: boolean;
   bundleVersion: string;
 }
@@ -25,6 +26,7 @@ interface MaterializedBundleState {
   cliVersion: string;
   protocolVersion: number;
   runtimeVersion: string;
+  schemaVersion: number;
   bundleVersion: string;
   bundleContentHash: string | null;
   materializedContentHash: string | null;
@@ -45,6 +47,7 @@ export async function prepareRuntimeBundleWithOptions(options: { materialize?: b
       runtimeRoot: source.runtimeRoot,
       kernelDir: source.kernelDir,
       workerDir: source.workerDir,
+      installManifestFile: source.manifestFile,
       materialized: false,
       bundleVersion: `repo-${getCliVersion()}-protocol-${CLI_PROTOCOL_VERSION}`,
     };
@@ -73,6 +76,7 @@ export async function prepareRuntimeBundleWithOptions(options: { materialize?: b
       cliVersion: getCliVersion(),
       protocolVersion: CLI_PROTOCOL_VERSION,
       runtimeVersion: manifest?.runtimeVersion ?? getCliVersion(),
+      schemaVersion: manifest?.schemaVersion ?? 0,
       bundleVersion,
       bundleContentHash: manifest?.bundleContentHash ?? null,
       materializedContentHash,
@@ -85,6 +89,7 @@ export async function prepareRuntimeBundleWithOptions(options: { materialize?: b
     runtimeRoot: materializedRoot,
     kernelDir,
     workerDir,
+    installManifestFile: path.join(materializedRoot, "install-manifest.json"),
     materialized: true,
     bundleVersion,
   };
@@ -102,7 +107,11 @@ async function isMaterialized(
   bundleVersion: string
 ): Promise<boolean> {
   const state = await readJsonFile<MaterializedBundleState | null>(stateFile, null);
-  const sourceBundleContentHash = await readBundleContentHash(sourceRoot);
+  const sourceBundleManifest = await readJsonFile<RuntimeBundleManifest | null>(
+    path.join(sourceRoot, "install-manifest.json"),
+    null
+  );
+  const sourceBundleContentHash = sourceBundleManifest?.bundleContentHash ?? null;
   const materializedRoot = path.dirname(stateFile);
   const materializedContentHash = state ? await hashRuntimeBundleContents(materializedRoot) : null;
 
@@ -114,13 +123,14 @@ async function isMaterialized(
     state.materializedContentHash === materializedContentHash &&
     materializedContentHash === sourceBundleContentHash &&
     state.cliVersion === getCliVersion() &&
-    state.protocolVersion === CLI_PROTOCOL_VERSION
+    state.protocolVersion === CLI_PROTOCOL_VERSION &&
+    state.schemaVersion === (sourceBundleManifest?.schemaVersion ?? 0)
   );
 }
 
 async function readBundleContentHash(sourceRoot: string): Promise<string | null> {
   const manifest = await readJsonFile<RuntimeBundleManifest | null>(
-    path.join(sourceRoot, "bundle-manifest.json"),
+    path.join(sourceRoot, "install-manifest.json"),
     null
   );
   return manifest?.bundleContentHash ?? null;
@@ -128,7 +138,7 @@ async function readBundleContentHash(sourceRoot: string): Promise<string | null>
 
 async function hashRuntimeBundleContents(rootPath: string): Promise<string | null> {
   const bundleManifest = await readJsonFile<RuntimeBundleManifest | null>(
-    path.join(rootPath, "bundle-manifest.json"),
+    path.join(rootPath, "install-manifest.json"),
     null
   );
 
@@ -141,7 +151,7 @@ async function hashRuntimeBundleContents(rootPath: string): Promise<string | nul
 
   for (const filePath of files) {
     const relativePath = path.relative(rootPath, filePath);
-    if (relativePath === ".materialized.json" || relativePath === "bundle-manifest.json") {
+    if (relativePath === ".materialized.json" || relativePath === "install-manifest.json") {
       continue;
     }
 

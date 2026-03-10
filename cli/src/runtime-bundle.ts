@@ -10,14 +10,7 @@ export interface RuntimeBundlePaths {
   bundled: boolean;
 }
 
-export interface RuntimeBundleManifest {
-  bundleVersion: string;
-  bundleContentHash?: string;
-  cliVersion: string;
-  runtimeVersion: string;
-  protocolVersion: number;
-  generatedAt: string;
-}
+export { type RuntimeInstallManifest as RuntimeBundleManifest } from "./distribution-contract.ts";
 
 export function resolveRuntimeBundlePaths(): RuntimeBundlePaths {
   const cliRoot = path.resolve(import.meta.dir, "..");
@@ -32,7 +25,7 @@ export function resolveRuntimeBundlePaths(): RuntimeBundlePaths {
       runtimeRoot: repoRoot,
       kernelDir: path.join(repoRoot, "kernel"),
       workerDir: path.join(repoRoot, "worker"),
-      manifestFile: path.join(repoRoot, "protocol", "bundle-manifest.json"),
+      manifestFile: path.join(repoRoot, "protocol", "install-manifest.json"),
       bundled: false,
     };
   }
@@ -41,7 +34,7 @@ export function resolveRuntimeBundlePaths(): RuntimeBundlePaths {
   const bundledKernel = path.join(bundledRoot, "kernel", "mix.exs");
   const bundledWorker = path.join(bundledRoot, "worker", "bun", "src", "cli.ts");
   const bundledSharedWorker = path.join(bundledRoot, "worker", "shared", "src", "core.ts");
-  const bundledManifest = path.join(bundledRoot, "bundle-manifest.json");
+  const bundledManifest = path.join(bundledRoot, "install-manifest.json");
 
   if (fs.existsSync(bundledKernel) && fs.existsSync(bundledWorker) && fs.existsSync(bundledSharedWorker)) {
     return {

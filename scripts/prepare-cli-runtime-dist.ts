@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import crypto from "node:crypto";
 import path from "node:path";
 
+import { createRuntimeInstallManifest } from "../cli/src/distribution-contract.ts";
+
 const ROOT = path.resolve(import.meta.dir, "..");
 const CLI_DIR = path.join(ROOT, "cli");
 const RUNTIME_DIST_DIR = path.join(CLI_DIR, "runtime-dist");
@@ -66,24 +68,25 @@ async function writeBundleManifest(): Promise<void> {
   const workerPackage = await readJson(path.join(ROOT, "worker", "bun", "package.json"));
   const kernelVersion = await readKernelVersion(path.join(ROOT, "kernel", "mix.exs"));
   const protocolVersion = await readProtocolVersion(path.join(ROOT, "kernel", "lib", "vilano_kernel", "version.ex"));
+  const schemaVersion = await readLatestSchemaVersion(
+    path.join(ROOT, "kernel", "lib", "vilano_kernel", "storage", "migrations")
+  );
   const runtimeVersion = kernelVersion ?? cliPackage.version ?? workerPackage.version ?? "0.0.0";
   const bundleVersion = `cli-${cliPackage.version ?? "0.0.0"}-runtime-${runtimeVersion}-protocol-${protocolVersion}`;
   const bundleContentHash = await hashRuntimeDistContents();
+  const manifest = createRuntimeInstallManifest({
+    cliVersion: cliPackage.version ?? "0.0.0",
+    runtimeVersion,
+    protocolVersion,
+    schemaVersion,
+    bundleVersion,
+    bundleContentHash,
+    supportedWorkerRuntimes: ["bun", "node"],
+  });
 
   await fs.writeFile(
-    path.join(RUNTIME_DIST_DIR, "bundle-manifest.json"),
-    `${JSON.stringify(
-      {
-        bundleVersion,
-        bundleContentHash,
-        cliVersion: cliPackage.version ?? "0.0.0",
-        runtimeVersion,
-        protocolVersion,
-        generatedAt: new Date().toISOString(),
-      },
-      null,
-      2
-    )}\n`,
+    path.join(RUNTIME_DIST_DIR, "install-manifest.json"),
+    `${JSON.stringify(manifest, null, 2)}\n`,
     "utf8"
   );
 }
@@ -102,6 +105,26 @@ async function readProtocolVersion(filePath: string): Promise<number> {
   const source = await fs.readFile(filePath, "utf8");
   const match = source.match(/@protocol_version\s+(\d+)/);
   return match ? Number.parseInt(match[1] ?? "1", 10) : 1;
+}
+
+async function readLatestSchemaVersion(migrationsDir: string): Promise<number> {
+  const files = (await fs.readdir(migrationsDir))
+    .filter((entry) => entry.endsWith(".ex"))
+    .sort();
+
+  let latest = 0;
+
+  for (const file of files) {
+    const source = await fs.readFile(path.join(migrationsDir, file), "utf8");
+    const match = source.match(/def version,\s*do:\s*(\d+)/);
+    if (!match) {
+      continue;
+    }
+
+    latest = Math.max(latest, Number.parseInt(match[1] ?? "0", 10));
+  }
+
+  return latest;
 }
 
 async function hashRuntimeDistContents(): Promise<string> {
