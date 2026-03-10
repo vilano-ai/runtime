@@ -86,6 +86,58 @@ export function renderVersionInfo(body: {
     .join("\n");
 }
 
+export function renderUpdateCheck(body: {
+  mode: "check";
+  source: string;
+  channel: string;
+  current: {
+    version: string;
+    bundled: boolean;
+    installManifestFile: string;
+  };
+  latest: {
+    version: string;
+    channel: string;
+    protocolVersion: number;
+    schemaMin: number;
+    schemaMax: number;
+    supportedWorkerRuntimes: string[];
+    releasedAt: string;
+    notesUrl: string | null;
+    artifact: {
+      url: string;
+      sha256: string;
+      sizeBytes?: number;
+    } | null;
+  };
+  platform: {
+    key: string;
+    supported: boolean;
+  };
+  updateAvailable: boolean;
+}): string {
+  return [
+    `update_check: ${body.updateAvailable ? "update available" : "up to date"}`,
+    `source: ${body.source}`,
+    `channel: ${body.channel}`,
+    `current_version: ${body.current.version}`,
+    body.current.bundled ? `runtime_install_manifest: ${body.current.installManifestFile}` : null,
+    `latest_version: ${body.latest.version}`,
+    `latest_channel: ${body.latest.channel}`,
+    `released_at: ${body.latest.releasedAt}`,
+    `platform: ${body.platform.key}`,
+    `platform_supported: ${body.platform.supported}`,
+    `latest_protocol: ${body.latest.protocolVersion}`,
+    `latest_schema: ${body.latest.schemaMin}-${body.latest.schemaMax}`,
+    `latest_worker_runtimes: ${body.latest.supportedWorkerRuntimes.join(",")}`,
+    body.latest.artifact ? `artifact_url: ${body.latest.artifact.url}` : null,
+    body.latest.artifact ? `artifact_sha256: ${body.latest.artifact.sha256}` : null,
+    body.latest.notesUrl ? `notes: ${body.latest.notesUrl}` : null,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
 export function renderDoctorReport(body: {
   ok: boolean;
   cliVersion: string;

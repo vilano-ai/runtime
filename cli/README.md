@@ -33,6 +33,7 @@ does not claim strong isolation from arbitrary code running as the same OS user.
 
 ```bash
 vilano version
+vilano update --check
 vilano doctor
 vilano daemon start
 vilano daemon status
@@ -66,6 +67,15 @@ vilano service ask demo/reviewer status --service-key repo_123 --wait-timeout 30
 The CLI currently supports the Bun-first release path. Bun workers are the supported OSS v1 lane.
 Node workers remain preview, the CLI itself remains Bun-oriented today, and non-JS worker
 implementations are future work rather than a supported part of the current manifest/runtime story.
+
+The current release-management surface is intentionally small:
+
+- `vilano version`
+  - reports the installed runtime payload and running kernel, if any
+- `vilano update --check`
+  - checks release metadata and reports whether a newer runtime is available for the current platform
+
+Applying updates and rollbacks will be layered on top of the same install metadata contract.
 
 For OSS `0.1`, explicit `vilano.manifest.json` files are the recommended path. Use
 `vilano project init-manifest` to bootstrap one for existing TS/JS repos.

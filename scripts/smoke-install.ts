@@ -35,6 +35,7 @@ try {
 
   const cliEntry = path.join(installDir, "node_modules", ".bin", "vilano");
   const packagedRuntimeDist = path.join(installDir, "node_modules", "vilano", "runtime-dist");
+  const releaseMetadataPath = path.join(installDir, "release.json");
   const baseEnv = {
     ...process.env,
     VILANO_HOME: runtimeHome,
@@ -97,6 +98,63 @@ try {
 
   if (version.runtimeBundle.root.startsWith(runtimeHome)) {
     throw new Error(`Packaged CLI version command should not resolve to a materialized runtime root: ${version.runtimeBundle.root}`);
+  }
+
+  await fs.writeFile(
+    releaseMetadataPath,
+    `${JSON.stringify(
+      {
+        manifestVersion: 1,
+        latest: "0.1.1",
+        channels: {
+          stable: "0.1.1",
+        },
+        releases: {
+          "0.1.1": {
+            version: "0.1.1",
+            channel: "stable",
+            protocolVersion: version.protocolVersion,
+            schemaMin: version.runtimeBundle.installManifest?.schemaVersion ?? 0,
+            schemaMax: version.runtimeBundle.installManifest?.schemaVersion ?? 0,
+            supportedWorkerRuntimes: version.runtimeBundle.installManifest?.supportedWorkerRuntimes ?? ["bun"],
+            releasedAt: "2026-03-10T12:00:00.000Z",
+            artifacts: {
+              [`${process.platform}-${process.arch}`]: {
+                url: "https://example.com/vilano-v0.1.1.tar.gz",
+                sha256: "abc123",
+              },
+            },
+          },
+        },
+      },
+      null,
+      2
+    )}\n`
+  );
+
+  const updateCheck = JSON.parse(
+    (
+      await run(
+        cliEntry,
+        ["update", "--check", "--release-manifest", releaseMetadataPath, "--json"],
+        installDir,
+        baseEnv
+      )
+    ).stdout
+  ) as {
+    updateAvailable: boolean;
+    latest: {
+      version: string;
+      artifact: {
+        url: string;
+      } | null;
+    };
+  };
+
+  if (!updateCheck.updateAvailable || updateCheck.latest.version !== "0.1.1") {
+    throw new Error(
+      `Packaged CLI update --check did not report the expected release metadata:\n${JSON.stringify(updateCheck, null, 2)}`
+    );
   }
 
   const doctor = JSON.parse(

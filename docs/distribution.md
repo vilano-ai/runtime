@@ -100,6 +100,14 @@ This manifest is the local source of truth for:
 `vilano version` should report from this manifest. Future installer/update flows should validate it
 before switching the active launcher.
 
+Current CLI support:
+
+- `vilano version`
+  - reports the local install manifest and current packaged/runtime state
+- `vilano update --check`
+  - fetches release metadata, selects the target channel, and reports whether a newer runtime is
+    available for the current platform
+
 ## Release Metadata
 
 The remote installer/update entrypoint should eventually consume a release metadata document served
@@ -141,6 +149,9 @@ That document is the contract for:
 - `vilano update`
 - `vilano rollback`
 - release-channel selection
+
+The first implemented updater surface is `vilano update --check`. Download/apply and rollback will
+build on the same metadata contract and install layout.
 
 The authoritative TypeScript definitions for both local install metadata and remote release
 metadata live in [cli/src/distribution-contract.ts](/Users/mcl0vin/Documents/Code/runtime/cli/src/distribution-contract.ts).

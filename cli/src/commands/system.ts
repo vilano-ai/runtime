@@ -14,9 +14,18 @@ import {
 import {
   renderDaemonStatus,
   renderDoctorReport,
+  renderUpdateCheck,
   renderVersionInfo,
   writeOutput,
 } from "../output.ts";
+import {
+  compareRuntimeVersions,
+  getCurrentPlatformKey,
+  loadReleaseMetadata,
+  resolveReleaseChannel,
+  resolveReleaseMetadataSource,
+  selectReleaseVersion,
+} from "../release-metadata.ts";
 import { getRuntimePaths } from "../runtime-home.ts";
 import { prepareRuntimeBundle, prepareRuntimeBundleWithOptions } from "../runtime-materializer.ts";
 import { CLI_PROTOCOL_VERSION, getCliVersion } from "../runtime-version.ts";
@@ -107,6 +116,52 @@ export async function handleDoctorCommand(flags: Record<string, string | boolean
   const report = await runDoctor({ fix: Boolean(flags.fix) });
   writeOutput(flags, report, renderDoctorReport);
   return report.ok ? 0 : 1;
+}
+
+export async function handleUpdateCommand(flags: Record<string, string | boolean>): Promise<number> {
+  const source = resolveReleaseMetadataSource(flags);
+  const channel = resolveReleaseChannel(flags);
+  const metadata = await loadReleaseMetadata(source);
+  const targetRelease = selectReleaseVersion(metadata.manifest, channel);
+  const platformKey = getCurrentPlatformKey();
+  const platformArtifact = targetRelease.artifacts[platformKey] ?? null;
+  const bundle = await prepareRuntimeBundleWithOptions({ materialize: false });
+  const installManifest = await readJsonFile<RuntimeBundleManifest | null>(bundle.installManifestFile, null);
+  const currentVersion = installManifest?.runtimeVersion ?? getCliVersion();
+  const updateAvailable = compareRuntimeVersions(targetRelease.version, currentVersion) > 0;
+
+  const body = {
+    ok: true,
+    mode: "check" as const,
+    source: metadata.source,
+    channel,
+    current: {
+      version: currentVersion,
+      bundled: bundle.source.bundled,
+      materialized: bundle.materialized,
+      installManifestFile: bundle.installManifestFile,
+      installManifest,
+    },
+    latest: {
+      version: targetRelease.version,
+      channel: targetRelease.channel,
+      protocolVersion: targetRelease.protocolVersion,
+      schemaMin: targetRelease.schemaMin,
+      schemaMax: targetRelease.schemaMax,
+      supportedWorkerRuntimes: targetRelease.supportedWorkerRuntimes,
+      releasedAt: targetRelease.releasedAt,
+      notesUrl: targetRelease.notesUrl ?? null,
+      artifact: platformArtifact,
+    },
+    platform: {
+      key: platformKey,
+      supported: platformArtifact !== null,
+    },
+    updateAvailable,
+  };
+
+  writeOutput(flags, body, renderUpdateCheck);
+  return 0;
 }
 
 export async function handleWorkerCommand(

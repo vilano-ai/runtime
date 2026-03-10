@@ -25,6 +25,7 @@ import { handleProjectCommand } from "./commands/project.ts";
 import {
   handleDaemonCommand,
   handleDoctorCommand,
+  handleUpdateCommand,
   handleVersionCommand,
   handleWorkerCommand,
 } from "./commands/system.ts";
@@ -63,6 +64,7 @@ function renderHelp(): string {
     "",
     "Implemented commands:",
     "  vilano version",
+    "  vilano update [--check]",
     "  vilano doctor [--fix]",
     "  vilano daemon start|status|stop",
     "  vilano project add|list|init-manifest|inspect|sync|remove",
@@ -89,6 +91,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     switch (group) {
       case "version":
         return handleVersionCommand(parsed.flags);
+      case "update":
+        return handleUpdateCommand(parsed.flags);
       case "doctor":
         return handleDoctorCommand(parsed.flags);
       case "daemon":
