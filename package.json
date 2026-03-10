@@ -24,6 +24,7 @@
     "prepare:cli-package": "bun scripts/prepare-cli-runtime-dist.ts",
     "build:release": "bun run build:sdk && bun run prepare:cli-package && bun scripts/build-release-distribution.ts",
     "merge:release": "bun scripts/merge-release-artifacts.ts",
+    "verify:release": "bun scripts/verify-release-publication.ts --release-manifest dist/release/release.json --installer dist/release/install.sh --channel stable --platform darwin-arm64 --platform linux-x64",
     "sync:installer-worker": "bun scripts/sync-installer-worker-assets.ts",
     "smoke:install": "bun run build:sdk && bun scripts/smoke-install.ts",
     "smoke:release-install": "bun run build:release && bun scripts/smoke-release-install.ts",

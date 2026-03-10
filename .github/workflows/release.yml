@@ -61,10 +61,23 @@ jobs:
       - name: Run release-install smoke
         run: bun scripts/smoke-release-install.ts
 
+      - name: Verify tag release notes file
+        if: github.event_name == 'push'
+        run: test -f docs/release-notes/${{ github.ref_name }}.md
+
       - name: Build publish-ready release artifacts
+        if: github.event_name == 'push'
         env:
           VILANO_RELEASE_PLATFORM: ${{ matrix.platform }}
-          VILANO_RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name || 'dry-run' }}
+          VILANO_RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+          VILANO_RELEASE_NOTES_URL: https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/release-notes/${{ github.ref_name }}.md
+        run: bun run build:release
+
+      - name: Build publish-ready release artifacts (dry run)
+        if: github.event_name != 'push'
+        env:
+          VILANO_RELEASE_PLATFORM: ${{ matrix.platform }}
+          VILANO_RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/dry-run
         run: bun run build:release
 
       - name: Upload release bundle
@@ -102,6 +115,22 @@ jobs:
           VILANO_RELEASE_OUTPUT_DIR: ${{ github.workspace }}/dist/release
         run: bun run merge:release
 
+      - name: Verify assembled release bundle
+        run: bun run verify:release
+
+      - name: Verify tagged release metadata
+        if: github.event_name == 'push'
+        run: |
+          bun scripts/verify-release-publication.ts \
+            --release-manifest dist/release/release.json \
+            --installer dist/release/install.sh \
+            --channel stable \
+            --expected-version "${GITHUB_REF_NAME#v}" \
+            --platform darwin-arm64 \
+            --platform linux-x64 \
+            --artifact-url-prefix "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/" \
+            --expected-notes-url "https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/release-notes/${{ github.ref_name }}.md"
+
       - name: Upload assembled release bundle
         uses: actions/upload-artifact@v4
         with:
@@ -113,6 +142,7 @@ jobs:
         if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
+          body_path: docs/release-notes/${{ github.ref_name }}.md
           files: |
             dist/release/*.tar.gz
             dist/release/SHA256SUMS
