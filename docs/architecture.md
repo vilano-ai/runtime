@@ -69,6 +69,7 @@ The CLI is an operator/client surface, not the runtime brain. It:
 - manages the local project registry
 - renders inspect/replay views
 - invokes control-plane endpoints
+- separates packaged runtime payloads from mutable runtime state
 
 Primary modules:
 

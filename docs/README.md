@@ -20,6 +20,8 @@ ignored by git.
 - [Manifest Guide](./manifests.md)
   - Explicit project manifest contract, generated cache behavior, and the path away from source
     scanning.
+- [Distribution](./distribution.md)
+  - Runtime install layout, mutable state layout, and the intended packaged install model.
 - [Protocol Guide](./protocol.md)
   - Versioned transport artifacts, generated transport types, and contributor workflow for
     protocol changes.
@@ -40,7 +42,9 @@ ignored by git.
 5. Read [Operations Guide](./operations.md) before changing daemon, runtime-home, or install
    behavior.
 6. Read [Manifest Guide](./manifests.md) before changing project registration or discovery.
-7. Read [Protocol Guide](./protocol.md) before changing kernel/worker or CLI/kernel wire
+7. Read [Distribution](./distribution.md) before changing packaged install, runtime materialization,
+   or update behavior.
+8. Read [Protocol Guide](./protocol.md) before changing kernel/worker or CLI/kernel wire
    contracts.
-8. Read [Release Notes Guide](./releases.md) before cutting a release or changing compatibility
+9. Read [Release Notes Guide](./releases.md) before cutting a release or changing compatibility
    expectations.

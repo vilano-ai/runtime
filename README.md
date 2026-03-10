@@ -34,6 +34,9 @@ The runtime is intentionally local-first today:
 - loopback-only control plane
 - per-runtime access token under `VILANO_HOME`
 
+By default, installed runtime payloads are intended to live under `~/.vilano/installs`, while
+mutable runtime state lives under `~/.vilano/state`.
+
 Vilano does not currently claim strong filesystem isolation from code running as the same OS user.
 The OSS `0.x` trust model assumes a local, single-user machine.
 
@@ -49,6 +52,7 @@ Vilano Runtime is released under the [Apache-2.0 License](./LICENSE).
 - managed-worker hard-stop fallback for timed blocking steps
 - `run inspect` and `run replay` for durable operator visibility
 - packaged local install flow with runtime bundle materialization under `VILANO_HOME`
+  or the configured install root, depending on packaging mode
 
 ## Status
 

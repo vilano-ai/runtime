@@ -6,19 +6,21 @@ Vilano is currently designed as a local runtime on a single machine.
 
 Vilano stores mutable runtime state under `VILANO_HOME`.
 
-If `VILANO_HOME` is not set, the default is `~/.vilano`.
+If `VILANO_HOME` is not set, the default is `~/.vilano/state`.
+
+Vilano also has an install root for packaged/runtime assets. If `VILANO_INSTALL_ROOT` is not set,
+the default install root is `~/.vilano`.
 
 Important contents include:
 
 - runtime database
 - daemon pid and state
 - access token
-- materialized runtime bundle
-- managed worker cache
+- execution/workspace state
 - captured exec artifacts
 
-Packaged installs materialize runtime assets under `VILANO_HOME` so the installed package contents
-remain read-only.
+Packaged installs materialize versioned runtime payloads under the install root, not inside
+`VILANO_HOME`. See [Distribution](./distribution.md) for the intended layout.
 
 ## First-Run Health Checks
 
