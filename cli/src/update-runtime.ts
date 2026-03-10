@@ -17,6 +17,7 @@ import { getRunningDaemonStatus, readDaemonState } from "./daemon-client.ts";
 import { loadReleaseMetadata, selectReleaseVersion, type LoadedReleaseMetadata } from "./release-metadata.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
 import { readRuntimeHomeSchemaVersion } from "./runtime-schema.ts";
+import { getRuntimeCompatibilityIssues } from "./runtime-compatibility.ts";
 import { prepareRuntimeBundleWithOptions } from "./runtime-materializer.ts";
 import { getCliVersion } from "./runtime-version.ts";
 
@@ -56,6 +57,7 @@ export async function applyRuntimeUpdate(input: {
       `No runtime artifact is published for ${input.platformKey} in release ${targetRelease.version}.`
     );
   }
+  await assertPortabilityCompatibility(artifact.compatibility, `release ${targetRelease.version}`);
 
   const bundle = await prepareRuntimeBundleWithOptions({ materialize: false });
   const installManifest = await readInstalledManifestFromBundle(bundle.installManifestFile);
@@ -93,6 +95,10 @@ export async function applyRuntimeUpdate(input: {
       `Installed artifact version mismatch: expected ${targetRelease.version}, got ${installedManifest.runtimeVersion}.`
     );
   }
+  await assertPortabilityCompatibility(
+    installedManifest.compatibility,
+    `installed runtime ${installedManifest.runtimeVersion}`
+  );
 
   await switchCurrentInstall(targetRelease.version, input.channel, {
     previousVersion,
@@ -129,6 +135,10 @@ export async function rollbackRuntimeInstall(targetVersion?: string): Promise<Ro
   if (!manifest) {
     throw new CliError(`Vilano runtime ${rollbackTarget} is not installed under the current install root.`);
   }
+  await assertPortabilityCompatibility(
+    manifest.compatibility,
+    `installed runtime ${manifest.runtimeVersion}`
+  );
   const currentSchemaVersion = await readRuntimeHomeSchemaVersion();
   assertSchemaCompatibility(
     currentSchemaVersion,
@@ -147,6 +157,18 @@ export async function rollbackRuntimeInstall(targetVersion?: string): Promise<Ro
     previousVersion: state.previousVersion,
     rolledBackTo: rollbackTarget,
   };
+}
+
+async function assertPortabilityCompatibility(
+  compatibility: { platformKey: string; os: NodeJS.Platform; arch: string; minimumDarwinKernelMajor?: number; minimumGlibcVersion?: string },
+  label: string
+): Promise<void> {
+  const issues = await getRuntimeCompatibilityIssues(compatibility);
+  if (issues.length === 0) {
+    return;
+  }
+
+  throw new CliError(`Cannot use ${label} on this machine: ${issues.join("; ")}`);
 }
 
 async function assertNoRunningDaemon(action: string): Promise<void> {

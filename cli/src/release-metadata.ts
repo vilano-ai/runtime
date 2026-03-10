@@ -5,6 +5,7 @@ import path from "node:path";
 import { CliError } from "./cli-error.ts";
 import {
   RELEASE_METADATA_VERSION,
+  type RuntimeCompatibility,
   type ReleaseArtifactMetadata,
   type ReleaseChannel,
   type ReleaseMetadataManifest,
@@ -237,6 +238,10 @@ function parseReleaseVersionMetadata(versionKey: string, value: unknown): Releas
         artifact.sizeBytes === undefined
           ? undefined
           : assertNumber(artifact.sizeBytes, `release ${versionKey} artifact ${artifactKey} sizeBytes`),
+      compatibility: parseRuntimeCompatibility(
+        artifact.compatibility,
+        `release ${versionKey} artifact ${artifactKey} compatibility`
+      ),
     };
   }
 
@@ -253,6 +258,26 @@ function parseReleaseVersionMetadata(versionKey: string, value: unknown): Releas
         ? undefined
         : assertString(release.notesUrl, `release ${versionKey} notesUrl`),
     artifacts,
+  };
+}
+
+function parseRuntimeCompatibility(value: unknown, label: string): RuntimeCompatibility {
+  const compatibility = assertObject(value, label);
+  const osValue = assertString(compatibility.os, `${label} os`);
+  const archValue = assertString(compatibility.arch, `${label} arch`);
+
+  return {
+    platformKey: assertString(compatibility.platformKey, `${label} platformKey`),
+    os: osValue as NodeJS.Platform,
+    arch: archValue,
+    minimumDarwinKernelMajor:
+      compatibility.minimumDarwinKernelMajor === undefined
+        ? undefined
+        : assertNumber(compatibility.minimumDarwinKernelMajor, `${label} minimumDarwinKernelMajor`),
+    minimumGlibcVersion:
+      compatibility.minimumGlibcVersion === undefined
+        ? undefined
+        : assertString(compatibility.minimumGlibcVersion, `${label} minimumGlibcVersion`),
   };
 }
 

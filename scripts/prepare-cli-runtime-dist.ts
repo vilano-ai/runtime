@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 
 import { createRuntimeInstallManifest } from "../cli/src/distribution-contract.ts";
+import { collectRuntimeBuildInfo } from "../cli/src/runtime-compatibility.ts";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 const CLI_DIR = path.join(ROOT, "cli");
@@ -90,6 +91,7 @@ async function writeBundleManifest(): Promise<void> {
   const runtimeVersion = kernelVersion ?? cliPackage.version ?? workerPackage.version ?? "0.0.0";
   const bundleVersion = `cli-${cliPackage.version ?? "0.0.0"}-runtime-${runtimeVersion}-protocol-${protocolVersion}`;
   const bundleContentHash = await hashRuntimeDistContents();
+  const runtimeBuildInfo = await collectRuntimeBuildInfo();
   const manifest = createRuntimeInstallManifest({
     cliVersion: cliPackage.version ?? "0.0.0",
     runtimeVersion,
@@ -98,6 +100,8 @@ async function writeBundleManifest(): Promise<void> {
     bundleVersion,
     bundleContentHash,
     supportedWorkerRuntimes: ["bun"],
+    compatibility: runtimeBuildInfo.compatibility,
+    build: runtimeBuildInfo.build,
   });
 
   await fs.writeFile(

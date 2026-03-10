@@ -1,11 +1,23 @@
-import os from "node:os";
-import process from "node:process";
-
 export const RUNTIME_INSTALL_MANIFEST_VERSION = 1;
 export const RELEASE_METADATA_VERSION = 1;
 
 export type SupportedWorkerRuntime = "bun" | "node";
 export type ReleaseChannel = "stable" | "preview";
+
+export interface RuntimeCompatibility {
+  platformKey: string;
+  os: NodeJS.Platform;
+  arch: string;
+  minimumDarwinKernelMajor?: number;
+  minimumGlibcVersion?: string;
+}
+
+export interface RuntimeBuildInfo {
+  source: "local" | "github-actions";
+  osRelease: string;
+  libcFamily?: "glibc";
+  libcVersion?: string;
+}
 
 export interface RuntimeInstallManifest {
   manifestVersion: typeof RUNTIME_INSTALL_MANIFEST_VERSION;
@@ -23,6 +35,8 @@ export interface RuntimeInstallManifest {
     os: NodeJS.Platform;
     arch: string;
   };
+  compatibility: RuntimeCompatibility;
+  build: RuntimeBuildInfo;
   generatedAt: string;
 }
 
@@ -30,6 +44,7 @@ export interface ReleaseArtifactMetadata {
   url: string;
   sha256: string;
   sizeBytes?: number;
+  compatibility: RuntimeCompatibility;
 }
 
 export interface ReleaseVersionMetadata {
@@ -59,6 +74,8 @@ export function createRuntimeInstallManifest(input: {
   bundleVersion: string;
   bundleContentHash?: string;
   supportedWorkerRuntimes: SupportedWorkerRuntime[];
+  compatibility: RuntimeCompatibility;
+  build: RuntimeBuildInfo;
 }): RuntimeInstallManifest {
   return {
     manifestVersion: RUNTIME_INSTALL_MANIFEST_VERSION,
@@ -73,9 +90,11 @@ export function createRuntimeInstallManifest(input: {
     bundleContentHash: input.bundleContentHash,
     supportedWorkerRuntimes: input.supportedWorkerRuntimes,
     platform: {
-      os: process.platform,
-      arch: os.arch(),
+      os: input.compatibility.os,
+      arch: input.compatibility.arch,
     },
+    compatibility: input.compatibility,
+    build: input.build,
     generatedAt: new Date().toISOString(),
   };
 }

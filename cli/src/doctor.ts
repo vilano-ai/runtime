@@ -2,6 +2,9 @@ import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 
 import { getRunningDaemonStatus } from "./daemon-client.ts";
+import type { RuntimeInstallManifest } from "./distribution-contract.ts";
+import { readJsonFile } from "./json-file.ts";
+import { getRuntimeCompatibilityIssues } from "./runtime-compatibility.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
 import { prepareRuntimeBundleWithOptions } from "./runtime-materializer.ts";
 import { CLI_PROTOCOL_VERSION, getCliVersion } from "./runtime-version.ts";
@@ -55,6 +58,7 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
   const runtimePaths = getRuntimePaths();
   const bundle = await prepareRuntimeBundleWithOptions({ materialize: Boolean(options.fix) });
   const appliedFixes: string[] = [];
+  const installManifest = await readJsonFile<RuntimeInstallManifest | null>(bundle.installManifestFile, null);
   const kernelReleaseReady = await fileExists(`${bundle.kernelDir}/bin/vilano_kernel`);
   const depsReady = bundle.source.bundled ? kernelReleaseReady : await fileExists(`${bundle.kernelDir}/deps`);
   const buildReady = bundle.source.bundled ? kernelReleaseReady : await fileExists(`${bundle.kernelDir}/_build`);
@@ -95,6 +99,10 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
 
   const daemonStatus = daemonState.status;
   const daemonError = daemonState.error;
+  const portabilityIssues =
+    bundle.source.bundled && installManifest?.compatibility
+      ? await getRuntimeCompatibilityIssues(installManifest.compatibility)
+      : [];
 
   const checks: DoctorCheck[] = [
     {
@@ -104,6 +112,17 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
       detail: bundle.source.bundled
         ? `Using packaged runtime bundle from ${bundle.source.runtimeRoot} materialized at ${bundle.runtimeRoot}`
         : `Using repo runtime bundle at ${bundle.runtimeRoot}`,
+    },
+    {
+      name: "runtime_portability",
+      ok: portabilityIssues.length === 0,
+      required: bundle.source.bundled,
+      detail:
+        portabilityIssues.length === 0
+          ? bundle.source.bundled
+            ? "packaged runtime matches the current host"
+            : "repo runtime portability is managed by the local toolchain"
+          : portabilityIssues.join("; "),
     },
     {
       name: "bun",

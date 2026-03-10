@@ -142,6 +142,7 @@ async function buildReleaseMetadata(input: {
     url: resolveArtifactUrl(baseUrl, input.artifactFileName),
     sha256: input.sha256,
     sizeBytes: input.sizeBytes,
+    compatibility: installManifest.compatibility,
   };
 
   return {
@@ -208,6 +209,8 @@ function renderInstallScript(manifest: ReleaseMetadataManifest): string {
         `  ${shellQuote(platformKey)})`,
         `    ARTIFACT_URL=${shellQuote(artifact.url)}`,
         `    ARTIFACT_SHA256=${shellQuote(artifact.sha256)}`,
+        `    ARTIFACT_MIN_DARWIN_KERNEL=${shellQuote(String(artifact.compatibility.minimumDarwinKernelMajor ?? ""))}`,
+        `    ARTIFACT_MIN_GLIBC_VERSION=${shellQuote(artifact.compatibility.minimumGlibcVersion ?? "")}`,
         "    ;;",
       ].join("\n");
     })
@@ -270,9 +273,81 @@ compute_sha256() {
   exit 1
 }
 
+version_gte() {
+  local left="$1"
+  local right="$2"
+  local left_part
+  local right_part
+
+  while [ -n "$left" ] || [ -n "$right" ]; do
+    left_part="\${left%%.*}"
+    right_part="\${right%%.*}"
+
+    if [ "$left" = "$left_part" ]; then
+      left=""
+    else
+      left="\${left#*.}"
+    fi
+
+    if [ "$right" = "$right_part" ]; then
+      right=""
+    else
+      right="\${right#*.}"
+    fi
+
+    left_part="\${left_part:-0}"
+    right_part="\${right_part:-0}"
+
+    if [ "$left_part" -gt "$right_part" ]; then
+      return 0
+    fi
+
+    if [ "$left_part" -lt "$right_part" ]; then
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+check_artifact_compatibility() {
+  if [ -n "$ARTIFACT_MIN_DARWIN_KERNEL" ]; then
+    local current_kernel
+    current_kernel="$(uname -r | cut -d. -f1)"
+    if [ "\${current_kernel:-0}" -lt "$ARTIFACT_MIN_DARWIN_KERNEL" ]; then
+      echo "Vilano runtime requires Darwin kernel $ARTIFACT_MIN_DARWIN_KERNEL+, current host is $current_kernel" >&2
+      exit 1
+    fi
+  fi
+
+  if [ -n "$ARTIFACT_MIN_GLIBC_VERSION" ]; then
+    if ! command -v getconf >/dev/null 2>&1; then
+      echo "Vilano runtime requires glibc $ARTIFACT_MIN_GLIBC_VERSION+, but getconf is unavailable to verify compatibility" >&2
+      exit 1
+    fi
+
+    local glibc_line
+    local current_glibc
+    glibc_line="$(getconf GNU_LIBC_VERSION 2>/dev/null || true)"
+    current_glibc="$(printf '%s' "$glibc_line" | awk '{print $2}')"
+
+    if [ -z "$current_glibc" ]; then
+      echo "Vilano runtime requires glibc $ARTIFACT_MIN_GLIBC_VERSION+, but glibc could not be detected on this host" >&2
+      exit 1
+    fi
+
+    if ! version_gte "$current_glibc" "$ARTIFACT_MIN_GLIBC_VERSION"; then
+      echo "Vilano runtime requires glibc $ARTIFACT_MIN_GLIBC_VERSION+, current host is $current_glibc" >&2
+      exit 1
+    fi
+  fi
+}
+
 PLATFORM_KEY="$(detect_platform)"
 ARTIFACT_URL=""
 ARTIFACT_SHA256=""
+ARTIFACT_MIN_DARWIN_KERNEL=""
+ARTIFACT_MIN_GLIBC_VERSION=""
 case "$PLATFORM_KEY" in
 ${artifactCases}
   *)
@@ -280,6 +355,8 @@ ${artifactCases}
     exit 1
     ;;
 esac
+
+check_artifact_compatibility
 
 TMP_DIR="$(mktemp -d)"
 ARCHIVE_PATH="$TMP_DIR/vilano.tar.gz"

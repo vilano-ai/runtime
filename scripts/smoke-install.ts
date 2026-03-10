@@ -41,6 +41,10 @@ try {
   const packagedRuntimeDist = path.join(installDir, "node_modules", "vilano", "runtime-dist");
   const releaseMetadataPath = path.join(installDir, "release.json");
   const incompatibleReleaseMetadataPath = path.join(installDir, "release-incompatible.json");
+  const incompatiblePortabilityReleaseMetadataPath = path.join(
+    installDir,
+    "release-incompatible-portability.json"
+  );
   const baseEnv = {
     ...process.env,
     VILANO_HOME: runtimeHome,
@@ -79,6 +83,13 @@ try {
         protocolVersion: number;
         schemaVersion: number;
         supportedWorkerRuntimes: string[];
+        compatibility?: {
+          platformKey: string;
+          os: NodeJS.Platform;
+          arch: string;
+          minimumDarwinKernelMajor?: number;
+          minimumGlibcVersion?: string;
+        };
       } | null;
     };
   };
@@ -129,6 +140,7 @@ try {
               [`${process.platform}-${process.arch}`]: {
                 url: new URL(`file://${updateArtifact.path}`).toString(),
                 sha256: updateArtifact.sha256,
+                compatibility: version.runtimeBundle.installManifest?.compatibility,
               },
             },
           },
@@ -161,6 +173,52 @@ try {
               [`${process.platform}-${process.arch}`]: {
                 url: new URL(`file://${updateArtifact.path}`).toString(),
                 sha256: updateArtifact.sha256,
+                compatibility: version.runtimeBundle.installManifest?.compatibility,
+              },
+            },
+          },
+        },
+      },
+      null,
+      2
+    )}\n`
+  );
+
+  await fs.writeFile(
+    incompatiblePortabilityReleaseMetadataPath,
+    `${JSON.stringify(
+      {
+        manifestVersion: 1,
+        latest: "0.1.1",
+        channels: {
+          stable: "0.1.1",
+        },
+        releases: {
+          "0.1.1": {
+            version: "0.1.1",
+            channel: "stable",
+            protocolVersion: version.protocolVersion,
+            schemaMin: version.runtimeBundle.installManifest?.schemaVersion ?? 0,
+            schemaMax: version.runtimeBundle.installManifest?.schemaVersion ?? 0,
+            supportedWorkerRuntimes: ["bun"],
+            releasedAt: "2026-03-10T12:00:00.000Z",
+            artifacts: {
+              [`${process.platform}-${process.arch}`]: {
+                url: new URL(`file://${updateArtifact.path}`).toString(),
+                sha256: updateArtifact.sha256,
+                compatibility: {
+                  platformKey: `${process.platform}-${process.arch}`,
+                  os: process.platform,
+                  arch: process.arch,
+                  minimumDarwinKernelMajor:
+                    process.platform === "darwin"
+                      ? (version.runtimeBundle.installManifest?.compatibility?.minimumDarwinKernelMajor ?? 0) + 100
+                      : undefined,
+                  minimumGlibcVersion:
+                    process.platform === "linux"
+                      ? "999.0"
+                      : undefined,
+                },
               },
             },
           },
@@ -215,6 +273,25 @@ try {
   ) {
     throw new Error(
       `Packaged CLI update should fail for incompatible schema metadata:\nstdout:\n${incompatibleUpdate.stdout}\nstderr:\n${incompatibleUpdate.stderr}`
+    );
+  }
+
+  const incompatiblePortabilityUpdate = await run(
+    cliEntry,
+    ["update", "--release-manifest", incompatiblePortabilityReleaseMetadataPath, "--json"],
+    installDir,
+    baseEnv,
+    { allowFailure: true, timeoutMs: 60_000 }
+  );
+
+  if (
+    incompatiblePortabilityUpdate.exitCode === 0 ||
+    !/cannot use release|artifact targets|requires darwin kernel|requires glibc/i.test(
+      `${incompatiblePortabilityUpdate.stdout}\n${incompatiblePortabilityUpdate.stderr}`
+    )
+  ) {
+    throw new Error(
+      `Packaged CLI update should fail for incompatible portability metadata:\nstdout:\n${incompatiblePortabilityUpdate.stdout}\nstderr:\n${incompatiblePortabilityUpdate.stderr}`
     );
   }
 

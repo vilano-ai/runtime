@@ -136,6 +136,16 @@ Current contract:
     "os": "darwin",
     "arch": "arm64"
   },
+  "compatibility": {
+    "platformKey": "darwin-arm64",
+    "os": "darwin",
+    "arch": "arm64",
+    "minimumDarwinKernelMajor": 25
+  },
+  "build": {
+    "source": "github-actions",
+    "osRelease": "25.0.0"
+  },
   "generatedAt": "2026-03-10T12:00:00.000Z"
 }
 ```
@@ -190,7 +200,13 @@ Current shape:
       "artifacts": {
         "darwin-arm64": {
           "url": "https://github.com/vilano-ai/runtime/releases/download/v0.1.0/vilano-v0.1.0-darwin-arm64.tar.gz",
-          "sha256": "..."
+          "sha256": "...",
+          "compatibility": {
+            "platformKey": "darwin-arm64",
+            "os": "darwin",
+            "arch": "arm64",
+            "minimumDarwinKernelMajor": 25
+          }
         }
       }
     }

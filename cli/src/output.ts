@@ -62,6 +62,11 @@ export function renderVersionInfo(body: {
         os: string;
         arch: string;
       };
+      compatibility?: {
+        platformKey: string;
+        minimumDarwinKernelMajor?: number;
+        minimumGlibcVersion?: string;
+      };
     } | null;
   };
   kernel: DaemonStatusResponse | null;
@@ -76,6 +81,9 @@ export function renderVersionInfo(body: {
     `runtime_install_manifest: ${body.runtimeBundle.installManifestFile}`,
     body.runtimeBundle.installManifest
       ? `runtime_install: runtime=${body.runtimeBundle.installManifest.runtimeVersion} protocol=${body.runtimeBundle.installManifest.protocolVersion} schema=${body.runtimeBundle.installManifest.schemaVersion} worker_runtimes=${body.runtimeBundle.installManifest.supportedWorkerRuntimes.join(",")} platform=${body.runtimeBundle.installManifest.platform.os}/${body.runtimeBundle.installManifest.platform.arch}`
+      : null,
+    body.runtimeBundle.installManifest?.compatibility
+      ? `runtime_compatibility: ${renderCompatibility(body.runtimeBundle.installManifest.compatibility)}`
       : null,
     body.kernelError ? `kernel_error: ${body.kernelError}` : null,
     body.kernel
@@ -108,6 +116,11 @@ export function renderUpdateCheck(body: {
       url: string;
       sha256: string;
       sizeBytes?: number;
+      compatibility?: {
+        platformKey: string;
+        minimumDarwinKernelMajor?: number;
+        minimumGlibcVersion?: string;
+      };
     } | null;
   };
   platform: {
@@ -132,10 +145,29 @@ export function renderUpdateCheck(body: {
     `latest_worker_runtimes: ${body.latest.supportedWorkerRuntimes.join(",")}`,
     body.latest.artifact ? `artifact_url: ${body.latest.artifact.url}` : null,
     body.latest.artifact ? `artifact_sha256: ${body.latest.artifact.sha256}` : null,
+    body.latest.artifact?.compatibility
+      ? `artifact_compatibility: ${renderCompatibility(body.latest.artifact.compatibility)}`
+      : null,
     body.latest.notesUrl ? `notes: ${body.latest.notesUrl}` : null,
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
+}
+
+function renderCompatibility(input: {
+  platformKey: string;
+  minimumDarwinKernelMajor?: number;
+  minimumGlibcVersion?: string;
+}): string {
+  return [
+    input.platformKey,
+    input.minimumDarwinKernelMajor !== undefined
+      ? `darwin_kernel>=${input.minimumDarwinKernelMajor}`
+      : null,
+    input.minimumGlibcVersion ? `glibc>=${input.minimumGlibcVersion}` : null,
+  ]
+    .filter((entry): entry is string => Boolean(entry))
+    .join(" ");
 }
 
 export function renderUpdateApply(body: {

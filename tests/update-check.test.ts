@@ -37,6 +37,11 @@ test("vilano update --check reports newer stable releases from release metadata"
                 [`${process.platform}-${process.arch}`]: {
                   url: "https://example.com/vilano-v0.1.1.tar.gz",
                   sha256: "abc123",
+                  compatibility: {
+                    platformKey: `${process.platform}-${process.arch}`,
+                    os: process.platform,
+                    arch: process.arch,
+                  },
                 },
               },
             },
