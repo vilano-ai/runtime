@@ -33,8 +33,8 @@ vilano doctor --fix
 ```
 
 `doctor --fix` only mutates what is missing. For packaged installs that already contain vendored
-kernel deps and build artifacts, it does not fetch Hex deps or rewrite the packaged bundle. Node is
-reported as optional unless you are validating the preview Node worker lane.
+a ready kernel release, it does not fetch Hex deps or rewrite the packaged bundle. Node is reported
+as optional unless you are validating the preview Node worker lane.
 
 `version` and `doctor` are read-only. They do not start the daemon. `doctor --fix` is the mutating
 path when you want Vilano to prepare local Mix/Hex state.

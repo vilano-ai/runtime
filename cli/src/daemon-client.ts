@@ -89,41 +89,58 @@ export async function ensureDaemonStarted(
   const projectRoot = bundle.runtimeRoot;
   const authToken = generateDaemonAuthToken();
   const workerAuthToken = generateDaemonAuthToken();
-  const bundledBuildReady = await fileExists(path.join(kernelDir, "_build", "dev", "lib", "vilano_kernel", "ebin", "Elixir.VilanoKernel.Application.beam"));
-  const bundledDepsReady = await fileExists(path.join(kernelDir, "deps"));
+  const kernelReleaseExecutable = path.join(kernelDir, "bin", "vilano_kernel");
+  const bundledReleaseReady = await fileExists(kernelReleaseExecutable);
   const noCompile =
     process.env.VILANO_KERNEL_NO_COMPILE === "1" ||
-    (bundle.materialized && bundledBuildReady);
-  const mixArgs = noCompile ? ["run", "--no-compile", "--no-halt"] : ["run", "--no-halt"];
+    (bundle.materialized && bundledReleaseReady);
 
   await fs.writeFile(runtimePaths.daemonStartupLogFile, "", { mode: 0o600 });
   const startupLogFd = fsSync.openSync(runtimePaths.daemonStartupLogFile, "a");
 
-  const child = spawn("mix", mixArgs, {
-    cwd: kernelDir,
-    detached: true,
-    stdio: ["ignore", startupLogFd, startupLogFd],
-    env: {
-      ...process.env,
-      VILANO_HOME: runtimePaths.homeDir,
-      VILANO_EXECUTION_HOME: runtimePaths.executionHomeDir,
-      VILANO_KERNEL_PORT: String(port),
-      VILANO_ROOT: projectRoot,
-      VILANO_DAEMON_TOKEN: authToken,
-      VILANO_WORKER_TOKEN: workerAuthToken,
-      ...(bundle.materialized && bundledDepsReady ? { MIX_NO_DEPS_CHECK: "1" } : {}),
-    },
-  });
+  const child = bundle.source.bundled
+    ? spawn(kernelReleaseExecutable, ["start"], {
+        cwd: kernelDir,
+        detached: true,
+        stdio: ["ignore", startupLogFd, startupLogFd],
+        env: {
+          ...process.env,
+          VILANO_HOME: runtimePaths.homeDir,
+          VILANO_EXECUTION_HOME: runtimePaths.executionHomeDir,
+          VILANO_KERNEL_PORT: String(port),
+          VILANO_ROOT: projectRoot,
+          VILANO_DAEMON_TOKEN: authToken,
+          VILANO_WORKER_TOKEN: workerAuthToken,
+        },
+      })
+    : spawn("mix", noCompile ? ["run", "--no-compile", "--no-halt"] : ["run", "--no-halt"], {
+        cwd: kernelDir,
+        detached: true,
+        stdio: ["ignore", startupLogFd, startupLogFd],
+        env: {
+          ...process.env,
+          VILANO_HOME: runtimePaths.homeDir,
+          VILANO_EXECUTION_HOME: runtimePaths.executionHomeDir,
+          VILANO_KERNEL_PORT: String(port),
+          VILANO_ROOT: projectRoot,
+          VILANO_DAEMON_TOKEN: authToken,
+          VILANO_WORKER_TOKEN: workerAuthToken,
+        },
+      });
   fsSync.closeSync(startupLogFd);
 
   await new Promise<void>((resolve, reject) => {
     child.once("spawn", () => resolve());
     child.once("error", (error) => {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") {
+      if (code === "ENOENT" && !bundle.source.bundled) {
         reject(
           new Error("Failed to start the Vilano kernel because 'mix' was not found. Install Elixir 1.17+ and ensure `mix` is on your PATH.")
         );
+        return;
+      }
+      if (code === "ENOENT" && bundle.source.bundled) {
+        reject(new Error(`Failed to start the packaged Vilano kernel release at ${kernelReleaseExecutable}.`));
         return;
       }
 

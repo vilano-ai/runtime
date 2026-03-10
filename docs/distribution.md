@@ -66,6 +66,10 @@ The generated installer installs the selected runtime into the managed layout de
 creates the stable launcher under `bin/`, and writes install state for `vilano update` /
 `vilano rollback`.
 
+Each packaged runtime payload now includes a bundled Elixir kernel release, the bundled Bun
+runtime, CLI assets, worker assets, and an `install-manifest.json` describing the installed
+version's protocol/schema compatibility.
+
 The repo also includes a dedicated release-install smoke path:
 
 ```bash

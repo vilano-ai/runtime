@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import crypto from "node:crypto";
+import { spawn } from "node:child_process";
 import path from "node:path";
+import process from "node:process";
 
 import { createRuntimeInstallManifest } from "../cli/src/distribution-contract.ts";
 
@@ -11,16 +13,8 @@ const RUNTIME_DIST_DIR = path.join(CLI_DIR, "runtime-dist");
 await fs.rm(RUNTIME_DIST_DIR, { recursive: true, force: true });
 await fs.mkdir(RUNTIME_DIST_DIR, { recursive: true });
 
-await copyIntoRuntimeDist("kernel", [
-  ".formatter.exs",
-  "README.md",
-  "_build",
-  "config",
-  "deps",
-  "lib",
-  "mix.exs",
-  "mix.lock",
-]);
+await prepareKernelRelease();
+await copyKernelReleaseIntoRuntimeDist();
 
 await copyIntoRuntimeDist("worker", [
   "bun",
@@ -61,6 +55,28 @@ async function copyIntoRuntimeDist(sourceRelativeDir: string, entries: string[])
       force: true,
     });
   }
+}
+
+async function prepareKernelRelease(): Promise<void> {
+  const kernelDir = path.join(ROOT, "kernel");
+  const releaseDir = path.join(kernelDir, "_build", "prod", "rel", "vilano_kernel");
+  const env = {
+    ...process.env,
+    MIX_ENV: "prod",
+  };
+
+  await fs.rm(releaseDir, { recursive: true, force: true });
+  await runCommand("mix", ["deps.get"], kernelDir, env);
+  await runCommand("mix", ["release", "--overwrite"], kernelDir, env);
+}
+
+async function copyKernelReleaseIntoRuntimeDist(): Promise<void> {
+  const releaseSource = path.join(ROOT, "kernel", "_build", "prod", "rel", "vilano_kernel");
+  const releaseTarget = path.join(RUNTIME_DIST_DIR, "kernel-release");
+  await fs.cp(releaseSource, releaseTarget, {
+    recursive: true,
+    force: true,
+  });
 }
 
 async function writeBundleManifest(): Promise<void> {
@@ -160,4 +176,29 @@ async function collectFiles(rootPath: string): Promise<string[]> {
   }
 
   return files.sort();
+}
+
+async function runCommand(
+  command: string,
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      env,
+      stdio: "inherit",
+    });
+
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      reject(new Error(`Command failed: ${command} ${args.join(" ")} (exit ${code ?? 1})`));
+    });
+  });
 }

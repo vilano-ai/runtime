@@ -20,11 +20,10 @@ The CLI is intentionally a client of the kernel, not a second runtime authority.
 - per-runtime access token loaded from `VILANO_HOME`
 - repo mode and packaged-install mode
 
-When running from an installed package, the CLI materializes the bundled runtime payload under
-`VILANO_HOME` when the daemon actually needs to start. Read-only commands such as `version` and
-`doctor` do not mutate the installed package tree. When the packaged bundle already contains
-vendored kernel deps and build artifacts, `doctor --fix` does not fetch Hex deps or rewrite the
-installed bundle.
+When running from an installed package, the CLI materializes the bundled runtime payload under the
+managed install root when the daemon actually needs to start. Read-only commands such as `version`
+and `doctor` do not mutate the installed package tree. When the packaged bundle already contains a
+ready kernel release, `doctor --fix` does not fetch Hex deps or rewrite the installed bundle.
 
 The current local trust model is still single-user. The CLI reduces blind localhost access, but it
 does not claim strong isolation from arbitrary code running as the same OS user.

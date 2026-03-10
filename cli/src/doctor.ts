@@ -55,11 +55,16 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
   const runtimePaths = getRuntimePaths();
   const bundle = await prepareRuntimeBundleWithOptions({ materialize: Boolean(options.fix) });
   const appliedFixes: string[] = [];
-  const depsReady = await fileExists(`${bundle.kernelDir}/deps`);
-  const buildReady = await fileExists(`${bundle.kernelDir}/_build`);
+  const kernelReleaseReady = await fileExists(`${bundle.kernelDir}/bin/vilano_kernel`);
+  const depsReady = bundle.source.bundled ? kernelReleaseReady : await fileExists(`${bundle.kernelDir}/deps`);
+  const buildReady = bundle.source.bundled ? kernelReleaseReady : await fileExists(`${bundle.kernelDir}/_build`);
 
   if (options.fix) {
-    const needsKernelTooling = !bundle.source.bundled || !depsReady || !buildReady;
+    if (bundle.source.bundled && (!depsReady || !buildReady)) {
+      throw new Error("Packaged Vilano runtime is incomplete. Reinstall Vilano to restore the bundled kernel release.");
+    }
+
+    const needsKernelTooling = !bundle.source.bundled;
     if (needsKernelTooling) {
       const requiredTools = await Promise.all([
         inspectTool("mix", ["--version"]),
@@ -117,26 +122,46 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
     {
       name: "mix",
       ok: mixTool.found,
-      required: true,
-      detail: mixTool.found ? `${mixTool.path} (${mixTool.version ?? "unknown"})` : "mix not found on PATH",
+      required: !bundle.source.bundled,
+      detail: mixTool.found
+        ? `${mixTool.path} (${mixTool.version ?? "unknown"})`
+        : bundle.source.bundled
+          ? "mix not found on PATH (not required for packaged runtimes)"
+          : "mix not found on PATH",
     },
     {
       name: "elixir",
       ok: elixirTool.found,
-      required: true,
-      detail: elixirTool.found ? `${elixirTool.path} (${elixirTool.version ?? "unknown"})` : "elixir not found on PATH",
+      required: !bundle.source.bundled,
+      detail: elixirTool.found
+        ? `${elixirTool.path} (${elixirTool.version ?? "unknown"})`
+        : bundle.source.bundled
+          ? "elixir not found on PATH (not required for packaged runtimes)"
+          : "elixir not found on PATH",
     },
     {
       name: "kernel_deps",
       ok: depsReady,
       required: true,
-      detail: depsReady ? "kernel deps directory is present" : "kernel deps are missing; run `vilano doctor --fix` or `mix deps.get`",
+      detail: bundle.source.bundled
+        ? depsReady
+          ? "packaged kernel release is present"
+          : "packaged kernel release is missing; reinstall Vilano"
+        : depsReady
+          ? "kernel deps directory is present"
+          : "kernel deps are missing; run `vilano doctor --fix` or `mix deps.get`",
     },
     {
       name: "kernel_build",
       ok: true,
       required: true,
-      detail: buildReady ? "kernel build artifacts are present" : "kernel has not been compiled yet; it can compile on first start",
+      detail: bundle.source.bundled
+        ? buildReady
+          ? "packaged kernel release is ready"
+          : "packaged kernel release is missing; reinstall Vilano"
+        : buildReady
+          ? "kernel build artifacts are present"
+          : "kernel has not been compiled yet; it can compile on first start",
     },
     {
       name: "daemon",
@@ -195,7 +220,7 @@ async function applyDoctorFixes(
   const fixes: string[] = [];
 
   if (options.bundled && options.depsReady && options.buildReady) {
-    fixes.push("packaged runtime already contains vendored kernel deps and build artifacts");
+    fixes.push("packaged runtime already contains a ready kernel release");
     return fixes;
   }
 
