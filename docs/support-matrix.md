@@ -52,8 +52,8 @@ part of the current OSS support matrix.
 
 Supported for the canonical OSS v1 path:
 
-- macOS
-- Linux
+- macOS Apple Silicon (`darwin-arm64`)
+- Linux x86_64 (`linux-x64`)
 
 Windows is not part of the supported matrix today.
 

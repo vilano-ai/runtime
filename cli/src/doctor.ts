@@ -108,8 +108,14 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
     {
       name: "bun",
       ok: bunTool.found,
-      required: true,
-      detail: bunTool.found ? `${bunTool.path} (${bunTool.version ?? "unknown"})` : "bun not found on PATH",
+      required: !bundle.source.bundled,
+      detail: bundle.source.bundled
+        ? bunTool.found
+          ? `${bunTool.path} (${bunTool.version ?? "unknown"}) on PATH; packaged runtimes use the bundled bun binary`
+          : "bun not found on PATH (not required for packaged runtimes; managed installs use the bundled bun binary)"
+        : bunTool.found
+          ? `${bunTool.path} (${bunTool.version ?? "unknown"})`
+          : "bun not found on PATH",
     },
     {
       name: "node",

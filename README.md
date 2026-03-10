@@ -77,7 +77,54 @@ The current support posture is documented in [docs/support-matrix.md](./docs/sup
 
 ## Quick Start
 
-### From a Repo Checkout
+### Install The Runtime
+
+```bash
+curl -fsSL https://runtime.vilano.ai/install.sh | bash
+vilano version
+vilano doctor
+```
+
+Then add the TypeScript SDK in your project:
+
+```bash
+bun add @vilano/runtime
+```
+
+For your own repo, prefer an explicit `vilano.manifest.json`:
+
+```bash
+vilano project init-manifest /path/to/project
+```
+
+`project init-manifest` is a generated starting point for TS/JS projects. Review the generated
+manifest before relying on it, especially if your definitions use non-trivial export patterns.
+
+Register the project and inspect what Vilano found:
+
+```bash
+vilano project add /path/to/project --name my-project
+vilano workflow list --project my-project
+```
+
+Start a workflow:
+
+```bash
+vilano run start my-project/planner --input '{"topic":"BEAM"}'
+vilano run list
+vilano run inspect <run-id>
+vilano run replay <run-id>
+```
+
+Talk to a service:
+
+```bash
+vilano service ensure my-project/reviewer --service-key repo_123 --key-json '{"repoId":"repo_123"}'
+vilano service send my-project/reviewer hint --service-key repo_123 --input '{"note":"Focus on migrations"}'
+vilano service ask my-project/reviewer status --service-key repo_123 --wait-timeout 30s
+```
+
+### From A Repo Checkout
 
 ```bash
 direnv allow
@@ -86,32 +133,6 @@ bun install
 ./cli/bin/vilano.ts daemon start
 ./cli/bin/vilano.ts project add ./examples/bootstrap-demo --name demo
 ./cli/bin/vilano.ts workflow list
-```
-
-For your own repo, prefer an explicit `vilano.manifest.json`:
-
-```bash
-./cli/bin/vilano.ts project init-manifest /path/to/project
-```
-
-That generates the manifest from the current TS/JS definitions so registration does not depend on
-fallback source scanning.
-
-Start a workflow:
-
-```bash
-./cli/bin/vilano.ts run start demo/planner --input '{"topic":"BEAM"}'
-./cli/bin/vilano.ts run list
-./cli/bin/vilano.ts run inspect <run-id>
-./cli/bin/vilano.ts run replay <run-id>
-```
-
-Talk to a service:
-
-```bash
-./cli/bin/vilano.ts service ensure demo/reviewer --service-key repo_123 --key-json '{"repoId":"repo_123"}'
-./cli/bin/vilano.ts service send demo/reviewer hint --service-key repo_123 --input '{"note":"Focus on migrations"}'
-./cli/bin/vilano.ts service ask demo/reviewer status --service-key repo_123 --wait-timeout 30s
 ```
 
 ### Packaged Smoke Path
