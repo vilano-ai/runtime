@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vilano-runtime-installer",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-03-10",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "workers_dev": false
+}

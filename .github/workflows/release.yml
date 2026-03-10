@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.10"
+
+      - name: Setup BEAM
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.18.4"
+          otp-version: "28.3.3"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify manifest and protocol contracts
+        run: |
+          bun run typecheck
+          bun run check:manifest
+          bun run check:protocol
+
+      - name: Run kernel tests
+        run: bun run test:kernel
+
+      - name: Run runtime tests
+        run: bun run test
+
+      - name: Run release-install smoke
+        run: bun run smoke:release-install
+
+      - name: Build release artifacts for GitHub Releases
+        env:
+          VILANO_RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+        run: bun run build:release
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/release/*.tar.gz
+            dist/release/SHA256SUMS
+            dist/release/release.json
+            dist/release/install.sh
+
+      - name: Sync installer worker assets
+        run: bun run sync:installer-worker
+
+      - name: Deploy installer worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: deploy/cloudflare/runtime-installer
+          command: deploy --config wrangler.jsonc

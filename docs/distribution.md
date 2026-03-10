@@ -79,6 +79,29 @@ bun run smoke:release-install
 That path installs the built artifact into a clean root using the generated `install.sh`, then
 verifies that the installed runtime can start the daemon and complete a real workflow.
 
+## Cloudflare Front Door
+
+This repo now includes a thin Cloudflare Worker under
+[`deploy/cloudflare/runtime-installer`](../deploy/cloudflare/runtime-installer).
+
+That Worker serves:
+
+- `https://runtime.vilano.ai/install.sh`
+- `https://runtime.vilano.ai/release.json`
+
+It does not proxy the large runtime tarballs. The generated `release.json` points directly at
+GitHub Releases for artifact download.
+
+Sync the generated assets into the Worker before deployment:
+
+```bash
+bun run build:release
+bun run sync:installer-worker
+```
+
+The tag-based release workflow publishes the GitHub release assets first, then deploys the Worker
+so the served `release.json` always points at live artifacts.
+
 ## Install / Update Direction
 
 The installer and updater operate only on:

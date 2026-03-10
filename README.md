@@ -143,6 +143,14 @@ The release-distribution path goes one step further:
   - verifies the managed launcher layout
   - runs a real workflow from the installed runtime
 
+The public installer/update front door is intended to live at:
+
+- `https://runtime.vilano.ai/install.sh`
+- `https://runtime.vilano.ai/release.json`
+
+This repo includes the thin Cloudflare Worker used to serve those endpoints under
+[`deploy/cloudflare/runtime-installer`](./deploy/cloudflare/runtime-installer).
+
 ## Programming Model
 
 ### Workflow
