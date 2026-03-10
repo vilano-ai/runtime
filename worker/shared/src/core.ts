@@ -132,57 +132,68 @@ export async function startWorker(
   }
 }
 
-async function executeActivation(
+export async function executeActivation(
   adapter: RuntimeAdapter,
   client: WorkerClient,
   activation: Activation,
   heartbeatIntervalMs: number,
   workerHomePath: string
 ): Promise<void> {
-  const heartbeat = setInterval(() => {
-    void client.heartbeat(activation.leaseId).catch(() => undefined);
-  }, heartbeatIntervalMs);
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let activationImportRoot: string | null = null;
+  let activationWorkspace: string | null = null;
   let serviceDefinition: ServiceDefinition<any, any, any, any, any> | null = null;
   let serviceRetry: ServiceDefinition<any, any, any, any, any>["retry"] | undefined;
-  const activationImportRoot = await ensureActivationImportRoot(workerHomePath, activation);
-  const activationWorkspace = await ensureActivationWorkspace(
-    workerHomePath,
-    activation,
-    activationImportRoot
-  );
 
   try {
+    heartbeat = setInterval(() => {
+      void client.heartbeat(activation.leaseId).catch(() => undefined);
+    }, heartbeatIntervalMs);
+    activationImportRoot = await ensureActivationImportRoot(workerHomePath, activation);
+    activationWorkspace = await ensureActivationWorkspace(
+      workerHomePath,
+      activation,
+      activationImportRoot
+    );
+    if (!activationImportRoot || !activationWorkspace) {
+      throw new Error("Activation staging did not produce execution roots");
+    }
+
     if (activation.kind === "workflow") {
+      const importRoot = activationImportRoot;
+      const workspace = activationWorkspace;
       const definition = await withActivationCwd(activationImportRoot, async () =>
         await loadWorkflowDefinition(activation, {
           cacheKey: activation.leaseId,
-          importRoot: activationImportRoot,
+          importRoot,
         })
       );
 
-      await withActivationCwd(activationWorkspace, async () => {
-        const ctx = createTurnContext(adapter, client, activation, activationWorkspace);
+      await withActivationCwd(workspace, async () => {
+        const ctx = createTurnContext(adapter, client, activation, workspace);
         const result = await definition.run(activation.run.input, ctx);
         await client.completeRun(activation.leaseId, result);
       });
       return;
     }
 
-    serviceDefinition = await withActivationCwd(activationImportRoot, async () =>
+    const importRoot = activationImportRoot;
+    const workspace = activationWorkspace;
+    serviceDefinition = await withActivationCwd(importRoot, async () =>
       await loadServiceDefinition(activation, {
         cacheKey: activation.leaseId,
-        importRoot: activationImportRoot,
+        importRoot,
       })
     );
     serviceRetry = serviceDefinition.retry;
 
-    await withActivationCwd(activationWorkspace, async () => {
+    await withActivationCwd(workspace, async () => {
       await executeServiceTurn(
         adapter,
         client,
         activation,
         serviceDefinition as ServiceDefinition<any, any, any, any, any>,
-        activationWorkspace
+        workspace
       );
     });
   } catch (error) {
@@ -225,10 +236,16 @@ async function executeActivation(
       }
     }
   } finally {
-    clearInterval(heartbeat);
+    if (heartbeat) {
+      clearInterval(heartbeat);
+    }
     client.clearLeaseAuthToken(activation.leaseId);
-    await fs.rm(activationWorkspace, { recursive: true, force: true }).catch(() => undefined);
-    await fs.rm(activationImportRoot, { recursive: true, force: true }).catch(() => undefined);
+    if (activationWorkspace) {
+      await fs.rm(activationWorkspace, { recursive: true, force: true }).catch(() => undefined);
+    }
+    if (activationImportRoot) {
+      await fs.rm(activationImportRoot, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 }
 
