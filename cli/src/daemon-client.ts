@@ -75,6 +75,10 @@ export async function ensureDaemonStarted(
   }
 
   const runtimePaths = getRuntimePaths();
+  await ensurePrivateDir(runtimePaths.installRootDir);
+  await ensurePrivateDir(runtimePaths.binDir);
+  await ensurePrivateDir(runtimePaths.installsDir);
+  await ensurePrivateDir(runtimePaths.cacheDir);
   await ensurePrivateDir(runtimePaths.homeDir);
   await ensurePrivateDir(runtimePaths.executionHomeDir);
   await ensurePrivateDir(runtimePaths.workerHomeDir);

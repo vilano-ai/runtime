@@ -2,6 +2,7 @@ defmodule VilanoKernel.Runtime do
   @moduledoc false
 
   defstruct [
+    :install_root_dir,
     :home_dir,
     :execution_home_dir,
     :artifact_home_dir,
@@ -17,9 +18,13 @@ defmodule VilanoKernel.Runtime do
   ]
 
   def load! do
+    install_root_dir =
+      System.get_env("VILANO_INSTALL_ROOT") ||
+        default_install_root_dir(System.get_env("VILANO_HOME"))
+
     home_dir =
       System.get_env("VILANO_HOME") ||
-        Path.join(System.user_home!(), ".vilano")
+        Path.join(install_root_dir, "state")
 
     execution_home_dir =
       System.get_env("VILANO_EXECUTION_HOME") ||
@@ -52,6 +57,7 @@ defmodule VilanoKernel.Runtime do
       end
 
     %__MODULE__{
+      install_root_dir: install_root_dir,
       home_dir: home_dir,
       execution_home_dir: execution_home_dir,
       artifact_home_dir: Path.join(execution_home_dir, "artifacts"),
@@ -69,5 +75,16 @@ defmodule VilanoKernel.Runtime do
 
   defp default_execution_home_dir(home_dir) do
     Path.join(Path.expand(home_dir), "execution")
+  end
+
+  defp default_install_root_dir(nil), do: Path.join(System.user_home!(), ".vilano")
+
+  defp default_install_root_dir(home_dir) do
+    expanded_home_dir = Path.expand(home_dir)
+
+    case Path.basename(expanded_home_dir) do
+      "state" -> Path.dirname(expanded_home_dir)
+      _ -> expanded_home_dir
+    end
   end
 end

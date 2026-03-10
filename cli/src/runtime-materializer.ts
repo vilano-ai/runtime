@@ -55,7 +55,7 @@ export async function prepareRuntimeBundleWithOptions(options: { materialize?: b
   const bundleVersion =
     manifest?.bundleVersion ??
     `cli-${getCliVersion()}-runtime-${manifest?.runtimeVersion ?? getCliVersion()}-protocol-${CLI_PROTOCOL_VERSION}`;
-  const materializedRoot = path.join(runtimePaths.runtimeBundlesDir, bundleVersion);
+  const materializedRoot = path.join(runtimePaths.installsDir, bundleVersion);
   const kernelDir = path.join(materializedRoot, "kernel");
   const workerDir = path.join(materializedRoot, "worker");
   const stateFile = path.join(materializedRoot, ".materialized.json");
