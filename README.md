@@ -94,9 +94,9 @@ Start a workflow:
 Talk to a service:
 
 ```bash
-./cli/bin/vilano.ts service ensure demo/reviewer --key-json '{"repoId":"repo_123"}'
-./cli/bin/vilano.ts service send demo/reviewer hint --key-json '{"repoId":"repo_123"}' --input '{"note":"Focus on migrations"}'
-./cli/bin/vilano.ts service ask demo/reviewer status --key-json '{"repoId":"repo_123"}' --wait-timeout 30s
+./cli/bin/vilano.ts service ensure demo/reviewer --service-key repo_123 --key-json '{"repoId":"repo_123"}'
+./cli/bin/vilano.ts service send demo/reviewer hint --service-key repo_123 --input '{"note":"Focus on migrations"}'
+./cli/bin/vilano.ts service ask demo/reviewer status --service-key repo_123 --wait-timeout 30s
 ```
 
 ### Packaged Smoke Path

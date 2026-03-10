@@ -38,7 +38,7 @@ vilano project add /path/to/project --name demo
 vilano run start demo/planner --input '{"topic":"BEAM"}'
 vilano run inspect <run-id>
 vilano run replay <run-id>
-vilano service ask demo/reviewer status --key-json '{"repoId":"repo_123"}' --wait-timeout 30s
+vilano service ask demo/reviewer status --service-key repo_123 --wait-timeout 30s
 ```
 
 ## Code Layout

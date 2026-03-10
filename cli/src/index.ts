@@ -1,8 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
-import type { ServiceDefinition } from "@vilano/runtime";
 import {
   askService,
   cancelRun,
@@ -253,7 +251,7 @@ async function handleService(
     case "ensure": {
       const reference = args[1];
       if (!reference) {
-        throw new CliError("Usage: vilano service ensure <service-ref> --key-json '{...}'");
+        throw new CliError("Usage: vilano service ensure <service-ref> --service-key <key> [--key-json '{...}']");
       }
 
       const target = await resolveServiceTarget(reference, flags);
@@ -271,7 +269,7 @@ async function handleService(
     case "inspect": {
       const reference = args[1];
       if (!reference) {
-        throw new CliError("Usage: vilano service inspect <service-ref> --key-json '{...}'");
+        throw new CliError("Usage: vilano service inspect <service-ref> --service-key <key>");
       }
 
       const target = await resolveServiceTarget(reference, flags);
@@ -302,7 +300,7 @@ async function handleService(
       const reference = args[1];
       const messageName = args[2];
       if (!reference || !messageName) {
-        throw new CliError("Usage: vilano service send <service-ref> <message-name> --key-json '{...}' [--input '{...}']");
+        throw new CliError("Usage: vilano service send <service-ref> <message-name> --service-key <key> [--input '{...}'] [--key-json '{...}']");
       }
 
       const target = await resolveServiceTarget(reference, flags);
@@ -330,7 +328,7 @@ async function handleService(
       const reference = args[1];
       const messageName = args[2];
       if (!reference || !messageName) {
-        throw new CliError("Usage: vilano service ask <service-ref> <ask-name> --key-json '{...}' [--input '{...}'] [--wait-timeout 30s]");
+        throw new CliError("Usage: vilano service ask <service-ref> <ask-name> --service-key <key> [--input '{...}'] [--key-json '{...}'] [--wait-timeout 30s]");
       }
 
       if (flags.timeout !== undefined) {
@@ -382,7 +380,7 @@ async function handleService(
     case "stop": {
       const reference = args[1];
       if (!reference) {
-        throw new CliError("Usage: vilano service stop <service-ref> --key-json '{...}'");
+        throw new CliError("Usage: vilano service stop <service-ref> --service-key <key>");
       }
 
       const target = await resolveServiceTarget(reference, flags);
@@ -410,7 +408,7 @@ async function handleService(
       const reference = args[1];
       const signalName = args[2];
       if (!reference || !signalName) {
-        throw new CliError("Usage: vilano service signal <service-ref> <signal-name> --key-json '{...}' [--input '{...}']");
+        throw new CliError("Usage: vilano service signal <service-ref> <signal-name> --service-key <key> [--input '{...}'] [--key-json '{...}']");
       }
 
       const target = await resolveServiceTarget(reference, flags);
@@ -543,9 +541,15 @@ async function resolveServiceTarget(
   serviceKey: string;
 }> {
   const { project, definition } = await resolveServiceReference(reference, flags);
-  const keyInput = parseRequiredJsonFlag(flags["key-json"] ?? flags.key, "key-json");
-  const definitionValue = await loadServiceDefinition(project, definition);
-  const serviceKey = definitionValue.key(keyInput);
+  const keyInput = parseJsonFlag(flags["key-json"] ?? flags.key, "key-json", {});
+  const directServiceKey =
+    typeof (flags["service-key"] ?? flags.serviceKey) === "string"
+      ? String(flags["service-key"] ?? flags.serviceKey)
+      : null;
+  const serviceKey =
+    directServiceKey && directServiceKey.trim() !== ""
+      ? directServiceKey
+      : await resolveExistingServiceKey(project.name, definition.name, keyInput);
 
   return {
     project,
@@ -598,37 +602,26 @@ function parseRequiredJsonFlag(value: string | boolean | undefined, flagName: st
   return parsed;
 }
 
-async function loadServiceDefinition(
-  project: ProjectRecord,
-  definition: DefinitionRecord
-): Promise<ServiceDefinition<any, any, any, any, any>> {
-  const projectRoot = path.resolve(project.snapshotPath || project.path);
-  const absolutePath = path.resolve(projectRoot, definition.file);
-  const [projectRealPath, absoluteRealPath] = await Promise.all([
-    fs.realpath(projectRoot),
-    fs.realpath(absolutePath),
-  ]);
-  const relativeToProject = path.relative(projectRealPath, absoluteRealPath);
+async function resolveExistingServiceKey(
+  projectName: string,
+  definitionName: string,
+  keyInput: unknown
+): Promise<string> {
+  const response = await listServiceRuns(projectName);
+  const existing = response.runs.find(
+    (run) =>
+      run.definitionName === definitionName &&
+      typeof run.serviceKey === "string" &&
+      JSON.stringify(run.keyInput ?? null) === JSON.stringify(keyInput ?? null)
+  );
 
-  if (
-    relativeToProject === "" ||
-    relativeToProject.startsWith("..") ||
-    path.isAbsolute(relativeToProject)
-  ) {
-    throw new CliError(`Definition file '${definition.file}' resolved outside the project root`);
+  if (existing?.serviceKey) {
+    return existing.serviceKey;
   }
 
-  const moduleUrl = pathToFileURL(absoluteRealPath).href;
-  const moduleExports = (await import(moduleUrl)) as Record<string, unknown>;
-  const value = moduleExports[definition.exportName];
-
-  if (!value || typeof value !== "object" || (value as { kind?: string }).kind !== "service") {
-    throw new CliError(
-      `Export '${definition.exportName}' from ${definition.file} is not a service definition`
-    );
-  }
-
-  return value as ServiceDefinition<any, any, any, any, any>;
+  throw new CliError(
+    "Usage requires --service-key <key> for new or unresolved service instances. --key-json can only target an existing service instance already registered in the runtime."
+  );
 }
 
 function parseDurationFlag(

@@ -32,6 +32,8 @@ test("mixed workflow and service traffic survives repeated restarts and worker c
         "ask",
         "demo/mailboxProbe",
         "delay",
+        "--service-key",
+        mailboxKey.sessionId,
         "--key-json",
         JSON.stringify(mailboxKey),
         "--input",

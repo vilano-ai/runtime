@@ -148,6 +148,61 @@ test("explicit manifests cannot point outside the project root", async () => {
   }
 });
 
+test("explicit manifest validation does not import project definition modules", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-manifest-no-import-"));
+  const markerPath = path.join(projectDir, "imported.txt");
+
+  try {
+    await fs.mkdir(path.join(projectDir, "src"), { recursive: true });
+    await fs.writeFile(
+      path.join(projectDir, "src", "definitions.ts"),
+      [
+        "import fs from 'node:fs';",
+        `fs.writeFileSync(${JSON.stringify(markerPath)}, 'imported');`,
+        "",
+        "function workflow(definition) {",
+        "  return { kind: 'workflow', ...definition };",
+        "}",
+        "",
+        'export const safeWorkflow = workflow({',
+        '  name: "safeWorkflow",',
+        "});",
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(projectDir, "vilano.manifest.json"),
+      `${JSON.stringify(
+        {
+          manifestVersion: 1,
+          definitions: {
+            workflows: [
+              {
+                kind: "workflow",
+                name: "safeWorkflow",
+                exportName: "safeWorkflow",
+                file: "src/definitions.ts",
+                runtimeKind: "javascript",
+                sourceLanguage: "typescript",
+              },
+            ],
+            services: [],
+          },
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    await buildProjectManifest("demo", projectDir, { regenerate: true });
+
+    await expect(fs.access(markerPath)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await fs.rm(projectDir, { recursive: true, force: true });
+  }
+});
+
 test("explicit manifests must reference files that exist", async () => {
   const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-manifest-missing-"));
 

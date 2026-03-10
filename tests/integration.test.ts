@@ -388,7 +388,7 @@ test("kernel rejects persisted project definitions that escape the snapshot root
   }
 });
 
-test("project add rejects explicit manifests whose export does not match the declared definition", async () => {
+test("explicit manifests register statically and surface bad exports at runtime", async () => {
   const harness = await RuntimeHarness.create();
 
   try {
@@ -437,8 +437,16 @@ test("project add rejects explicit manifests whose export does not match the dec
       "bad-manifest",
     ]).wait();
 
-    expect(result.exitCode).not.toBe(0);
-    expect(`${result.stdout}\n${result.stderr}`).toContain("missingWorkflow");
+    expect(result.exitCode).toBe(0);
+
+    const run = await harness.startWorkflow("bad-manifest/declaredWorkflow", {});
+    const failed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "failed"
+    );
+
+    expect(failed.run.error).toBeTruthy();
+    expect(JSON.stringify(failed.run.error)).toContain("missingWorkflow");
   } finally {
     await harness.dispose();
   }
@@ -1059,6 +1067,8 @@ test("service turns resume after worker loss and lease expiry", async () => {
         "ask",
         "demo/operator",
         "slowStep",
+        "--service-key",
+        keyInput.sessionId,
         "--key-json",
         JSON.stringify(keyInput),
         "--input",
@@ -1129,6 +1139,8 @@ test("service turn blocking step timeout is enforced by the kernel and restarts 
       "ask",
       "demo/operator",
       "blockingStep",
+      "--service-key",
+      keyInput.sessionId,
       "--key-json",
       JSON.stringify(keyInput),
       "--input",
@@ -1203,6 +1215,8 @@ test("unmanaged workers fall back to durable failure when a service turn blocks 
       "ask",
       "demo/operator",
       "blockingStep",
+      "--service-key",
+      keyInput.sessionId,
       "--key-json",
       JSON.stringify(keyInput),
       "--input",
@@ -1324,6 +1338,8 @@ test("services process mixed ask and send backlogs in FIFO order", async () => {
       "ask",
       "demo/mailboxProbe",
       "delay",
+      "--service-key",
+      keyInput.sessionId,
       "--key-json",
       JSON.stringify(keyInput),
       "--input",
@@ -1349,6 +1365,8 @@ test("services process mixed ask and send backlogs in FIFO order", async () => {
       "ask",
       "demo/mailboxProbe",
       "history",
+      "--service-key",
+      keyInput.sessionId,
       "--key-json",
       JSON.stringify(keyInput),
       "--input",
@@ -1450,6 +1468,8 @@ test("service stop fails queued backlog behind an active turn", async () => {
       "ask",
       "demo/mailboxProbe",
       "delay",
+      "--service-key",
+      keyInput.sessionId,
       "--key-json",
       JSON.stringify(keyInput),
       "--input",
@@ -1475,6 +1495,8 @@ test("service stop fails queued backlog behind an active turn", async () => {
       "ask",
       "demo/mailboxProbe",
       "history",
+      "--service-key",
+      keyInput.sessionId,
       "--key-json",
       JSON.stringify(keyInput),
       "--input",
@@ -1561,6 +1583,8 @@ test("queued envelopes do not re-lease waiting service turns", async () => {
       "ask",
       "demo/operator",
       "awaitApproval",
+      "--service-key",
+      keyInput.sessionId,
       "--key-json",
       JSON.stringify(keyInput),
       "--wait-timeout",
@@ -1582,6 +1606,8 @@ test("queued envelopes do not re-lease waiting service turns", async () => {
       "ask",
       "demo/operator",
       "pipeline",
+      "--service-key",
+      keyInput.sessionId,
       "--key-json",
       JSON.stringify(keyInput),
       "--input",
@@ -1663,6 +1689,8 @@ test("non-retryable service turn failures bypass configured retries", async () =
       "ask",
       "demo/nonRetryingResponder",
       "unstable",
+      "--service-key",
+      keyInput.sessionId,
       "--key-json",
       JSON.stringify(keyInput),
       "--input",
@@ -1705,6 +1733,8 @@ test("service retry families can exclude application failures", async () => {
       "ask",
       "demo/timeoutOnlyResponder",
       "unstable",
+      "--service-key",
+      keyInput.sessionId,
       "--key-json",
       JSON.stringify(keyInput),
       "--input",
@@ -1988,6 +2018,8 @@ test("service backlogs survive repeated daemon restarts and lease recovery", asy
       "ask",
       "demo/mailboxProbe",
       "delay",
+      "--service-key",
+      keyInput.sessionId,
       "--key-json",
       JSON.stringify(keyInput),
       "--input",
@@ -2013,6 +2045,8 @@ test("service backlogs survive repeated daemon restarts and lease recovery", asy
       "ask",
       "demo/mailboxProbe",
       "history",
+      "--service-key",
+      keyInput.sessionId,
       "--key-json",
       JSON.stringify(keyInput),
       "--input",
@@ -2347,6 +2381,8 @@ test("run replay json captures waiting and resumed service turns", async () => {
       "ask",
       "demo/operator",
       "awaitApproval",
+      "--service-key",
+      keyInput.sessionId,
       "--key-json",
       JSON.stringify(keyInput),
       "--wait-timeout",
@@ -2596,6 +2632,8 @@ test("service handler stop drains queued backlog behind the completing turn", as
       "ask",
       "demo/mailboxProbe",
       "stopAfterDelay",
+      "--service-key",
+      keyInput.sessionId,
       "--key-json",
       JSON.stringify(keyInput),
       "--input",
@@ -2615,6 +2653,8 @@ test("service handler stop drains queued backlog behind the completing turn", as
       "ask",
       "demo/mailboxProbe",
       "history",
+      "--service-key",
+      keyInput.sessionId,
       "--key-json",
       JSON.stringify(keyInput),
       "--json",

@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 import Ajv2020 from "ajv/dist/2020";
 import type { ValidateFunction } from "ajv";
@@ -103,7 +102,6 @@ async function collectProjectScopedManifestErrors(
 ): Promise<string[]> {
   const errors: string[] = [];
   const seen = new Set<string>();
-  const moduleCache = new Map<string, Promise<Record<string, unknown>>>();
   const projectRealPath = await fs.realpath(projectPath);
 
   for (const definition of [...manifest.definitions.workflows, ...manifest.definitions.services]) {
@@ -158,34 +156,9 @@ async function collectProjectScopedManifestErrors(
         continue;
       }
 
-      try {
-        const moduleExports = await loadDefinitionModule(realFilePath, moduleCache);
-        if (!(definition.exportName in moduleExports)) {
-          const exportsList = Object.keys(moduleExports).sort().join(", ");
-          errors.push(
-            `definition '${definition.name}' export '${definition.exportName}' was not found in ${relativeFile} (exports: ${exportsList})`
-          );
-          continue;
-        }
-
-        const value = moduleExports[definition.exportName];
-        if (!value || typeof value !== "object") {
-          errors.push(
-            `definition '${definition.name}' export '${definition.exportName}' in ${relativeFile} is not a Vilano ${definition.kind} definition`
-          );
-          continue;
-        }
-
-        const record = value as { kind?: string; name?: string };
-        if (record.kind !== definition.kind || record.name !== definition.name) {
-          errors.push(
-            `definition '${definition.name}' export '${definition.exportName}' in ${relativeFile} does not match declared ${definition.kind} '${definition.name}'`
-          );
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+      if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(definition.exportName)) {
         errors.push(
-          `definition '${definition.name}' export '${definition.exportName}' in ${relativeFile} could not be loaded: ${message}`
+          `definition '${definition.name}' export '${definition.exportName}' in ${relativeFile} is not a valid JavaScript export identifier`
         );
       }
     } catch (error) {
@@ -199,18 +172,4 @@ async function collectProjectScopedManifestErrors(
   }
 
   return errors;
-}
-
-async function loadDefinitionModule(
-  realFilePath: string,
-  moduleCache: Map<string, Promise<Record<string, unknown>>>
-): Promise<Record<string, unknown>> {
-  let promise = moduleCache.get(realFilePath);
-  if (!promise) {
-    const moduleUrl = `${pathToFileURL(realFilePath).href}?vilano_manifest_validate=${Date.now()}`;
-    promise = import(moduleUrl).then((value) => value as Record<string, unknown>);
-    moduleCache.set(realFilePath, promise);
-  }
-
-  return await promise;
 }

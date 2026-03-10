@@ -21,6 +21,6 @@ Try it from the repo root:
 ./cli/bin/vilano.ts daemon start
 ./cli/bin/vilano.ts project add ./examples/bootstrap-demo --name demo
 ./cli/bin/vilano.ts run start demo/planner --input '{"topic":"BEAM"}'
-./cli/bin/vilano.ts service ensure demo/reviewer --key-json '{"repoId":"repo_123"}'
-./cli/bin/vilano.ts service ask demo/reviewer status --key-json '{"repoId":"repo_123"}'
+./cli/bin/vilano.ts service ensure demo/reviewer --service-key repo_123 --key-json '{"repoId":"repo_123"}'
+./cli/bin/vilano.ts service ask demo/reviewer status --service-key repo_123
 ```

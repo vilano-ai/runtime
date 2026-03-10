@@ -84,12 +84,12 @@ vilano run cancel <run-id>
 ### Services
 
 ```bash
-vilano service ensure demo/reviewer --key-json '{"repoId":"repo_123"}'
-vilano service inspect demo/reviewer --key-json '{"repoId":"repo_123"}'
-vilano service ask demo/reviewer status --key-json '{"repoId":"repo_123"}' --wait-timeout 30s
-vilano service send demo/reviewer hint --key-json '{"repoId":"repo_123"}' --input '{"note":"Focus on migrations"}'
-vilano service signal demo/reviewer reset --key-json '{"repoId":"repo_123"}'
-vilano service stop demo/reviewer --key-json '{"repoId":"repo_123"}'
+vilano service ensure demo/reviewer --service-key repo_123 --key-json '{"repoId":"repo_123"}'
+vilano service inspect demo/reviewer --service-key repo_123
+vilano service ask demo/reviewer status --service-key repo_123 --wait-timeout 30s
+vilano service send demo/reviewer hint --service-key repo_123 --input '{"note":"Focus on migrations"}'
+vilano service signal demo/reviewer reset --service-key repo_123
+vilano service stop demo/reviewer --service-key repo_123
 ```
 
 ### Signals

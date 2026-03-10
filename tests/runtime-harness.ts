@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
 
 import type {
   DaemonAuthState,
@@ -127,11 +126,14 @@ export class RuntimeHarness {
   }
 
   async askService(reference: string, messageName: string, keyInput: unknown, input: unknown): Promise<unknown> {
+    const target = await this.resolveServiceAddress(reference, keyInput);
     const response = await this.runCliJson<{ ok: true; reply: unknown }>([
       "service",
       "ask",
       reference,
       messageName,
+      "--service-key",
+      target.key,
       "--key-json",
       JSON.stringify(keyInput),
       "--input",
@@ -144,11 +146,14 @@ export class RuntimeHarness {
   }
 
   async sendService(reference: string, messageName: string, keyInput: unknown, input: unknown): Promise<void> {
+    const target = await this.resolveServiceAddress(reference, keyInput);
     await this.runCli([
       "service",
       "send",
       reference,
       messageName,
+      "--service-key",
+      target.key,
       "--key-json",
       JSON.stringify(keyInput),
       "--input",
@@ -157,20 +162,26 @@ export class RuntimeHarness {
   }
 
   async ensureService(reference: string, keyInput: unknown): Promise<void> {
+    const target = await this.resolveServiceAddress(reference, keyInput);
     await this.runCli([
       "service",
       "ensure",
       reference,
+      "--service-key",
+      target.key,
       "--key-json",
       JSON.stringify(keyInput),
     ]);
   }
 
   async stopService(reference: string, keyInput: unknown): Promise<ServiceStopResponse> {
+    const target = await this.resolveServiceAddress(reference, keyInput);
     return await this.runCliJson<ServiceStopResponse>([
       "service",
       "stop",
       reference,
+      "--service-key",
+      target.key,
       "--key-json",
       JSON.stringify(keyInput),
     ]);
@@ -370,40 +381,40 @@ export class RuntimeHarness {
       return resolved;
     }
 
-    const projectResponse = await this.requestKernel(`/v1/projects/${encodeURIComponent(project)}`);
-    const projectBody = (await projectResponse.json()) as {
-      ok: true;
-      project: { path: string };
-    };
-
-    const definitionsResponse = await this.requestKernel(`/v1/services?project=${encodeURIComponent(project)}`);
-    const definitionsBody = (await definitionsResponse.json()) as {
-      ok: true;
-      definitions: Array<{ name: string; exportName: string; file: string }>;
-    };
-
-    const definition = definitionsBody.definitions.find((entry) => entry.name === name);
-    if (!definition) {
-      throw new Error(`Unknown service '${name}' in project '${project}'`);
-    }
-
-    const modulePath = path.join(projectBody.project.path, definition.file);
-    const module = (await import(pathToFileURL(modulePath).href)) as Record<string, unknown>;
-    const service = module[definition.exportName] as { key: (input: unknown) => string } | undefined;
-
-    if (!service || typeof service.key !== "function") {
-      throw new Error(`Service definition '${definition.exportName}' in ${modulePath} does not expose a key() function`);
-    }
-
     const resolved = {
       project,
       name,
-      key: service.key(keyInput),
+      key: deriveServiceKey(keyInput),
     };
 
     this.serviceAddressCache.set(cacheKey, resolved);
     return resolved;
   }
+}
+
+function deriveServiceKey(keyInput: unknown): string {
+  if (typeof keyInput === "string" && keyInput.trim() !== "") {
+    return keyInput;
+  }
+
+  if (
+    keyInput &&
+    typeof keyInput === "object" &&
+    !Array.isArray(keyInput)
+  ) {
+    const entries = Object.entries(keyInput as Record<string, unknown>).filter(
+      ([, value]) =>
+        typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+    );
+
+    if (entries.length === 1) {
+      return String(entries[0]?.[1]);
+    }
+  }
+
+  throw new Error(
+    "RuntimeHarness could not derive a service key from key input. Pass a simple stable identifier."
+  );
 }
 
 export class SpawnedCommand {
