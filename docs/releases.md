@@ -59,18 +59,19 @@ Do not ship release notes that imply broader support than the current support ma
 
 Before publishing a public OSS release:
 
-1. Run the supported CI matrix cleanly.
-2. Run `bun run build:release`.
-3. Merge platform artifacts with `VILANO_RELEASE_INPUT_DIR=/path/to/release-input bun run merge:release`.
-4. Run `bun run verify:release`.
-5. Run `bun run smoke:release-install`.
-6. Validate one clean-machine install path outside the repo checkout.
-7. Confirm the release notes match:
+1. Run `bun run check:launch`.
+2. Run the Launch Gate workflow cleanly across both supported operating systems.
+3. Run `bun run build:release`.
+4. Merge platform artifacts with `VILANO_RELEASE_INPUT_DIR=/path/to/release-input bun run merge:release`.
+5. Run `bun run verify:release`.
+6. Run `bun run smoke:release-install`.
+7. Validate one clean-machine install path outside the repo checkout.
+8. Confirm the release notes match:
    - supported platforms
    - supported worker runtimes
    - protocol/schema version
    - known limitations
-8. Confirm `runtime.vilano.ai/install.sh` and `runtime.vilano.ai/release.json` point at the tagged
+9. Confirm `runtime.vilano.ai/install.sh` and `runtime.vilano.ai/release.json` point at the tagged
    GitHub Release assets.
 
 Release notes should live in `docs/release-notes/vX.Y.Z.md`, and the tag workflow publishes that
@@ -88,6 +89,12 @@ curl -fsSL https://runtime.vilano.ai/install.sh | bash
 ```
 
 The public installer and `vilano update` both default to the stable channel. Preview is opt-in.
+
+The local pre-release gate should be:
+
+```bash
+bun run check:launch
+```
 
 Then register a real project with an explicit `vilano.manifest.json`, start the daemon, run one
 workflow, and inspect/replay the result.
