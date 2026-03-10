@@ -1052,6 +1052,8 @@ export interface components {
         ServiceRunListResponse: {
             /** @constant */
             ok: true;
+            project: string | null;
+            activeOnly: boolean;
             runs: components["schemas"]["ServiceRunRecord"][];
         };
         ServiceEnvelopeRecord: {
@@ -1126,18 +1128,121 @@ export interface components {
             ok: true;
             run: components["schemas"]["RunRecord"];
         };
+        RunEventRecord: {
+            id: string;
+            runId: string;
+            seq: number;
+            type: string;
+            body: unknown;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        RunStepRecord: {
+            runId: string;
+            key: string;
+            name: string;
+            status: string;
+            timeoutMs: number | null;
+            output: unknown;
+            error: unknown;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        RunExecRecord: {
+            runId: string;
+            key: string;
+            name: string;
+            status: string;
+            cmd: string;
+            args: string[];
+            cwd: string | null;
+            envKeys?: string[];
+            timeoutMs: number | null;
+            attempt: number;
+            exitCode: number | null;
+            signalCode: string | null;
+            stdoutRef: string | null;
+            stderrRef: string | null;
+            artifacts: {
+                path: string;
+                ref: string;
+            }[];
+            output: unknown;
+            error: unknown;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        RunWaitRecord: {
+            runId: string;
+            key: string;
+            kind: string;
+            name: string;
+            status: string;
+            /** Format: date-time */
+            wakeAt: string | null;
+            output: unknown;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        RunSignalRecord: {
+            id: string;
+            runId: string;
+            name: string;
+            payload: unknown;
+            /** Format: date-time */
+            consumedAt: string | null;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        RunChildRecord: {
+            parentRunId: string;
+            key: string;
+            childRunId: string;
+            definitionName: string;
+            status: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        RunReplayEntry: {
+            seq: number;
+            /** Format: date-time */
+            createdAt: string;
+            type: string;
+            summary: string;
+            body: unknown;
+        };
         RunInspectResponse: {
             /** @constant */
             ok: true;
-            run: unknown;
+            run: components["schemas"]["RunRecord"];
+            events: components["schemas"]["RunEventRecord"][];
+            steps: components["schemas"]["RunStepRecord"][];
+            execs: components["schemas"]["RunExecRecord"][];
+            waits: components["schemas"]["RunWaitRecord"][];
+            signals: components["schemas"]["RunSignalRecord"][];
+            children: components["schemas"]["RunChildRecord"][];
+            envelopes: components["schemas"]["ServiceEnvelopeRecord"][];
         };
         RunReplayResponse: {
             /** @constant */
             ok: true;
-            runId: string;
-            replay: {
-                [key: string]: unknown;
-            }[];
+            run: components["schemas"]["RunRecord"];
+            events: components["schemas"]["RunEventRecord"][];
+            steps: components["schemas"]["RunStepRecord"][];
+            execs: components["schemas"]["RunExecRecord"][];
+            waits: components["schemas"]["RunWaitRecord"][];
+            signals: components["schemas"]["RunSignalRecord"][];
+            children: components["schemas"]["RunChildRecord"][];
+            envelopes: components["schemas"]["ServiceEnvelopeRecord"][];
+            timeline: components["schemas"]["RunReplayEntry"][];
         };
         RunCancelResponse: {
             /** @constant */

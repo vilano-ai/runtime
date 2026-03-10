@@ -7,6 +7,9 @@ import type { components as WorkerComponents } from "../protocol/v1/generated/wo
 import { RuntimeHarness } from "./runtime-harness.ts";
 
 type KernelStatusResponse = ControlComponents["schemas"]["StatusResponse"];
+type RunInspectResponse = ControlComponents["schemas"]["RunInspectResponse"];
+type RunReplayResponse = ControlComponents["schemas"]["RunReplayResponse"];
+type ServiceRunListResponse = ControlComponents["schemas"]["ServiceRunListResponse"];
 type ActivationLeaseResponse = WorkerComponents["schemas"]["ActivationLeaseResponse"];
 type LeaseStatusResponse = WorkerComponents["schemas"]["LeaseStatusResponse"];
 type StepResolveResponse = WorkerComponents["schemas"]["StepResolveResponse"];
@@ -120,6 +123,57 @@ test("worker activation and step resolution endpoints match the published contra
     const stepResolve = (await stepResolveResponse.json()) as StepResolveResponse;
     expect(stepResolve.ok).toBe(true);
     expect(stepResolve.step.status).toBe("pending");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("control inspect, replay, and service run endpoints match the published contract", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const workflow = await harness.startWorkflow("demo/planner", { topic: "Protocol inspect" });
+    await harness.waitForRun(workflow.run.id, (body) => body.run.status === "completed");
+    await harness.ensureService("demo/reviewer", { repoId: "protocol-reviewer" });
+
+    const inspectResponse = await harness.requestKernel(
+      `/v1/runs/${encodeURIComponent(workflow.run.id)}`
+    );
+    expect(inspectResponse.status).toBe(200);
+    const inspectBody = (await inspectResponse.json()) as RunInspectResponse;
+    expect(inspectBody.ok).toBe(true);
+    expect(inspectBody.run.id).toBe(workflow.run.id);
+    expect(Array.isArray(inspectBody.events)).toBe(true);
+    expect(Array.isArray(inspectBody.steps)).toBe(true);
+    expect(Array.isArray(inspectBody.execs)).toBe(true);
+    expect(Array.isArray(inspectBody.waits)).toBe(true);
+    expect(Array.isArray(inspectBody.signals)).toBe(true);
+    expect(Array.isArray(inspectBody.children)).toBe(true);
+    expect(Array.isArray(inspectBody.envelopes)).toBe(true);
+
+    const replayResponse = await harness.requestKernel(
+      `/v1/runs/${encodeURIComponent(workflow.run.id)}/replay`
+    );
+    expect(replayResponse.status).toBe(200);
+    const replayBody = (await replayResponse.json()) as RunReplayResponse;
+    expect(replayBody.ok).toBe(true);
+    expect(replayBody.run.id).toBe(workflow.run.id);
+    expect(Array.isArray(replayBody.timeline)).toBe(true);
+    expect(replayBody.timeline.length).toBeGreaterThan(0);
+
+    const serviceRunsResponse = await harness.requestKernel(
+      `/v1/service-runs?project=${encodeURIComponent("demo")}`
+    );
+    expect(serviceRunsResponse.status).toBe(200);
+    const serviceRunsBody = (await serviceRunsResponse.json()) as ServiceRunListResponse;
+    expect(serviceRunsBody.ok).toBe(true);
+    expect(serviceRunsBody.project).toBe("demo");
+    expect(serviceRunsBody.activeOnly).toBe(false);
+    expect(
+      serviceRunsBody.runs.some(
+        (run) => run.definitionName === "reviewer" && run.serviceKey === "protocol-reviewer"
+      )
+    ).toBe(true);
   } finally {
     await harness.dispose();
   }

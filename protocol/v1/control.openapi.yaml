@@ -138,10 +138,14 @@ components:
           format: date-time
     ServiceRunListResponse:
       type: object
-      required: [ok, runs]
+      required: [ok, project, activeOnly, runs]
       properties:
         ok:
           const: true
+        project:
+          type: [string, 'null']
+        activeOnly:
+          type: boolean
         runs:
           type: array
           items:
@@ -269,26 +273,249 @@ components:
           const: true
         run:
           $ref: '#/components/schemas/RunRecord'
-    RunInspectResponse:
+    RunEventRecord:
       type: object
-      required: [ok, run]
+      required: [id, runId, seq, type, body, createdAt]
       properties:
-        ok:
-          const: true
-        run: {}
-    RunReplayResponse:
-      type: object
-      required: [ok, runId, replay]
-      properties:
-        ok:
-          const: true
+        id:
+          type: string
         runId:
           type: string
-        replay:
+        seq:
+          type: integer
+        type:
+          type: string
+        body: {}
+        createdAt:
+          type: string
+          format: date-time
+    RunStepRecord:
+      type: object
+      required: [runId, key, name, status, timeoutMs, output, error, createdAt, updatedAt]
+      properties:
+        runId:
+          type: string
+        key:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        timeoutMs:
+          type: [integer, 'null']
+        output: {}
+        error: {}
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    RunExecRecord:
+      type: object
+      required: [runId, key, name, status, cmd, args, cwd, timeoutMs, attempt, exitCode, signalCode, stdoutRef, stderrRef, artifacts, output, error, createdAt, updatedAt]
+      properties:
+        runId:
+          type: string
+        key:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        cmd:
+          type: string
+        args:
+          type: array
+          items:
+            type: string
+        cwd:
+          type: [string, 'null']
+        envKeys:
+          type: array
+          items:
+            type: string
+        timeoutMs:
+          type: [integer, 'null']
+        attempt:
+          type: integer
+        exitCode:
+          type: [integer, 'null']
+        signalCode:
+          type: [string, 'null']
+        stdoutRef:
+          type: [string, 'null']
+        stderrRef:
+          type: [string, 'null']
+        artifacts:
           type: array
           items:
             type: object
-            additionalProperties: true
+            required: [path, ref]
+            properties:
+              path:
+                type: string
+              ref:
+                type: string
+        output: {}
+        error: {}
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    RunWaitRecord:
+      type: object
+      required: [runId, key, kind, name, status, wakeAt, output, createdAt, updatedAt]
+      properties:
+        runId:
+          type: string
+        key:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        wakeAt:
+          type: [string, 'null']
+          format: date-time
+        output: {}
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    RunSignalRecord:
+      type: object
+      required: [id, runId, name, payload, consumedAt, createdAt]
+      properties:
+        id:
+          type: string
+        runId:
+          type: string
+        name:
+          type: string
+        payload: {}
+        consumedAt:
+          type: [string, 'null']
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    RunChildRecord:
+      type: object
+      required: [parentRunId, key, childRunId, definitionName, status, createdAt, updatedAt]
+      properties:
+        parentRunId:
+          type: string
+        key:
+          type: string
+        childRunId:
+          type: string
+        definitionName:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    RunReplayEntry:
+      type: object
+      required: [seq, createdAt, type, summary, body]
+      properties:
+        seq:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        type:
+          type: string
+        summary:
+          type: string
+        body: {}
+    RunInspectResponse:
+      type: object
+      required: [ok, run, events, steps, execs, waits, signals, children, envelopes]
+      properties:
+        ok:
+          const: true
+        run:
+          $ref: '#/components/schemas/RunRecord'
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunEventRecord'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunStepRecord'
+        execs:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunExecRecord'
+        waits:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunWaitRecord'
+        signals:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunSignalRecord'
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunChildRecord'
+        envelopes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceEnvelopeRecord'
+    RunReplayResponse:
+      type: object
+      required: [ok, run, events, steps, execs, waits, signals, children, envelopes, timeline]
+      properties:
+        ok:
+          const: true
+        run:
+          $ref: '#/components/schemas/RunRecord'
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunEventRecord'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunStepRecord'
+        execs:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunExecRecord'
+        waits:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunWaitRecord'
+        signals:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunSignalRecord'
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunChildRecord'
+        envelopes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceEnvelopeRecord'
+        timeline:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunReplayEntry'
     RunCancelResponse:
       type: object
       required: [ok, run, cancelledWaitCount, cancelledChildRunCount, cancelledServiceAskCount, hadActiveLease]
