@@ -107,6 +107,11 @@ Current CLI support:
 - `vilano update --check`
   - fetches release metadata, selects the target channel, and reports whether a newer runtime is
     available for the current platform
+- `vilano update`
+  - downloads the selected artifact, verifies it, installs it under `installs/`, and switches the
+    managed launcher
+- `vilano rollback`
+  - switches the managed launcher back to the previous installed version recorded in install state
 
 ## Release Metadata
 
@@ -150,8 +155,11 @@ That document is the contract for:
 - `vilano rollback`
 - release-channel selection
 
-The first implemented updater surface is `vilano update --check`. Download/apply and rollback will
-build on the same metadata contract and install layout.
+The current updater surface uses the same metadata contract and install layout for:
+
+- release discovery (`vilano update --check`)
+- artifact install and activation (`vilano update`)
+- managed-version rollback (`vilano rollback`)
 
 The authoritative TypeScript definitions for both local install metadata and remote release
 metadata live in [cli/src/distribution-contract.ts](/Users/mcl0vin/Documents/Code/runtime/cli/src/distribution-contract.ts).

@@ -138,6 +138,42 @@ export function renderUpdateCheck(body: {
     .join("\n");
 }
 
+export function renderUpdateApply(body: {
+  source: string;
+  channel: string;
+  previousVersion: string | null;
+  currentVersion: string;
+  installedVersion: string;
+  platform: {
+    key: string;
+    artifactUrl: string;
+  };
+}): string {
+  return [
+    "update: applied",
+    `source: ${body.source}`,
+    `channel: ${body.channel}`,
+    `previous_version: ${body.previousVersion ?? "none"}`,
+    `current_version: ${body.currentVersion}`,
+    `installed_version: ${body.installedVersion}`,
+    `platform: ${body.platform.key}`,
+    `artifact_url: ${body.platform.artifactUrl}`,
+  ].join("\n");
+}
+
+export function renderRollbackResult(body: {
+  currentVersion: string;
+  previousVersion: string | null;
+  rolledBackTo: string;
+}): string {
+  return [
+    "rollback: applied",
+    `from_version: ${body.currentVersion}`,
+    `previous_version: ${body.previousVersion ?? "none"}`,
+    `rolled_back_to: ${body.rolledBackTo}`,
+  ].join("\n");
+}
+
 export function renderDoctorReport(body: {
   ok: boolean;
   cliVersion: string;

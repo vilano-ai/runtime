@@ -127,8 +127,8 @@ bun run smoke:install
 That path packs `vilano`, installs it into a temporary directory, verifies that read-only commands
 do not mutate the vendored bundle, verifies `doctor --fix` does not rewrite packaged runtime
 contents when vendored kernel artifacts are already present, checks release metadata through
-`vilano update --check`, starts the daemon, and confirms that runtime state is written under
-`VILANO_HOME`.
+`vilano update --check`, applies an update into the managed install root, rolls back, starts the
+daemon through the managed launcher, and confirms that runtime state is written under `VILANO_HOME`.
 
 ## Programming Model
 

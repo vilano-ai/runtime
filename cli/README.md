@@ -34,6 +34,8 @@ does not claim strong isolation from arbitrary code running as the same OS user.
 ```bash
 vilano version
 vilano update --check
+vilano update
+vilano rollback
 vilano doctor
 vilano daemon start
 vilano daemon status
@@ -74,8 +76,13 @@ The current release-management surface is intentionally small:
   - reports the installed runtime payload and running kernel, if any
 - `vilano update --check`
   - checks release metadata and reports whether a newer runtime is available for the current platform
+- `vilano update`
+  - downloads and installs the selected runtime release into the managed install root
+- `vilano rollback`
+  - switches the managed install back to the previous installed version
 
-Applying updates and rollbacks will be layered on top of the same install metadata contract.
+`vilano update` and `vilano rollback` operate on the managed install layout under `~/.vilano`
+and are designed around the same install metadata contract used by the packaged smoke path.
 
 For OSS `0.1`, explicit `vilano.manifest.json` files are the recommended path. Use
 `vilano project init-manifest` to bootstrap one for existing TS/JS repos.

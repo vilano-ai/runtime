@@ -7,6 +7,8 @@ export interface RuntimePaths {
   installRootDir: string;
   binDir: string;
   installsDir: string;
+  currentInstallLink: string;
+  installStateFile: string;
   cacheDir: string;
   executionHomeDir: string;
   artifactHomeDir: string;
@@ -33,6 +35,8 @@ export function getRuntimePaths(): RuntimePaths {
     installRootDir,
     binDir: path.join(installRootDir, "bin"),
     installsDir: path.join(installRootDir, "installs"),
+    currentInstallLink: path.join(installRootDir, "current"),
+    installStateFile: path.join(installRootDir, "install-state.json"),
     cacheDir: path.join(installRootDir, "cache"),
     executionHomeDir,
     artifactHomeDir: path.join(executionHomeDir, "artifacts"),

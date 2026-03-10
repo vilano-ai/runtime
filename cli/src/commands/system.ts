@@ -12,8 +12,10 @@ import {
   stopDaemon,
 } from "../daemon-client.ts";
 import {
+  renderRollbackResult,
   renderDaemonStatus,
   renderDoctorReport,
+  renderUpdateApply,
   renderUpdateCheck,
   renderVersionInfo,
   writeOutput,
@@ -29,6 +31,7 @@ import {
 import { getRuntimePaths } from "../runtime-home.ts";
 import { prepareRuntimeBundle, prepareRuntimeBundleWithOptions } from "../runtime-materializer.ts";
 import { CLI_PROTOCOL_VERSION, getCliVersion } from "../runtime-version.ts";
+import { applyRuntimeUpdate, rollbackRuntimeInstall } from "../update-runtime.ts";
 import type { RuntimeBundleManifest } from "../runtime-bundle.ts";
 import type { DaemonState, DaemonStatusResponse } from "../types.ts";
 import { CliError } from "../cli-error.ts";
@@ -119,10 +122,32 @@ export async function handleDoctorCommand(flags: Record<string, string | boolean
 }
 
 export async function handleUpdateCommand(flags: Record<string, string | boolean>): Promise<number> {
+  if (!flags.check) {
+    const channel = resolveReleaseChannel(flags);
+    const source = resolveReleaseMetadataSource(flags);
+    const result = await applyRuntimeUpdate({
+      source,
+      channel,
+      platformKey: getCurrentPlatformKey(),
+      targetVersion: typeof flags.to === "string" ? flags.to : undefined,
+    });
+
+    writeOutput(flags, result, renderUpdateApply);
+    return 0;
+  }
+
   const source = resolveReleaseMetadataSource(flags);
   const channel = resolveReleaseChannel(flags);
   const metadata = await loadReleaseMetadata(source);
-  const targetRelease = selectReleaseVersion(metadata.manifest, channel);
+  let targetRelease;
+  if (typeof flags.to === "string") {
+    targetRelease = metadata.manifest.releases[flags.to];
+    if (!targetRelease) {
+      throw new CliError(`Release metadata does not contain version ${flags.to}.`);
+    }
+  } else {
+    targetRelease = selectReleaseVersion(metadata.manifest, channel);
+  }
   const platformKey = getCurrentPlatformKey();
   const platformArtifact = targetRelease.artifacts[platformKey] ?? null;
   const bundle = await prepareRuntimeBundleWithOptions({ materialize: false });
@@ -161,6 +186,16 @@ export async function handleUpdateCommand(flags: Record<string, string | boolean
   };
 
   writeOutput(flags, body, renderUpdateCheck);
+  return 0;
+}
+
+export async function handleRollbackCommand(
+  flags: Record<string, string | boolean>
+): Promise<number> {
+  const result = await rollbackRuntimeInstall(
+    typeof flags.to === "string" ? flags.to : undefined
+  );
+  writeOutput(flags, result, renderRollbackResult);
   return 0;
 }
 
