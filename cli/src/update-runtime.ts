@@ -13,8 +13,10 @@ import {
   switchCurrentInstall,
   unpackArtifactToInstallRoot,
 } from "./install-state.ts";
+import { getRunningDaemonStatus, readDaemonState } from "./daemon-client.ts";
 import { loadReleaseMetadata, selectReleaseVersion, type LoadedReleaseMetadata } from "./release-metadata.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
+import { readRuntimeHomeSchemaVersion } from "./runtime-schema.ts";
 import { prepareRuntimeBundleWithOptions } from "./runtime-materializer.ts";
 import { getCliVersion } from "./runtime-version.ts";
 
@@ -44,6 +46,7 @@ export async function applyRuntimeUpdate(input: {
   platformKey: string;
   targetVersion?: string;
 }): Promise<UpdateApplyResult> {
+  await assertNoRunningDaemon("update the Vilano runtime");
   const metadata = await loadReleaseMetadata(input.source);
   const targetRelease = resolveTargetRelease(metadata, input.channel, input.targetVersion);
   const artifact = targetRelease.artifacts[input.platformKey];
@@ -59,8 +62,18 @@ export async function applyRuntimeUpdate(input: {
   const currentVersion = installManifest?.runtimeVersion ?? getCliVersion();
   const currentState = await readInstallState();
   const previousVersion = currentState?.currentVersion ?? currentVersion;
+  const currentSchemaVersion = await readRuntimeHomeSchemaVersion();
 
   await bootstrapCurrentManagedInstall(currentVersion, bundle.source.bundled, bundle.source.cliRoot);
+  assertSchemaCompatibility(
+    currentSchemaVersion,
+    {
+      version: targetRelease.version,
+      schemaMin: targetRelease.schemaMin,
+      schemaMax: targetRelease.schemaMax,
+    },
+    "update"
+  );
 
   const downloadPath = await downloadReleaseArtifact(
     artifact.url,
@@ -101,6 +114,7 @@ export async function applyRuntimeUpdate(input: {
 }
 
 export async function rollbackRuntimeInstall(targetVersion?: string): Promise<RollbackResult> {
+  await assertNoRunningDaemon("roll back the Vilano runtime");
   const state = await readInstallState();
   if (!state?.currentVersion) {
     throw new CliError("No managed Vilano runtime is installed under the current install root.");
@@ -115,6 +129,16 @@ export async function rollbackRuntimeInstall(targetVersion?: string): Promise<Ro
   if (!manifest) {
     throw new CliError(`Vilano runtime ${rollbackTarget} is not installed under the current install root.`);
   }
+  const currentSchemaVersion = await readRuntimeHomeSchemaVersion();
+  assertSchemaCompatibility(
+    currentSchemaVersion,
+    {
+      version: manifest.runtimeVersion,
+      schemaMin: manifest.schemaMin,
+      schemaMax: manifest.schemaMax,
+    },
+    "roll back"
+  );
 
   await switchCurrentInstall(rollbackTarget, state.channel);
   return {
@@ -123,6 +147,48 @@ export async function rollbackRuntimeInstall(targetVersion?: string): Promise<Ro
     previousVersion: state.previousVersion,
     rolledBackTo: rollbackTarget,
   };
+}
+
+async function assertNoRunningDaemon(action: string): Promise<void> {
+  const daemonState = await readDaemonState();
+  if (!daemonState) {
+    return;
+  }
+
+  try {
+    const status = await getRunningDaemonStatus();
+    if (status) {
+      throw new CliError(
+        `Cannot ${action} while the Vilano kernel is running on port ${status.port}. Stop it first with 'vilano daemon stop'.`
+      );
+    }
+  } catch (error) {
+    const refreshedState = await readDaemonState();
+    if (!refreshedState) {
+      return;
+    }
+
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new CliError(
+      `Cannot ${action} while the Vilano kernel is running or its status is unknown. Stop it first with 'vilano daemon stop'. (${detail})`
+    );
+  }
+}
+
+function assertSchemaCompatibility(
+  currentSchemaVersion: number | null,
+  target: { version: string; schemaMin: number; schemaMax: number },
+  action: "update" | "roll back"
+): void {
+  if (currentSchemaVersion === null) {
+    return;
+  }
+
+  if (currentSchemaVersion < target.schemaMin || currentSchemaVersion > target.schemaMax) {
+    throw new CliError(
+      `Cannot ${action} to Vilano ${target.version}: runtime home schema ${currentSchemaVersion} is outside the supported range ${target.schemaMin}-${target.schemaMax}.`
+    );
+  }
 }
 
 function resolveTargetRelease(

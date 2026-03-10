@@ -12,7 +12,7 @@ import {
   type SupportedWorkerRuntime,
 } from "./distribution-contract.ts";
 
-const DEFAULT_RELEASE_METADATA_URL = "https://get.vilano.dev/release.json";
+const DEFAULT_RELEASE_METADATA_URL = "https://runtime.vilano.ai/release.json";
 
 export interface LoadedReleaseMetadata {
   source: string;

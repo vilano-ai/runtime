@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
+import { Database } from "bun:sqlite";
 
 import { deriveExecutionHomeDir } from "../cli/src/runtime-home.ts";
 
@@ -39,6 +40,7 @@ try {
   const cliEntry = path.join(installDir, "node_modules", ".bin", "vilano");
   const packagedRuntimeDist = path.join(installDir, "node_modules", "vilano", "runtime-dist");
   const releaseMetadataPath = path.join(installDir, "release.json");
+  const incompatibleReleaseMetadataPath = path.join(installDir, "release-incompatible.json");
   const baseEnv = {
     ...process.env,
     VILANO_HOME: runtimeHome,
@@ -137,6 +139,43 @@ try {
     )}\n`
   );
 
+  await fs.writeFile(
+    incompatibleReleaseMetadataPath,
+    `${JSON.stringify(
+      {
+        manifestVersion: 1,
+        latest: "0.1.1",
+        channels: {
+          stable: "0.1.1",
+        },
+        releases: {
+          "0.1.1": {
+            version: "0.1.1",
+            channel: "stable",
+            protocolVersion: version.protocolVersion,
+            schemaMin: (version.runtimeBundle.installManifest?.schemaVersion ?? 0) + 1,
+            schemaMax: (version.runtimeBundle.installManifest?.schemaVersion ?? 0) + 1,
+            supportedWorkerRuntimes: ["bun"],
+            releasedAt: "2026-03-10T12:00:00.000Z",
+            artifacts: {
+              [`${process.platform}-${process.arch}`]: {
+                url: new URL(`file://${updateArtifact.path}`).toString(),
+                sha256: updateArtifact.sha256,
+              },
+            },
+          },
+        },
+      },
+      null,
+      2
+    )}\n`
+  );
+
+  await seedRuntimeSchemaVersion(
+    path.join(runtimeHome, "runtime.sqlite"),
+    version.runtimeBundle.installManifest?.schemaVersion ?? 0
+  );
+
   const updateCheck = JSON.parse(
     (
       await run(
@@ -161,6 +200,25 @@ try {
       `Packaged CLI update --check did not report the expected release metadata:\n${JSON.stringify(updateCheck, null, 2)}`
     );
   }
+
+  const incompatibleUpdate = await run(
+    cliEntry,
+    ["update", "--release-manifest", incompatibleReleaseMetadataPath, "--json"],
+    installDir,
+    baseEnv,
+    { allowFailure: true, timeoutMs: 60_000 }
+  );
+
+  if (
+    incompatibleUpdate.exitCode === 0 ||
+    !/schema/i.test(`${incompatibleUpdate.stdout}\n${incompatibleUpdate.stderr}`)
+  ) {
+    throw new Error(
+      `Packaged CLI update should fail for incompatible schema metadata:\nstdout:\n${incompatibleUpdate.stdout}\nstderr:\n${incompatibleUpdate.stderr}`
+    );
+  }
+
+  await fs.rm(path.join(runtimeHome, "runtime.sqlite"), { force: true });
 
   const updateApply = JSON.parse(
     (
@@ -338,6 +396,37 @@ try {
   if ((completedRun.run.output as { value?: string } | null)?.value !== "installed") {
     throw new Error(
       `Packaged CLI returned unexpected smoke workflow output: ${JSON.stringify(completedRun.run.output)}`
+    );
+  }
+
+  const blockedUpdate = await run(
+    managedCliEntry,
+    ["update", "--release-manifest", releaseMetadataPath, "--json"],
+    installDir,
+    env,
+    { allowFailure: true, timeoutMs: 60_000 }
+  );
+
+  if (blockedUpdate.exitCode === 0 || !/stop.*daemon/i.test(`${blockedUpdate.stdout}\n${blockedUpdate.stderr}`)) {
+    throw new Error(
+      `Managed Vilano update should refuse to run while the daemon is active:\nstdout:\n${blockedUpdate.stdout}\nstderr:\n${blockedUpdate.stderr}`
+    );
+  }
+
+  const blockedRollback = await run(
+    managedCliEntry,
+    ["rollback", "--json"],
+    installDir,
+    env,
+    { allowFailure: true, timeoutMs: 60_000 }
+  );
+
+  if (
+    blockedRollback.exitCode === 0 ||
+    !/stop.*daemon/i.test(`${blockedRollback.stdout}\n${blockedRollback.stderr}`)
+  ) {
+    throw new Error(
+      `Managed Vilano rollback should refuse to run while the daemon is active:\nstdout:\n${blockedRollback.stdout}\nstderr:\n${blockedRollback.stderr}`
     );
   }
 
@@ -531,6 +620,40 @@ async function hashDirectoryContents(rootPath: string): Promise<string> {
   }
 
   return digest.digest("hex");
+}
+
+async function seedRuntimeSchemaVersion(databasePath: string, schemaVersion: number): Promise<void> {
+  await fs.mkdir(path.dirname(databasePath), { recursive: true });
+  await fs.rm(databasePath, { force: true });
+
+  const database = new Database(databasePath);
+  try {
+    database.exec(`
+      create table runtime_metadata (
+        runtime_version text not null,
+        protocol_version integer not null,
+        schema_version integer not null,
+        applied_migrations_json text not null,
+        updated_at text not null
+      );
+    `);
+
+    database
+      .query(
+        `
+          insert into runtime_metadata (
+            runtime_version,
+            protocol_version,
+            schema_version,
+            applied_migrations_json,
+            updated_at
+          ) values (?, ?, ?, ?, ?)
+        `
+      )
+      .run("0.1.0", 1, schemaVersion, "[]", new Date().toISOString());
+  } finally {
+    database.close(false);
+  }
 }
 
 async function hashFileSha256(filePath: string): Promise<string> {
