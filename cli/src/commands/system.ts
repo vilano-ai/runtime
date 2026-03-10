@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
@@ -217,8 +218,8 @@ export async function handleWorkerCommand(
       const serverUrl = resolveWorkerServerUrl(flags, daemonState);
       const bundle = await prepareRuntimeBundle();
       const workerEntry = path.join(bundle.workerDir, workerRuntime, "src", "cli.ts");
-      const executable = workerRuntime === "node" ? "node" : "bun";
-      const childArgs = [workerEntry, "--server", serverUrl];
+      const launch = await resolveWorkerLaunchCommand(bundle, workerRuntime, workerEntry);
+      const childArgs = [...launch.prefixArgs, "--server", serverUrl];
 
       if (typeof flags["worker-id"] === "string") {
         childArgs.push("--worker-id", flags["worker-id"]);
@@ -230,7 +231,7 @@ export async function handleWorkerCommand(
 
       const workerAuthEnv = await resolveWorkerAuthEnv(serverUrl);
       const exitCode = await new Promise<number>((resolve, reject) => {
-        const child = spawn(executable, childArgs, {
+        const child = spawn(launch.executable, childArgs, {
           stdio: "inherit",
           env: {
             ...process.env,
@@ -274,6 +275,57 @@ async function resolveWorkerAuthEnv(serverUrl: string): Promise<Record<string, s
   }
 
   return {};
+}
+
+async function resolveWorkerLaunchCommand(
+  bundle: Awaited<ReturnType<typeof prepareRuntimeBundle>>,
+  workerRuntime: "bun" | "node",
+  workerEntry: string
+): Promise<{ executable: string; prefixArgs: string[] }> {
+  if (!bundle.source.bundled) {
+    return {
+      executable: workerRuntime === "node" ? "node" : "bun",
+      prefixArgs: [workerEntry],
+    };
+  }
+
+  if (workerRuntime === "bun") {
+    const bundledBun = path.join(bundle.source.cliRoot, "bun", "bun");
+    if (!(await fileExists(bundledBun))) {
+      throw new CliError(`Packaged Vilano runtime is missing bundled bun at ${bundledBun}. Reinstall Vilano Runtime.`);
+    }
+
+    return {
+      executable: bundledBun,
+      prefixArgs: [workerEntry],
+    };
+  }
+
+  const installManifest = await readJsonFile<RuntimeBundleManifest | null>(bundle.installManifestFile, null);
+  if (!installManifest?.supportedWorkerRuntimes.includes("node")) {
+    throw new CliError(
+      "Packaged Vilano runtime does not bundle the preview Node worker. Use `vilano worker start --runtime bun` or run from a repo checkout with Node on PATH."
+    );
+  }
+
+  const bundledNode = path.join(bundle.source.cliRoot, "node", "node");
+  if (!(await fileExists(bundledNode))) {
+    throw new CliError(`Packaged Vilano runtime declares Node worker support but is missing bundled node at ${bundledNode}.`);
+  }
+
+  return {
+    executable: bundledNode,
+    prefixArgs: [workerEntry],
+  };
+}
+
+async function fileExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function resolveWorkerServerUrl(

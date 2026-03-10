@@ -15,10 +15,20 @@ const projectDir = path.join(installRoot, "demo-project");
 const sdkTarball = await packWorkspace(SDK_DIR);
 
 try {
-  await run("bash", [installScriptPath], ROOT, {
+  const baseEnv = { ...process.env };
+  const firstInstall = await run("bash", [installScriptPath], ROOT, {
     ...process.env,
     VILANO_INSTALL_ROOT: installRoot,
   });
+
+  const expectedInstallCommand = `${path.join(installRoot, "bin", "vilano")} version`;
+  if (!firstInstall.stdout.includes(expectedInstallCommand)) {
+    throw new Error(`Release installer did not print the managed launcher verification command:\n${firstInstall.stdout}`);
+  }
+
+  if (!firstInstall.stdout.includes(`export PATH="${path.join(installRoot, "bin")}:$PATH"`)) {
+    throw new Error(`Release installer did not print PATH guidance for the managed launcher:\n${firstInstall.stdout}`);
+  }
 
   await run("bash", [installScriptPath], ROOT, {
     ...process.env,
@@ -71,6 +81,11 @@ try {
     throw new Error("Fresh release install unexpectedly reported an available update");
   }
 
+  const doctor = JSON.parse((await run(installedCli, ["doctor", "--json"], ROOT)).stdout) as { ok: boolean };
+  if (!doctor.ok) {
+    throw new Error(`Release install doctor check did not report a healthy runtime:\n${JSON.stringify(doctor, null, 2)}`);
+  }
+
   await fs.mkdir(projectDir, { recursive: true });
   await fs.writeFile(
     path.join(projectDir, "package.json"),
@@ -97,9 +112,47 @@ try {
 
   const daemonPort = await reservePort();
   await run(installedCli, ["daemon", "start", "--port", String(daemonPort)], projectDir, {
-    ...process.env,
+    ...baseEnv,
     VILANO_KERNEL_PORT: String(daemonPort),
   });
+
+  const workerWithoutHostBun = await run(
+    installedCli,
+    ["worker", "start", "--runtime", "bun", "--once"],
+    projectDir,
+    {
+      ...baseEnv,
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      VILANO_KERNEL_PORT: String(daemonPort),
+    }
+  );
+  if (workerWithoutHostBun.exitCode !== 0) {
+    throw new Error(
+      `Packaged bun worker did not start from the bundled runtime:\nstdout:\n${workerWithoutHostBun.stdout}\nstderr:\n${workerWithoutHostBun.stderr}`
+    );
+  }
+
+  const previewNodeWorker = await run(
+    installedCli,
+    ["worker", "start", "--runtime", "node", "--once"],
+    projectDir,
+    {
+      ...baseEnv,
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      VILANO_KERNEL_PORT: String(daemonPort),
+    },
+    { allowFailure: true }
+  );
+  if (
+    previewNodeWorker.exitCode === 0 ||
+    !/does not bundle the preview Node worker|missing bundled node/i.test(
+      `${previewNodeWorker.stdout}\n${previewNodeWorker.stderr}`
+    )
+  ) {
+    throw new Error(
+      `Packaged node worker path should fail with an explicit bundled-runtime message:\nstdout:\n${previewNodeWorker.stdout}\nstderr:\n${previewNodeWorker.stderr}`
+    );
+  }
 
   await run(installedCli, ["project", "add", ".", "--name", "smoke"], projectDir);
   const started = JSON.parse(
@@ -132,8 +185,20 @@ try {
     );
   }
 
+  const replay = JSON.parse(
+    (
+      await run(installedCli, ["run", "replay", started.run.id, "--json"], projectDir, {
+        ...baseEnv,
+        VILANO_KERNEL_PORT: String(daemonPort),
+      })
+    ).stdout
+  ) as { timeline: unknown[] };
+  if (!Array.isArray(replay.timeline) || replay.timeline.length === 0) {
+    throw new Error(`Release install smoke replay did not return a durable timeline:\n${JSON.stringify(replay, null, 2)}`);
+  }
+
   await run(installedCli, ["daemon", "stop"], projectDir, {
-    ...process.env,
+    ...baseEnv,
     VILANO_KERNEL_PORT: String(daemonPort),
   });
 
