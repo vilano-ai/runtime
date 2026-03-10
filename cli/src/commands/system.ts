@@ -20,6 +20,7 @@ import {
 import { getRuntimePaths } from "../runtime-home.ts";
 import { prepareRuntimeBundle, prepareRuntimeBundleWithOptions } from "../runtime-materializer.ts";
 import { CLI_PROTOCOL_VERSION, getCliVersion } from "../runtime-version.ts";
+import type { RuntimeBundleManifest } from "../runtime-bundle.ts";
 import type { DaemonState, DaemonStatusResponse } from "../types.ts";
 import { CliError } from "../cli-error.ts";
 
@@ -79,6 +80,7 @@ export async function handleVersionCommand(flags: Record<string, string | boolea
   }
 
   const bundle = await prepareRuntimeBundleWithOptions({ materialize: false });
+  const installManifest = await readJsonFile<RuntimeBundleManifest | null>(bundle.installManifestFile, null);
 
   const body = {
     ok: true,
@@ -90,6 +92,8 @@ export async function handleVersionCommand(flags: Record<string, string | boolea
       bundled: bundle.source.bundled,
       materialized: bundle.materialized,
       bundleVersion: bundle.bundleVersion,
+      installManifestFile: bundle.installManifestFile,
+      installManifest,
     },
     kernel: daemonStatus,
     kernelError,

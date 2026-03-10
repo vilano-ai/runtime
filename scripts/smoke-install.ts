@@ -65,6 +65,13 @@ try {
       bundled: boolean;
       materialized: boolean;
       bundleVersion: string;
+      installManifestFile: string;
+      installManifest: {
+        runtimeVersion: string;
+        protocolVersion: number;
+        schemaVersion: number;
+        supportedWorkerRuntimes: string[];
+      } | null;
     };
   };
 
@@ -78,6 +85,14 @@ try {
 
   if (version.runtimeBundle.root !== version.runtimeBundle.sourceRoot) {
     throw new Error("Packaged CLI version command should report the source runtime bundle before daemon start");
+  }
+
+  if (!version.runtimeBundle.installManifest) {
+    throw new Error("Packaged CLI version command did not surface the runtime install manifest");
+  }
+
+  if (!version.runtimeBundle.installManifest.supportedWorkerRuntimes.includes("bun")) {
+    throw new Error("Packaged CLI install manifest did not report the supported worker runtimes");
   }
 
   if (version.runtimeBundle.root.startsWith(runtimeHome)) {

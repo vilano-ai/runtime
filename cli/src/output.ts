@@ -52,6 +52,17 @@ export function renderVersionInfo(body: {
     bundled: boolean;
     materialized: boolean;
     bundleVersion: string;
+    installManifestFile: string;
+    installManifest: {
+      runtimeVersion: string;
+      protocolVersion: number;
+      schemaVersion: number;
+      supportedWorkerRuntimes: string[];
+      platform: {
+        os: string;
+        arch: string;
+      };
+    } | null;
   };
   kernel: DaemonStatusResponse | null;
   kernelError?: string | null;
@@ -62,6 +73,10 @@ export function renderVersionInfo(body: {
     `runtime_bundle: ${body.runtimeBundle.root}${body.runtimeBundle.bundled ? " (packaged)" : " (repo)"}`,
     body.runtimeBundle.bundled ? `runtime_bundle_source: ${body.runtimeBundle.sourceRoot}` : null,
     `runtime_bundle_version: ${body.runtimeBundle.bundleVersion}`,
+    `runtime_install_manifest: ${body.runtimeBundle.installManifestFile}`,
+    body.runtimeBundle.installManifest
+      ? `runtime_install: runtime=${body.runtimeBundle.installManifest.runtimeVersion} protocol=${body.runtimeBundle.installManifest.protocolVersion} schema=${body.runtimeBundle.installManifest.schemaVersion} worker_runtimes=${body.runtimeBundle.installManifest.supportedWorkerRuntimes.join(",")} platform=${body.runtimeBundle.installManifest.platform.os}/${body.runtimeBundle.installManifest.platform.arch}`
+      : null,
     body.kernelError ? `kernel_error: ${body.kernelError}` : null,
     body.kernel
       ? `kernel: running ${body.kernel.runtimeVersion} schema=${body.kernel.schemaVersion} port=${body.kernel.port}`
