@@ -4,7 +4,7 @@ This document describes the current OSS runtime support posture. It is intention
 
 ## Current Positioning
 
-Vilano is currently a local-first durable execution runtime for a single machine with a BEAM kernel
+Vilano Runtime is currently a local-first durable execution runtime for a single machine with a BEAM kernel
 and external JavaScript/TypeScript workers.
 
 ## Supported Today

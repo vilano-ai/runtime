@@ -24,7 +24,7 @@ export function writeOutput<T>(
 
 export function renderDaemonStatus(body: DaemonStatusResponse): string {
   return [
-    "Vilano kernel is running",
+    "Vilano Runtime kernel is running",
     `runtime_version: ${body.runtimeVersion}`,
     `protocol_version: ${body.protocolVersion}`,
     `schema_version: ${body.schemaVersion}`,

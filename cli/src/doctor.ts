@@ -65,7 +65,9 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
 
   if (options.fix) {
     if (bundle.source.bundled && (!depsReady || !buildReady)) {
-      throw new Error("Packaged Vilano runtime is incomplete. Reinstall Vilano to restore the bundled kernel release.");
+      throw new Error(
+        "Packaged Vilano Runtime is incomplete. Reinstall Vilano Runtime to restore the bundled kernel release."
+      );
     }
 
     const needsKernelTooling = !bundle.source.bundled;
@@ -171,7 +173,7 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
       detail: bundle.source.bundled
         ? depsReady
           ? "packaged kernel release is present"
-          : "packaged kernel release is missing; reinstall Vilano"
+          : "packaged kernel release is missing; reinstall Vilano Runtime"
         : depsReady
           ? "kernel deps directory is present"
           : "kernel deps are missing; run `vilano doctor --fix` or `mix deps.get`",
@@ -183,7 +185,7 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
       detail: bundle.source.bundled
         ? buildReady
           ? "packaged kernel release is ready"
-          : "packaged kernel release is missing; reinstall Vilano"
+          : "packaged kernel release is missing; reinstall Vilano Runtime"
         : buildReady
           ? "kernel build artifacts are present"
           : "kernel has not been compiled yet; it can compile on first start",
@@ -196,7 +198,7 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
         daemonError !== null
           ? daemonError
           : daemonStatus === null
-          ? "Vilano kernel is not running"
+          ? "Vilano Runtime kernel is not running"
           : `running runtime ${daemonStatus.runtimeVersion} protocol ${daemonStatus.protocolVersion} schema ${daemonStatus.schemaVersion}`,
     },
   ];

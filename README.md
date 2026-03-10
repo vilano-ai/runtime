@@ -3,6 +3,8 @@
 Vilano Runtime is a local-first durable execution runtime with a BEAM kernel and external
 JavaScript/TypeScript workers.
 
+Vilano Runtime is a product by Vilano AI.
+
 It is built for workflows and long-lived services that need:
 
 - durable replay instead of best-effort retries
@@ -10,12 +12,12 @@ It is built for workflows and long-lived services that need:
 - subprocess-heavy work with durable artifacts
 - inspectable execution timelines instead of opaque background jobs
 
-Vilano is currently a `0.x` runtime. The core execution model is real and tested, but the project
+Vilano Runtime is currently a `0.x` runtime. The core execution model is real and tested, but the project
 should still be treated as preview software.
 
 ## What It Is
 
-Vilano has three main pieces:
+Vilano Runtime has three main pieces:
 
 - **BEAM kernel**
   - durable state, leases, waits, retries, signals, service inboxes, and managed worker
@@ -37,7 +39,7 @@ The runtime is intentionally local-first today:
 By default, installed runtime payloads are intended to live under `~/.vilano/installs`, while
 mutable runtime state lives under `~/.vilano/state`.
 
-Vilano does not currently claim strong filesystem isolation from code running as the same OS user.
+Vilano Runtime does not currently claim strong filesystem isolation from code running as the same OS user.
 The OSS `0.x` trust model assumes a local, single-user machine.
 
 Vilano Runtime is released under the [Apache-2.0 License](./LICENSE).
@@ -100,7 +102,7 @@ vilano init /path/to/project
 `vilano init` is a generated starting point for TS/JS projects. Review the generated
 manifest before relying on it, especially if your definitions use non-trivial export patterns.
 
-Register the project and inspect what Vilano found:
+Register the project and inspect what Vilano Runtime found:
 
 ```bash
 vilano project add /path/to/project --name my-project

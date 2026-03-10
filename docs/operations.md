@@ -1,14 +1,14 @@
 # Operations Guide
 
-Vilano is currently designed as a local runtime on a single machine.
+Vilano Runtime is currently designed as a local runtime on a single machine.
 
 ## Runtime Home
 
-Vilano stores mutable runtime state under `VILANO_HOME`.
+Vilano Runtime stores mutable runtime state under `VILANO_HOME`.
 
 If `VILANO_HOME` is not set, the default is `~/.vilano/state`.
 
-Vilano also has an install root for packaged/runtime assets. If `VILANO_INSTALL_ROOT` is not set,
+Vilano Runtime also has an install root for packaged/runtime assets. If `VILANO_INSTALL_ROOT` is not set,
 the default install root is `~/.vilano`.
 
 Important contents include:
@@ -37,7 +37,7 @@ a ready kernel release, it does not fetch Hex deps or rewrite the packaged bundl
 as optional unless you are validating the preview Node worker lane.
 
 `version` and `doctor` are read-only. They do not start the daemon. `doctor --fix` is the mutating
-path when you want Vilano to prepare local Mix/Hex state.
+path when you want Vilano Runtime to prepare local Mix/Hex state.
 
 ## Daemon Lifecycle
 

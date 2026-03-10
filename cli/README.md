@@ -2,6 +2,8 @@
 
 `vilano` is the local operator surface for Vilano Runtime.
 
+Vilano Runtime is a product by Vilano AI.
+
 It is responsible for:
 
 - bootstrapping the local daemon

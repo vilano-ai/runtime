@@ -1,6 +1,6 @@
 # Manifest Guide
 
-Vilano uses two manifest forms today:
+Vilano Runtime uses two manifest forms today:
 
 - **source manifest**
   - `vilano.manifest.json`
@@ -41,7 +41,7 @@ Each definition entry currently includes:
 That contract is validated by [cli/src/project-manifest-contract.ts](../cli/src/project-manifest-contract.ts)
 and checked in CI through `bun run check:manifest`.
 
-Vilano treats `exportName` as authoritative. Registration validates schema, paths, and export-name
+Vilano Runtime treats `exportName` as authoritative. Registration validates schema, paths, and export-name
 syntax. The definition file must export that exact symbol, and the exported value must match the
 declared `kind` and `name`, but that final identity check still happens when the worker imports the
 module on first activation.

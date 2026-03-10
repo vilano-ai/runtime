@@ -61,7 +61,7 @@ interface ParsedArgs {
 
 function renderHelp(): string {
   return [
-    "Vilano CLI",
+    "Vilano Runtime CLI",
     "",
     "Implemented commands:",
     "  vilano version",

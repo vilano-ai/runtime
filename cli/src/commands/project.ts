@@ -139,7 +139,7 @@ async function warnIfUsingGeneratedManifestFallback(projectPath: string): Promis
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       process.stderr.write(
-        "Vilano is using generated manifest fallback for this project. Run `vilano init <path>` to create the recommended explicit contract.\n"
+        "Vilano Runtime is using generated manifest fallback for this project. Run `vilano init <path>` to create the recommended explicit contract.\n"
       );
       return;
     }

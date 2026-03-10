@@ -181,7 +181,7 @@ async function assertNoRunningDaemon(action: string): Promise<void> {
     const status = await getRunningDaemonStatus();
     if (status) {
       throw new CliError(
-        `Cannot ${action} while the Vilano kernel is running on port ${status.port}. Stop it first with 'vilano daemon stop'.`
+        `Cannot ${action} while the Vilano Runtime kernel is running on port ${status.port}. Stop it first with 'vilano daemon stop'.`
       );
     }
   } catch (error) {
@@ -192,7 +192,7 @@ async function assertNoRunningDaemon(action: string): Promise<void> {
 
     const detail = error instanceof Error ? error.message : String(error);
     throw new CliError(
-      `Cannot ${action} while the Vilano kernel is running or its status is unknown. Stop it first with 'vilano daemon stop'. (${detail})`
+      `Cannot ${action} while the Vilano Runtime kernel is running or its status is unknown. Stop it first with 'vilano daemon stop'. (${detail})`
     );
   }
 }

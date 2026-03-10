@@ -55,7 +55,7 @@ export async function handleDaemonCommand(
     case "status": {
       const status = await getRunningDaemonStatus();
       if (!status) {
-        writeOutput(flags, { ok: true, running: false }, () => "Vilano kernel is not running");
+        writeOutput(flags, { ok: true, running: false }, () => "Vilano Runtime kernel is not running");
         return 0;
       }
 
@@ -65,14 +65,14 @@ export async function handleDaemonCommand(
     case "stop": {
       const stopped = await stopDaemon();
       if (!stopped) {
-        writeOutput(flags, { ok: true, running: false }, () => "Vilano kernel is not running");
+        writeOutput(flags, { ok: true, running: false }, () => "Vilano Runtime kernel is not running");
         return 0;
       }
 
       writeOutput(
         flags,
         { ok: true, stopped: true, pid: stopped.pid, port: stopped.port },
-        (body) => `Vilano kernel stopped\npid: ${body.pid}\nport: ${body.port}`
+        (body) => `Vilano Runtime kernel stopped\npid: ${body.pid}\nport: ${body.port}`
       );
       return 0;
     }

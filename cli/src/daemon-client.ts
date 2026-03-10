@@ -135,12 +135,18 @@ export async function ensureDaemonStarted(
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT" && !bundle.source.bundled) {
         reject(
-          new Error("Failed to start the Vilano kernel because 'mix' was not found. Install Elixir 1.17+ and ensure `mix` is on your PATH.")
+          new Error(
+            "Failed to start the Vilano Runtime kernel because 'mix' was not found. Install Elixir 1.17+ and ensure `mix` is on your PATH."
+          )
         );
         return;
       }
       if (code === "ENOENT" && bundle.source.bundled) {
-        reject(new Error(`Failed to start the packaged Vilano kernel release at ${kernelReleaseExecutable}.`));
+        reject(
+          new Error(
+            `Failed to start the packaged Vilano Runtime kernel release at ${kernelReleaseExecutable}.`
+          )
+        );
         return;
       }
 
@@ -186,7 +192,7 @@ export async function ensureDaemonStarted(
         signal: NodeJS.Signals | null;
       };
       throw new Error(
-        `Vilano kernel exited before startup (code=${exit.code ?? "null"} signal=${exit.signal ?? "null"}). See ${runtimePaths.daemonStartupLogFile}`
+        `Vilano Runtime kernel exited before startup (code=${exit.code ?? "null"} signal=${exit.signal ?? "null"}). See ${runtimePaths.daemonStartupLogFile}`
       );
     }
 
@@ -204,7 +210,9 @@ export async function ensureDaemonStarted(
     }
   }
 
-  throw new Error(`Timed out waiting for the Vilano kernel to start. See ${runtimePaths.daemonStartupLogFile}`);
+  throw new Error(
+    `Timed out waiting for the Vilano Runtime kernel to start. See ${runtimePaths.daemonStartupLogFile}`
+  );
 }
 
 export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
@@ -236,14 +244,14 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
     const running = await pingKernelStatus(daemonState.port, daemonAuthState.authToken);
     if (!running) {
       if (await isProcessAlive(daemonState.pid)) {
-        throw new Error("Vilano kernel process is still running but the shutdown probe failed");
+        throw new Error("Vilano Runtime kernel process is still running but the shutdown probe failed");
       }
 
       await clearDaemonStateFiles();
       return null;
     }
 
-    throw new Error("Vilano kernel is running but refused the shutdown request");
+    throw new Error("Vilano Runtime kernel is running but refused the shutdown request");
   }
 
   const deadline = Date.now() + 5000;
@@ -278,7 +286,7 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
 
     await sleep(150);
   }
-  throw new Error("Timed out waiting for the Vilano kernel to stop");
+  throw new Error("Timed out waiting for the Vilano Runtime kernel to stop");
 }
 
 export async function getRunningDaemonStatus(): Promise<DaemonStatusResponse | null> {
@@ -315,7 +323,7 @@ export async function getRunningDaemonStatus(): Promise<DaemonStatusResponse | n
     }
 
     if (await isProcessAlive(daemonState.pid)) {
-      throw new Error("Vilano kernel process is still running but the status probe failed");
+      throw new Error("Vilano Runtime kernel process is still running but the status probe failed");
     }
 
     await clearDaemonStateFiles();
@@ -625,7 +633,7 @@ async function requestJson<T>({
   }
 
   if (!status) {
-    throw new Error("Vilano kernel is not running");
+    throw new Error("Vilano Runtime kernel is not running");
   }
 
   if (!daemonState) {
@@ -637,7 +645,7 @@ async function requestJson<T>({
   }
 
   if (!daemonState || !daemonAuthState) {
-    throw new Error("Vilano kernel state is missing from VILANO_HOME");
+    throw new Error("Vilano Runtime kernel state is missing from VILANO_HOME");
   }
 
   assertCompatibleKernelStatus(status);
@@ -736,7 +744,7 @@ function toDaemonStatus(state: DaemonState, body: KernelStatusBody): DaemonStatu
 function assertCompatibleKernelStatus(status: Pick<DaemonStatusResponse, "protocolVersion" | "runtimeVersion">): void {
   if (typeof status.protocolVersion !== "number" || status.protocolVersion !== CLI_PROTOCOL_VERSION) {
     throw new Error(
-      `Vilano CLI protocol version ${CLI_PROTOCOL_VERSION} is incompatible with kernel runtime ${status.runtimeVersion} (protocol ${status.protocolVersion})`
+      `Vilano Runtime CLI protocol version ${CLI_PROTOCOL_VERSION} is incompatible with kernel runtime ${status.runtimeVersion} (protocol ${status.protocolVersion})`
     );
   }
 }
