@@ -119,6 +119,7 @@ export async function handleInitCommand(
         `Wrote ${body.manifestPath}`,
         `workflows: ${body.manifest.definitions.workflows.length}`,
         `services: ${body.manifest.definitions.services.length}`,
+        "Review the generated manifest before relying on it; non-trivial export patterns may need manual edits.",
         "",
         "Next steps:",
         `  vilano project add ${projectPath === "." ? "." : projectPath} --name <project>`,

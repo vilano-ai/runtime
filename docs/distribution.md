@@ -1,7 +1,6 @@
 # Distribution
 
-This document describes the current runtime distribution model for Vilano `0.1` and the release
-artifacts it is moving toward.
+This document describes the current runtime distribution model for Vilano `0.1`.
 
 ## Install Layout
 
@@ -66,6 +65,9 @@ The generated installer installs the selected runtime into the managed layout de
 creates the stable launcher under `bin/`, and writes install state for `vilano update` /
 `vilano rollback`.
 
+The public installer defaults to the stable channel, just like `vilano update`. Preview installs are
+opt-in through `VILANO_RELEASE_CHANNEL=preview`.
+
 Each packaged runtime payload now includes a bundled Elixir kernel release, the bundled Bun
 runtime, CLI assets, worker assets, and an `install-manifest.json` describing the installed
 version's protocol/schema compatibility.
@@ -76,8 +78,20 @@ The repo also includes a dedicated release-install smoke path:
 bun run smoke:release-install
 ```
 
-That path installs the built artifact into a clean root using the generated `install.sh`, then
-verifies that the installed runtime can start the daemon and complete a real workflow.
+That path installs the built artifact into a clean root using the generated `install.sh`, verifies
+the launcher output and `PATH` guidance, runs `doctor`, checks `vilano update --check`, proves the
+bundled Bun worker can start without host Bun on `PATH`, starts the daemon, and completes a real
+workflow with inspect/replay coverage.
+
+For a multi-platform release bundle assembled from per-platform outputs, run:
+
+```bash
+VILANO_RELEASE_INPUT_DIR=/path/to/release-input bun run merge:release
+bun run verify:release
+```
+
+`verify:release` checks that the assembled `release.json` and `install.sh` agree, and that the
+bundle contains both supported platform artifacts before publication.
 
 ## Cloudflare Front Door
 
@@ -95,12 +109,17 @@ GitHub Releases for artifact download.
 Sync the generated assets into the Worker before deployment:
 
 ```bash
-bun run build:release
+VILANO_RELEASE_INPUT_DIR=/path/to/release-input bun run merge:release
+bun run verify:release
 bun run sync:installer-worker
 ```
 
-The tag-based release workflow publishes the GitHub release assets first, then deploys the Worker
-so the served `release.json` always points at live artifacts.
+That sync step should use the assembled multi-platform `dist/release/` output, not a single-platform
+`build:release` directory from one machine.
+
+The tag-based release workflow publishes the GitHub release assets first, verifies the assembled
+bundle and release notes, then deploys the Worker so the served `release.json` always points at
+live artifacts.
 
 ## Install / Update Direction
 
@@ -111,6 +130,10 @@ The installer and updater operate only on:
 - mutable daemon/database/artifact state under `state/`
 
 They should not treat the installed package contents as mutable runtime state.
+
+The installer writes the managed launcher to `<install-root>/bin/vilano`. If that directory is not
+already on `PATH`, the installer prints the exact command to verify the install and the `export
+PATH=...` snippet needed for direct `vilano` usage.
 
 ## Runtime Install Manifest
 
@@ -175,8 +198,8 @@ Current CLI support:
 
 ## Release Metadata
 
-The remote installer/update entrypoint should eventually consume a release metadata document served
-from the Vilano release endpoint.
+The public installer and updater both consume a release metadata document served from the Vilano
+release endpoint.
 
 Current shape:
 
@@ -221,8 +244,9 @@ That document is the contract for:
 - `vilano rollback`
 - release-channel selection
 
-The current updater surface uses the same metadata contract and install layout for:
+The current release surface uses the same metadata contract and install layout for:
 
+- release discovery during install (`install.sh`)
 - release discovery (`vilano update --check`)
 - artifact install and activation (`vilano update`)
 - managed-version rollback (`vilano rollback`)

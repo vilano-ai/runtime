@@ -53,8 +53,8 @@ Vilano Runtime is released under the [Apache-2.0 License](./LICENSE).
 - cancellation propagation across waits, child runs, service asks, and subprocesses
 - managed-worker hard-stop fallback for timed blocking steps
 - `run inspect` and `run replay` for durable operator visibility
-- packaged local install flow with runtime bundle materialization under `VILANO_HOME`
-  or the configured install root, depending on packaging mode
+- packaged local install flow with immutable runtime payloads under the managed install root
+  and mutable state under `VILANO_HOME`
 
 ## Status
 
@@ -83,9 +83,13 @@ The current support posture is documented in [docs/support-matrix.md](./docs/sup
 
 ```bash
 curl -fsSL https://runtime.vilano.ai/install.sh | bash
-vilano version
-vilano doctor
+~/.vilano/bin/vilano version
+~/.vilano/bin/vilano doctor
 ```
+
+The installer writes the managed launcher to `~/.vilano/bin/vilano`. Add `~/.vilano/bin` to your
+`PATH` if you want to use bare `vilano`. `install.sh` and `vilano update` both default to the
+stable channel. Preview installs are opt-in through `VILANO_RELEASE_CHANNEL=preview`.
 
 Then add the TypeScript SDK in your project:
 
@@ -108,6 +112,9 @@ Register the project and inspect what Vilano Runtime found:
 vilano project add /path/to/project --name my-project
 vilano workflow list --project my-project
 ```
+
+Registration validates the manifest contract, paths, and declared export names, but the worker still
+proves definition identity on first activation when it imports the module.
 
 Start a workflow:
 
@@ -161,10 +168,14 @@ The release-distribution path goes one step further:
   - builds a versioned runtime tarball under `dist/release/`
   - emits `dist/release/release.json`
   - emits `dist/release/install.sh`
+- `bun run merge:release`
+  - combines per-platform `release.json` fragments into one assembled bundle
+- `bun run verify:release`
+  - verifies the assembled `release.json` / `install.sh` pair and required supported platforms
 - `bun run smoke:release-install`
   - installs that artifact into a clean root using the generated installer
-  - verifies the managed launcher layout
-  - runs a real workflow from the installed runtime
+  - verifies the managed launcher output and `PATH` guidance
+  - verifies bundled-worker startup, `doctor`, inspect, and replay from the installed runtime
 
 The public installer/update front door is intended to live at:
 

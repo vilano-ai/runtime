@@ -93,4 +93,5 @@ For release-prep and distribution work, the repo also provides:
   - install the built artifact into a clean root and prove the installed launcher can run a real workflow
 
 For OSS `0.1`, explicit `vilano.manifest.json` files are the recommended path. Use
-`vilano init` to bootstrap one for existing TS/JS repos.
+`vilano init` to bootstrap one for existing TS/JS repos, and review the generated manifest before
+relying on it for non-trivial export patterns.

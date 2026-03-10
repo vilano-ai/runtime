@@ -13,10 +13,18 @@ It is intentionally thin:
 
 ## Local Flow
 
-Generate release assets, then sync them into the Worker public directory:
+For single-platform local smoke work, generate release assets with:
 
 ```bash
 bun run build:release
+```
+
+For publish-ready Worker assets, start from the assembled multi-platform `dist/release/` output
+produced by the release workflow or by a manual merge of per-platform bundles:
+
+```bash
+VILANO_RELEASE_INPUT_DIR=/path/to/release-input bun run merge:release
+bun run verify:release
 bun run sync:installer-worker
 ```
 

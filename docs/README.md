@@ -28,6 +28,7 @@ ignored by git.
 - [Release Notes Guide](./releases.md)
   - What each release note should say about support matrix, protocol version, and manifest
     compatibility.
+  - Release bodies live under `docs/release-notes/`.
 - [Tests](../tests/README.md)
   - Integration and soak coverage, including restart/churn expectations.
 
