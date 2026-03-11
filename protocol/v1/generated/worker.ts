@@ -1313,6 +1313,145 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/leases/{leaseId}/pubsub/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish a durable topic event from the active lease context. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        topic: string;
+                        key: string;
+                        payload?: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Topic publish state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TopicPublishResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/pubsub/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Subscribe the active service run to a durable topic. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        topic: string;
+                        signal: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Topic subscription state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TopicSubscriptionResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/pubsub/subscriptions/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Remove a durable topic subscription from the active service run. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        topic: string;
+                        signal: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Topic subscription removed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @constant */
+                            ok: true;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/leases/{leaseId}/services/ask": {
         parameters: {
             query?: never;
@@ -2048,6 +2187,26 @@ export interface components {
             mailbox: {
                 current: components["schemas"]["ServiceMailboxEnvelope"];
                 queued: components["schemas"]["ServiceMailboxQueuedSummary"];
+            };
+        };
+        TopicPublishResponse: {
+            /** @constant */
+            ok: true;
+            publish: {
+                publishId: string;
+                topic: string;
+                matched: number;
+                enqueued: number;
+                rejected: number;
+            };
+        };
+        TopicSubscriptionResponse: {
+            /** @constant */
+            ok: true;
+            subscription: {
+                topic: string;
+                signal: string;
+                serviceRunId: string;
             };
         };
         ServiceTurnDeferResponse: {

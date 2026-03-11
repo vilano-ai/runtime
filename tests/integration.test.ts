@@ -3318,6 +3318,182 @@ test("waiting services report explicit passivation wake reasons", async () => {
   }
 });
 
+test("topic publishes fan out into subscribed service signals", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/pubsubDeliveryCoordinator", {
+      sessionId: "pubsub-delivery",
+      topic: "repo.updated",
+      value: "alpha",
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+    const output = completed.run.output as
+      | {
+          publish?: { topic?: string; matched?: number; enqueued?: number; rejected?: number };
+          events?: {
+            subscriptions?: Array<{ topic?: string; signal?: string }>;
+            events?: Array<{ topic?: string; value?: string | null; signal?: string }>;
+          };
+        }
+      | undefined;
+
+    expect(output?.publish).toMatchObject({
+      topic: "repo.updated",
+      matched: 1,
+      enqueued: 1,
+      rejected: 0,
+    });
+    expect(output?.events?.subscriptions).toEqual([
+      {
+        topic: "repo.updated",
+        signal: "topicEvent",
+      },
+    ]);
+    expect(output?.events?.events).toHaveLength(1);
+    expect(output?.events?.events?.[0]).toMatchObject({
+      topic: "repo.updated",
+      value: "alpha",
+      signal: "topicEvent",
+    });
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("topic publishes are deduped by caller op key", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/pubsubDedupeCoordinator", {
+      sessionId: "pubsub-dedupe",
+      topic: "repo.deduped",
+      value: "once",
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+    const output = completed.run.output as
+      | {
+          first?: { publishId?: string; matched?: number; enqueued?: number; rejected?: number };
+          second?: { publishId?: string; matched?: number; enqueued?: number; rejected?: number };
+          events?: { events?: Array<{ topic?: string; value?: string | null }> };
+        }
+      | undefined;
+
+    expect(output?.first?.publishId).toBeTruthy();
+    expect(output?.second?.publishId).toBe(output?.first?.publishId);
+    expect(output?.first).toMatchObject({
+      matched: 1,
+      enqueued: 1,
+      rejected: 0,
+    });
+    expect(output?.second).toMatchObject({
+      matched: 1,
+      enqueued: 1,
+      rejected: 0,
+    });
+    expect(output?.events?.events).toHaveLength(1);
+    expect(output?.events?.events?.[0]).toMatchObject({
+      topic: "repo.deduped",
+      value: "once",
+    });
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("services can unsubscribe from topics and stop receiving published events", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/pubsubUnsubscribeCoordinator", {
+      sessionId: "pubsub-unsubscribe",
+      topic: "repo.unsubscribed",
+      value: "ignored",
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+    const output = completed.run.output as
+      | {
+          publish?: { matched?: number; enqueued?: number; rejected?: number };
+          events?: {
+            subscriptions?: Array<unknown>;
+            events?: Array<unknown>;
+          };
+        }
+      | undefined;
+
+    expect(output?.publish).toMatchObject({
+      matched: 0,
+      enqueued: 0,
+      rejected: 0,
+    });
+    expect(output?.events?.subscriptions).toEqual([]);
+    expect(output?.events?.events).toEqual([]);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("topic subscriptions survive daemon restart and still receive future publishes", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { sessionId: "pubsub-restart" };
+
+  try {
+    await harness.askService("demo/pubsubProbe", "subscribeTopic", keyInput, {
+      topic: "repo.restarted",
+      signal: "topicEvent",
+    });
+
+    await harness.restartDaemon();
+
+    const run = await harness.startWorkflow("demo/topicPublisher", {
+      topic: "repo.restarted",
+      value: "after-restart",
+    });
+
+    await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+
+    const events = (await harness.askService(
+      "demo/pubsubProbe",
+      "events",
+      keyInput,
+      {}
+    )) as {
+      subscriptions?: Array<{ topic?: string; signal?: string }>;
+      events?: Array<{ topic?: string; value?: string | null; signal?: string }>;
+    };
+
+    expect(events.subscriptions).toEqual([
+      {
+        topic: "repo.restarted",
+        signal: "topicEvent",
+      },
+    ]);
+    expect(events.events).toHaveLength(1);
+    expect(events.events?.[0]).toMatchObject({
+      topic: "repo.restarted",
+      value: "after-restart",
+      signal: "topicEvent",
+    });
+  } finally {
+    await harness.dispose();
+  }
+});
+
 async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
 

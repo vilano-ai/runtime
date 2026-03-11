@@ -811,6 +811,104 @@ export const boundedMailboxOverflowWorkflow = workflow({
   },
 });
 
+export const topicPublisher = workflow({
+  name: "topicPublisher",
+  run: async (
+    input: { topic: string; value?: string; key?: string },
+    ctx
+  ) => {
+    return await ctx.publish(
+      input.topic,
+      { value: input.value ?? input.topic },
+      { key: input.key }
+    );
+  },
+});
+
+export const pubsubDeliveryCoordinator = workflow({
+  name: "pubsubDeliveryCoordinator",
+  run: async (
+    input: { sessionId: string; topic: string; value?: string },
+    ctx
+  ) => {
+    const ref = await ctx.connect(pubsubProbe, { sessionId: input.sessionId });
+    const subscription = await ref.ask.subscribeTopic({
+      topic: input.topic,
+      signal: "topicEvent",
+    });
+    const publish = await ctx.publish(input.topic, {
+      value: input.value ?? input.topic,
+    });
+    const events = await ref.ask.events();
+
+    return {
+      subscription,
+      publish,
+      events,
+    };
+  },
+});
+
+export const pubsubDedupeCoordinator = workflow({
+  name: "pubsubDedupeCoordinator",
+  run: async (
+    input: { sessionId: string; topic: string; value?: string },
+    ctx
+  ) => {
+    const ref = await ctx.connect(pubsubProbe, { sessionId: input.sessionId });
+    await ref.ask.subscribeTopic({
+      topic: input.topic,
+      signal: "topicEvent",
+    });
+
+    const first = await ctx.publish(
+      input.topic,
+      { value: input.value ?? input.topic },
+      { key: "deduped-publish" }
+    );
+    const second = await ctx.publish(
+      input.topic,
+      { value: input.value ?? input.topic },
+      { key: "deduped-publish" }
+    );
+    const events = await ref.ask.events();
+
+    return {
+      first,
+      second,
+      events,
+    };
+  },
+});
+
+export const pubsubUnsubscribeCoordinator = workflow({
+  name: "pubsubUnsubscribeCoordinator",
+  run: async (
+    input: { sessionId: string; topic: string; value?: string },
+    ctx
+  ) => {
+    const ref = await ctx.connect(pubsubProbe, { sessionId: input.sessionId });
+    await ref.ask.subscribeTopic({
+      topic: input.topic,
+      signal: "topicEvent",
+    });
+    await ref.ask.unsubscribeTopic({
+      topic: input.topic,
+      signal: "topicEvent",
+    });
+
+    const publish = await ctx.publish(input.topic, {
+      value: input.value ?? input.topic,
+    });
+    const events = await ref.ask.events();
+
+    return {
+      publish,
+      events,
+    };
+  },
+});
+
 export const reviewer = service({
   name: "reviewer",
   key: (input: { repoId: string }) => input.repoId,
@@ -1159,6 +1257,104 @@ export const optionsPayloadProbe = service({
   onAsk: {
     echo: async (payload: { key: string; timeout: string }) => ({
       reply: payload,
+    }),
+  },
+});
+
+export const pubsubProbe = service({
+  name: "pubsubProbe",
+  key: (input: { sessionId: string }) => input.sessionId,
+  init: async (input: { sessionId: string }) => ({
+    sessionId: input.sessionId,
+    subscriptions: [] as Array<{ topic: string; signal: string }>,
+    events: [] as Array<{
+      topic: string;
+      value: string | null;
+      publishId: string;
+      publisherRunId: string;
+      signal: string;
+    }>,
+  }),
+  onAsk: {
+    subscribeTopic: async (
+      payload: { topic: string; signal?: string },
+      state,
+      ctx
+    ) => {
+      const subscription = await ctx.subscribe(payload.topic, {
+        signal: payload.signal ?? "topicEvent",
+      });
+
+      return {
+        state: {
+          ...state,
+          subscriptions: [
+            ...state.subscriptions.filter(
+              (entry) =>
+                !(entry.topic === subscription.topic && entry.signal === subscription.signal)
+            ),
+            {
+              topic: subscription.topic,
+              signal: subscription.signal,
+            },
+          ],
+        },
+        reply: subscription,
+      };
+    },
+    unsubscribeTopic: async (
+      payload: { topic: string; signal?: string },
+      state,
+      ctx
+    ) => {
+      const signal = payload.signal ?? "topicEvent";
+      await ctx.unsubscribe(payload.topic, { signal });
+
+      return {
+        state: {
+          ...state,
+          subscriptions: state.subscriptions.filter(
+            (entry) => !(entry.topic === payload.topic && entry.signal === signal)
+          ),
+        },
+        reply: {
+          ok: true,
+        },
+      };
+    },
+    events: async (_payload: void, state) => ({
+      reply: {
+        subscriptions: state.subscriptions,
+        events: state.events,
+      },
+    }),
+  },
+  onSignal: {
+    topicEvent: async (
+      payload: {
+        topic: string;
+        payload?: { value?: string | null } | null;
+        publishId: string;
+        publisherRunId: string;
+      },
+      state
+    ) => ({
+      state: {
+        ...state,
+        events: [
+          ...state.events,
+          {
+            topic: payload.topic,
+            value:
+              payload.payload && typeof payload.payload === "object" && "value" in payload.payload
+                ? ((payload.payload as { value?: string | null }).value ?? null)
+                : null,
+            publishId: payload.publishId,
+            publisherRunId: payload.publisherRunId,
+            signal: "topicEvent",
+          },
+        ],
+      },
     }),
   },
 });

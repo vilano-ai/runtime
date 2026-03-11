@@ -8,6 +8,7 @@ defmodule VilanoKernel.Storage.Migrations do
     AddRunLeaseAuthToken,
     AddRunRelationshipsAndExitEvents,
     AddRunSupervisionGroups,
+    AddPubsubTopics,
     AddRunStepRetryColumns,
     AddRunSnapshotsAndProjectSnapshots,
     AddServiceEnvelopeAttemptColumn,
@@ -31,7 +32,8 @@ defmodule VilanoKernel.Storage.Migrations do
     AddRunEventsUniqueIndex,
     AddRunRelationshipsAndExitEvents,
     AddRunSupervisionGroups,
-    AddServiceEnvelopeWakeAt
+    AddServiceEnvelopeWakeAt,
+    AddPubsubTopics
   ]
 
   def ensure_tracking_table! do

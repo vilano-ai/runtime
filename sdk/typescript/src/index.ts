@@ -211,6 +211,20 @@ export interface ServiceMailboxInfo {
   queued: ServiceMailboxQueuedSummary;
 }
 
+export interface TopicPublishResult {
+  publishId: string;
+  topic: string;
+  matched: number;
+  enqueued: number;
+  rejected: number;
+}
+
+export interface TopicSubscriptionRef {
+  topic: string;
+  signal: string;
+  serviceRunId: string;
+}
+
 export interface TurnContext {
   readonly runId: string;
   readonly turnAttempt: number;
@@ -222,6 +236,7 @@ export interface TurnContext {
   exec<TOutput = ExecResult>(spec: ExecSpec<TOutput>): Promise<TOutput>;
   sleep(duration: string, options?: { key?: string }): Promise<void>;
   waitForSignal(name: string, options?: { key?: string }): Promise<unknown>;
+  publish(topic: string, payload?: unknown, options?: MessageOptions): Promise<TopicPublishResult>;
   supervise(options: SuperviseOptions): Promise<WorkflowSupervisionGroup>;
   trapExit(enabled?: boolean): Promise<void>;
   nextExit(options?: { key?: string }): Promise<ExitEvent>;
@@ -257,6 +272,8 @@ export interface TurnContext {
 
 export interface ServiceTurnContext extends TurnContext {
   mailbox(): Promise<ServiceMailboxInfo>;
+  subscribe(topic: string, options?: { signal?: string }): Promise<TopicSubscriptionRef>;
+  unsubscribe(topic: string, options?: { signal?: string }): Promise<void>;
   defer(options: { delay: string; reason?: string }): Promise<never>;
   reject(error: { message: string; reason?: string; details?: unknown }): Promise<never>;
 }

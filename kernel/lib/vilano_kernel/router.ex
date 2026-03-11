@@ -792,6 +792,45 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  post "/v1/leases/:lease_id/pubsub/publish" do
+    topic = fetch_required_string(conn.body_params, "topic")
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.resolve_topic_publish(lease_id, topic, key, Map.get(conn.body_params, "payload")) do
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+
+      publish ->
+        send_json(conn, 200, %{ok: true, publish: publish})
+    end
+  end
+
+  post "/v1/leases/:lease_id/pubsub/subscriptions" do
+    topic = fetch_required_string(conn.body_params, "topic")
+    signal_name = fetch_required_string(conn.body_params, "signal")
+
+    case Storage.subscribe_service_topic(lease_id, topic, signal_name) do
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown active service lease: #{lease_id}")
+
+      subscription ->
+        send_json(conn, 200, %{ok: true, subscription: subscription})
+    end
+  end
+
+  post "/v1/leases/:lease_id/pubsub/subscriptions/delete" do
+    topic = fetch_required_string(conn.body_params, "topic")
+    signal_name = fetch_required_string(conn.body_params, "signal")
+
+    case Storage.unsubscribe_service_topic(lease_id, topic, signal_name) do
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown active service lease: #{lease_id}")
+
+      _result ->
+        send_json(conn, 200, %{ok: true})
+    end
+  end
+
   post "/v1/leases/:lease_id/services/ask" do
     service_run_id = fetch_required_string(conn.body_params, "serviceRunId")
     name = fetch_required_string(conn.body_params, "name")

@@ -126,6 +126,26 @@ interface SingletonLookupResponse {
   };
 }
 
+interface TopicPublishResponse {
+  ok: true;
+  publish: {
+    publishId: string;
+    topic: string;
+    matched: number;
+    enqueued: number;
+    rejected: number;
+  };
+}
+
+interface TopicSubscriptionResponse {
+  ok: true;
+  subscription: {
+    topic: string;
+    signal: string;
+    serviceRunId: string;
+  };
+}
+
 interface ServiceTurnMailboxResponse {
   ok: true;
   mailbox: {
@@ -635,6 +655,43 @@ export class WorkerClient {
     );
 
     return response.run;
+  }
+
+  async resolveTopicPublish(
+    leaseId: string,
+    spec: { topic: string; key: string; payload: unknown }
+  ): Promise<TopicPublishResponse["publish"]> {
+    const response = await this.request<TopicPublishResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/pubsub/publish`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.publish;
+  }
+
+  async subscribeTopic(
+    leaseId: string,
+    spec: { topic: string; signal: string }
+  ): Promise<TopicSubscriptionResponse["subscription"]> {
+    const response = await this.request<TopicSubscriptionResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/pubsub/subscriptions`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.subscription;
+  }
+
+  async unsubscribeTopic(leaseId: string, spec: { topic: string; signal: string }): Promise<void> {
+    await this.request(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/pubsub/subscriptions/delete`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
   }
 
   async resolveServiceSend(

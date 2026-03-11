@@ -3384,6 +3384,182 @@ defmodule VilanoKernel.Storage do
     |> unwrap_transaction_result()
   end
 
+  def resolve_topic_publish(lease_id, topic, op_key, payload) do
+    now = Infrastructure.now_iso8601()
+
+    Infrastructure.transaction_with_busy_retry(fn ->
+      case get_fenced_run_by_lease(lease_id, now) do
+        nil ->
+          nil
+
+        caller_run ->
+          case get_run_topic_publish(caller_run["id"], op_key) do
+            nil ->
+              ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
+              publish_id = "pub_" <> Ecto.UUID.generate()
+              subscriptions = list_topic_subscription_targets(caller_run["project"], topic)
+
+              {enqueued_count, rejected_count} =
+                Enum.reduce(subscriptions, {0, 0}, fn subscription, {enqueued, rejected} ->
+                  service_run = service_run_from_row(subscription, subscription)
+
+                  delivery_payload = %{
+                    "topic" => topic,
+                    "payload" => payload,
+                    "publishId" => publish_id,
+                    "publisherRunId" => caller_run["id"],
+                    "publishedAt" => now
+                  }
+
+                  case maybe_insert_service_envelope(
+                         service_run,
+                         "signal",
+                         subscription["signal_name"],
+                         delivery_payload,
+                         nil,
+                         caller_run["id"],
+                         now
+                       ) do
+                    {:ok, _envelope_id} -> {enqueued + 1, rejected}
+                    {:error, _error} -> {enqueued, rejected + 1}
+                  end
+                end)
+
+              matched_count = length(subscriptions)
+
+              SQL.query!(
+                Repo,
+                """
+                insert into run_topic_publishes (
+                  caller_run_id,
+                  op_key,
+                  publish_id,
+                  topic,
+                  payload_json,
+                  matched_count,
+                  enqueued_count,
+                  rejected_count,
+                  created_at,
+                  updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                  caller_run["id"],
+                  op_key,
+                  publish_id,
+                  topic,
+                  maybe_encode_json(payload),
+                  matched_count,
+                  enqueued_count,
+                  rejected_count,
+                  now,
+                  now
+                ]
+              )
+
+              append_event!(
+                caller_run["id"],
+                "TopicPublished",
+                %{
+                  "key" => op_key,
+                  "publishId" => publish_id,
+                  "topic" => topic,
+                  "matched" => matched_count,
+                  "enqueued" => enqueued_count,
+                  "rejected" => rejected_count
+                },
+                now
+              )
+
+              ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
+              topic_publish_from_row(get_run_topic_publish(caller_run["id"], op_key))
+
+            publish ->
+              topic_publish_from_row(publish)
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def subscribe_service_topic(lease_id, topic, signal_name) do
+    now = Infrastructure.now_iso8601()
+
+    Infrastructure.transaction_with_busy_retry(fn ->
+      with service_run when not is_nil(service_run) <- get_fenced_run_by_lease(lease_id, now),
+           "service" <- service_run["definitionKind"] do
+        ensure_fenced_run_ownership!(service_run["id"], lease_id, now)
+        existing = get_topic_subscription(topic, service_run["id"], signal_name)
+
+        _changes =
+          write_changes!(
+            """
+            insert into topic_subscriptions (
+              topic,
+              service_run_id,
+              signal_name,
+              created_at,
+              updated_at
+            ) values (?, ?, ?, ?, ?)
+            on conflict(topic, service_run_id, signal_name) do update set
+              updated_at = excluded.updated_at
+            """,
+            [topic, service_run["id"], signal_name, now, now]
+          )
+
+        if is_nil(existing) do
+          append_event!(
+            service_run["id"],
+            "TopicSubscribed",
+            %{"topic" => topic, "signal" => signal_name},
+            now
+          )
+        end
+
+        ensure_fenced_run_ownership!(service_run["id"], lease_id, now)
+        topic_subscription_from_row(get_topic_subscription(topic, service_run["id"], signal_name))
+      else
+        _ -> nil
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def unsubscribe_service_topic(lease_id, topic, signal_name) do
+    now = Infrastructure.now_iso8601()
+
+    Infrastructure.transaction_with_busy_retry(fn ->
+      with service_run when not is_nil(service_run) <- get_fenced_run_by_lease(lease_id, now),
+           "service" <- service_run["definitionKind"] do
+        ensure_fenced_run_ownership!(service_run["id"], lease_id, now)
+
+        deleted =
+          write_changes!(
+            """
+            delete from topic_subscriptions
+            where topic = ? and service_run_id = ? and signal_name = ?
+            """,
+            [topic, service_run["id"], signal_name]
+          )
+
+        if deleted > 0 do
+          append_event!(
+            service_run["id"],
+            "TopicUnsubscribed",
+            %{"topic" => topic, "signal" => signal_name},
+            now
+          )
+        end
+
+        ensure_fenced_run_ownership!(service_run["id"], lease_id, now)
+        %{"ok" => true}
+      else
+        _ -> nil
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
   def send_run_signal(run_id, signal_name, payload) do
     now = Infrastructure.now_iso8601()
     signal_id = "sig_" <> Ecto.UUID.generate()
@@ -3671,6 +3847,28 @@ defmodule VilanoKernel.Storage do
       |> Map.put("state", decode_json_value(service_row["state_json"], nil))
 
     run
+  end
+
+  defp topic_subscription_from_row(nil), do: nil
+
+  defp topic_subscription_from_row(row) do
+    %{
+      "topic" => row["topic"],
+      "signal" => row["signal_name"],
+      "serviceRunId" => row["service_run_id"]
+    }
+  end
+
+  defp topic_publish_from_row(nil), do: nil
+
+  defp topic_publish_from_row(row) do
+    %{
+      "publishId" => row["publish_id"],
+      "topic" => row["topic"],
+      "matched" => row["matched_count"],
+      "enqueued" => row["enqueued_count"],
+      "rejected" => row["rejected_count"]
+    }
   end
 
   defp project_record_for_run(run) do
@@ -4793,6 +4991,95 @@ defmodule VilanoKernel.Storage do
     )
     |> rows_to_maps()
     |> Enum.map(&service_run_from_row(&1, &1))
+  end
+
+  defp get_topic_subscription(topic, service_run_id, signal_name) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        topic,
+        service_run_id,
+        signal_name,
+        created_at,
+        updated_at
+      from topic_subscriptions
+      where topic = ? and service_run_id = ? and signal_name = ?
+      """,
+      [topic, service_run_id, signal_name]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
+  defp list_topic_subscription_targets(project_name, topic) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        s.topic,
+        s.signal_name,
+        r.id,
+        r.project_name,
+        r.definition_kind,
+        r.definition_name,
+        r.project_snapshot_path,
+        r.project_definitions_json,
+        r.definition_file,
+        r.definition_export_name,
+        r.definition_runtime_kind,
+        r.definition_source_language,
+        r.status,
+        r.lease_id,
+        r.lease_worker_id,
+        r.lease_expires_at,
+        r.input_json,
+        r.output_json,
+        r.error_json,
+        r.created_at,
+        r.updated_at,
+        sr.service_key,
+        sr.key_input_json,
+        sr.state_json,
+        sr.created_at as service_created_at,
+        sr.updated_at as service_updated_at
+      from topic_subscriptions s
+      join runs r on r.id = s.service_run_id
+      join service_runs sr on sr.run_id = r.id
+      where
+        s.topic = ?
+        and r.project_name = ?
+        and r.definition_kind = 'service'
+        and r.status != 'stopped'
+      order by s.created_at asc, s.signal_name asc, r.id asc
+      """,
+      [topic, project_name]
+    )
+    |> rows_to_maps()
+  end
+
+  defp get_run_topic_publish(caller_run_id, op_key) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        caller_run_id,
+        op_key,
+        publish_id,
+        topic,
+        payload_json,
+        matched_count,
+        enqueued_count,
+        rejected_count,
+        created_at,
+        updated_at
+      from run_topic_publishes
+      where caller_run_id = ? and op_key = ?
+      """,
+      [caller_run_id, op_key]
+    )
+    |> rows_to_maps()
+    |> List.first()
   end
 
   defp deterministic_service_run_id(project_name, definition_name, service_key) do

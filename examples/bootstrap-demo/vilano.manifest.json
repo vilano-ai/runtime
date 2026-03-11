@@ -76,6 +76,38 @@
       },
       {
         "kind": "workflow",
+        "name": "topicPublisher",
+        "exportName": "topicPublisher",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "pubsubDeliveryCoordinator",
+        "exportName": "pubsubDeliveryCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "pubsubDedupeCoordinator",
+        "exportName": "pubsubDedupeCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "pubsubUnsubscribeCoordinator",
+        "exportName": "pubsubUnsubscribeCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "childTask",
         "exportName": "childTask",
         "file": "src/definitions.ts",
@@ -448,6 +480,14 @@
         "kind": "service",
         "name": "optionsPayloadProbe",
         "exportName": "optionsPayloadProbe",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "service",
+        "name": "pubsubProbe",
+        "exportName": "pubsubProbe",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"

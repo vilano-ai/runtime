@@ -630,6 +630,42 @@ components:
               $ref: '#/components/schemas/ServiceMailboxEnvelope'
             queued:
               $ref: '#/components/schemas/ServiceMailboxQueuedSummary'
+    TopicPublishResponse:
+      type: object
+      required: [ok, publish]
+      properties:
+        ok:
+          const: true
+        publish:
+          type: object
+          required: [publishId, topic, matched, enqueued, rejected]
+          properties:
+            publishId:
+              type: string
+            topic:
+              type: string
+            matched:
+              type: integer
+            enqueued:
+              type: integer
+            rejected:
+              type: integer
+    TopicSubscriptionResponse:
+      type: object
+      required: [ok, subscription]
+      properties:
+        ok:
+          const: true
+        subscription:
+          type: object
+          required: [topic, signal, serviceRunId]
+          properties:
+            topic:
+              type: string
+            signal:
+              type: string
+            serviceRunId:
+              type: string
     ServiceTurnDeferResponse:
       type: object
       required: [ok, run]
@@ -1534,6 +1570,95 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ServiceRunResponse'
+  /v1/leases/{leaseId}/pubsub/publish:
+    post:
+      summary: Publish a durable topic event from the active lease context.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [topic, key]
+              properties:
+                topic:
+                  type: string
+                key:
+                  type: string
+                payload: {}
+      responses:
+        '200':
+          description: Topic publish state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicPublishResponse'
+  /v1/leases/{leaseId}/pubsub/subscriptions:
+    post:
+      summary: Subscribe the active service run to a durable topic.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [topic, signal]
+              properties:
+                topic:
+                  type: string
+                signal:
+                  type: string
+      responses:
+        '200':
+          description: Topic subscription state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicSubscriptionResponse'
+  /v1/leases/{leaseId}/pubsub/subscriptions/delete:
+    post:
+      summary: Remove a durable topic subscription from the active service run.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [topic, signal]
+              properties:
+                topic:
+                  type: string
+                signal:
+                  type: string
+      responses:
+        '200':
+          description: Topic subscription removed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    const: true
   /v1/leases/{leaseId}/services/ask:
     post:
       summary: Resolve or suspend on a service ask.

@@ -28,6 +28,8 @@ import type {
   SpawnOptions,
   StepContext,
   StepOptions,
+  TopicPublishResult,
+  TopicSubscriptionRef,
   WorkflowSupervisionGroup,
   WorkflowHandle,
   WorkflowContext,
@@ -664,6 +666,27 @@ function createTurnContext(
 
       throw new RunSuspendedError("signal", key);
     },
+    async publish(
+      topic: string,
+      payload?: unknown,
+      options?: MessageOptions
+    ): Promise<TopicPublishResult> {
+      const key = scopeActivationOpKey(
+        activation,
+        nextImplicitActivationOpKey(
+          implicitActivationOpCounters,
+          "publish",
+          topic,
+          options?.key
+        )
+      );
+
+      return await client.resolveTopicPublish(activation.leaseId, {
+        topic,
+        key,
+        payload: payload ?? null,
+      });
+    },
     async supervise(options: SuperviseOptions): Promise<WorkflowSupervisionGroup> {
       const key = scopeActivationOpKey(
         activation,
@@ -824,6 +847,26 @@ function createTurnContext(
       }
 
       return await client.getServiceTurnMailbox(activation.leaseId, activation.envelope.id);
+    },
+    async subscribe(topic: string, options?: { signal?: string }): Promise<TopicSubscriptionRef> {
+      if (activation.kind !== "service_turn") {
+        throw new Error("ctx.subscribe() is only available in service turns");
+      }
+
+      return await client.subscribeTopic(activation.leaseId, {
+        topic,
+        signal: options?.signal ?? topic,
+      });
+    },
+    async unsubscribe(topic: string, options?: { signal?: string }): Promise<void> {
+      if (activation.kind !== "service_turn") {
+        throw new Error("ctx.unsubscribe() is only available in service turns");
+      }
+
+      await client.unsubscribeTopic(activation.leaseId, {
+        topic,
+        signal: options?.signal ?? topic,
+      });
     },
     async defer(options: { delay: string; reason?: string }): Promise<never> {
       if (activation.kind !== "service_turn") {
@@ -1274,6 +1317,7 @@ function nextImplicitActivationOpKey(
     | "spawn"
     | "step"
     | "exec"
+    | "publish"
     | "sleep"
     | "wait_for_signal"
     | "monitor"
