@@ -909,6 +909,17 @@ export const pubsubUnsubscribeCoordinator = workflow({
   },
 });
 
+export const pubsubInvalidSubscriptionCoordinator = workflow({
+  name: "pubsubInvalidSubscriptionCoordinator",
+  run: async (input: { sessionId: string; topic: string; signal: string }, ctx) => {
+    const ref = await ctx.connect(pubsubProbe, { sessionId: input.sessionId });
+    return await ref.ask.subscribeInvalidTopic({
+      topic: input.topic,
+      signal: input.signal,
+    });
+  },
+});
+
 export const reviewer = service({
   name: "reviewer",
   key: (input: { repoId: string }) => input.repoId,
@@ -1299,6 +1310,20 @@ export const pubsubProbe = service({
             },
           ],
         },
+        reply: subscription,
+      };
+    },
+    subscribeInvalidTopic: async (
+      payload: { topic: string; signal: string },
+      state,
+      ctx
+    ) => {
+      const subscription = await ctx.subscribe(payload.topic, {
+        signal: payload.signal,
+      });
+
+      return {
+        state,
         reply: subscription,
       };
     },

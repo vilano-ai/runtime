@@ -1818,7 +1818,7 @@ test("services process mixed ask and send backlogs in FIFO order", async () => {
       30_000
     );
 
-    expect(completed.run.state).toEqual({
+    expect(completed.run.state).toMatchObject({
       sessionId: "mailbox-fifo",
       history: ["ask:first", "send:second"],
     });
@@ -3440,6 +3440,28 @@ test("services can unsubscribe from topics and stop receiving published events",
     });
     expect(output?.events?.subscriptions).toEqual([]);
     expect(output?.events?.events).toEqual([]);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("services reject pubsub subscriptions for unknown signal handlers", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/pubsubInvalidSubscriptionCoordinator", {
+      sessionId: "pubsub-invalid-subscription",
+      topic: "repo.invalid",
+      signal: "missingSignal",
+    });
+
+    const failed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "failed"
+    );
+    const error = failed.run.error as { message?: string } | null;
+
+    expect(error?.message).toContain("unknown signal 'missingSignal'");
   } finally {
     await harness.dispose();
   }

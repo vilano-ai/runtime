@@ -108,6 +108,14 @@
       },
       {
         "kind": "workflow",
+        "name": "pubsubInvalidSubscriptionCoordinator",
+        "exportName": "pubsubInvalidSubscriptionCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "childTask",
         "exportName": "childTask",
         "file": "src/definitions.ts",

@@ -280,7 +280,8 @@ function createTurnContext(
   adapter: RuntimeAdapter,
   client: WorkerClient,
   activation: Activation,
-  activationCwd: string
+  activationCwd: string,
+  currentServiceDefinition: ServiceDefinition<any, any, any, any, any> | null = null
 ): ServiceTurnContext {
   const implicitActivationOpCounters = new Map<string, number>();
   const implicitServiceOpCounters = new Map<string, number>();
@@ -853,9 +854,18 @@ function createTurnContext(
         throw new Error("ctx.subscribe() is only available in service turns");
       }
 
+      const signal = options?.signal ?? topic;
+      const availableSignals = currentServiceDefinition?.onSignal;
+      if (!availableSignals || !(signal in availableSignals)) {
+        const serviceName = currentServiceDefinition?.name ?? activation.definition.name;
+        throw new Error(
+          `Service '${serviceName}' cannot subscribe topic '${topic}' with unknown signal '${signal}'`
+        );
+      }
+
       return await client.subscribeTopic(activation.leaseId, {
         topic,
-        signal: options?.signal ?? topic,
+        signal,
       });
     },
     async unsubscribe(topic: string, options?: { signal?: string }): Promise<void> {
@@ -1183,7 +1193,7 @@ async function executeServiceTurn(
   definition: ServiceDefinition<any, any, any, any, any>,
   activationCwd: string
 ): Promise<void> {
-  const ctx = createTurnContext(adapter, client, activation, activationCwd);
+  const ctx = createTurnContext(adapter, client, activation, activationCwd, definition);
   let state = activation.service.state;
   let shouldCommitState = false;
 
