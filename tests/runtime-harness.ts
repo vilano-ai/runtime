@@ -59,6 +59,7 @@ export class RuntimeHarness {
       const harness = new RuntimeHarness(runtimeHome, port, {
         VILANO_KERNEL_NO_COMPILE: "1",
         VILANO_KERNEL_PORT: String(port),
+        VILANO_REPO_POOL_SIZE: "1",
         ...(options.env ?? {}),
       });
 
