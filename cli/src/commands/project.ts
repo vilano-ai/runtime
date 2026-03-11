@@ -11,7 +11,11 @@ import {
 import { renderProject, renderProjectSummary, writeOutput } from "../output.ts";
 import { materializeProjectSnapshot, pruneAllProjectSnapshots } from "../project-snapshot.ts";
 import { validateProjectDefinitionsIdentity } from "../project-definition-validation.ts";
-import { getProjectManifestPath, writeExplicitProjectManifest } from "../project-manifest.ts";
+import {
+  getProjectManifestPath,
+  hashDefinitions,
+  writeExplicitProjectManifest,
+} from "../project-manifest.ts";
 import { buildProjectManifest } from "../registry.ts";
 import { CliError } from "../cli-error.ts";
 import type { ProjectRecord } from "../types.ts";
@@ -43,7 +47,13 @@ export async function handleProjectCommand(
 
       await warnIfUsingGeneratedManifestFallback(projectPath);
       const manifest = await buildProjectManifest(nameFlag, projectPath, { regenerate: true });
-      manifest.snapshotPath = await materializeValidatedProjectSnapshot(nameFlag, manifest.path, manifest.definitions);
+      const validated = await materializeValidatedProjectSnapshot(
+        nameFlag,
+        manifest.path,
+        manifest.definitions
+      );
+      manifest.snapshotPath = validated.snapshotPath;
+      manifest.definitionsManifestHash = validated.definitionsManifestHash;
       const response = await addProject(manifest);
       await pruneRegisteredProjectSnapshots(response.project.name);
       writeOutput(flags, response, (body) => renderProject(body.project));
@@ -82,11 +92,13 @@ export async function handleProjectCommand(
       const manifest = await buildProjectManifest(existing.project.name, existing.project.path, {
         regenerate: true,
       });
-      manifest.snapshotPath = await materializeValidatedProjectSnapshot(
+      const validated = await materializeValidatedProjectSnapshot(
         existing.project.name,
         manifest.path,
         manifest.definitions
       );
+      manifest.snapshotPath = validated.snapshotPath;
+      manifest.definitionsManifestHash = validated.definitionsManifestHash;
       const response = await syncProject(manifest);
       await pruneRegisteredProjectSnapshots(response.project.name);
       writeOutput(flags, response, (body) => renderProject(body.project));
@@ -144,15 +156,22 @@ async function materializeValidatedProjectSnapshot(
   projectName: string,
   projectPath: string,
   definitions: ProjectRecord["definitions"]
-): Promise<string> {
+): Promise<{ snapshotPath: string; definitionsManifestHash: string }> {
   const snapshotPath = await materializeProjectSnapshot(projectName, projectPath);
 
   try {
-    await validateProjectDefinitionsIdentity(snapshotPath, [
+    const validated = await validateProjectDefinitionsIdentity(snapshotPath, [
       ...definitions.workflows,
       ...definitions.services,
     ]);
-    return snapshotPath;
+
+    definitions.workflows = validated.filter((definition) => definition.kind === "workflow");
+    definitions.services = validated.filter((definition) => definition.kind === "service");
+
+    return {
+      snapshotPath,
+      definitionsManifestHash: hashDefinitions(definitions),
+    };
   } catch (error) {
     await fs.rm(snapshotPath, { recursive: true, force: true }).catch(() => undefined);
     const message = error instanceof Error ? error.message : String(error);

@@ -386,6 +386,134 @@ components:
           properties:
             status:
               type: string
+    RelationshipRef:
+      type: object
+      required: [id, targetRunId, kind, propagate, status]
+      properties:
+        id:
+          type: string
+        targetRunId:
+          type: string
+        kind:
+          enum: [monitor, link]
+        propagate:
+          enum: [abnormal, all]
+        status:
+          enum: [active, triggered]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    RelationshipResolveResponse:
+      type: object
+      required: [ok, relationship]
+      properties:
+        ok:
+          const: true
+        relationship:
+          $ref: '#/components/schemas/RelationshipRef'
+    SupervisionGroupRef:
+      type: object
+      required: [id, strategy, maxRestarts, windowMs, onExhausted, status]
+      properties:
+        id:
+          type: string
+        strategy:
+          enum: [one_for_one, one_for_all]
+        maxRestarts:
+          type: integer
+        windowMs:
+          type: integer
+        onExhausted:
+          enum: [fail_self]
+        status:
+          type: string
+    SupervisionGroupResolveResponse:
+      type: object
+      required: [ok, group]
+      properties:
+        ok:
+          const: true
+        group:
+          $ref: '#/components/schemas/SupervisionGroupRef'
+    SupervisionMemberRef:
+      type: object
+      required: [groupId, key, generation, status]
+      properties:
+        groupId:
+          type: string
+        key:
+          type: string
+        currentChildRunId:
+          type: [string, 'null']
+        generation:
+          type: integer
+        status:
+          type: string
+    SupervisionMemberResolveResponse:
+      type: object
+      required: [ok, member]
+      properties:
+        ok:
+          const: true
+        member:
+          $ref: '#/components/schemas/SupervisionMemberRef'
+    SupervisionMemberListResponse:
+      type: object
+      required: [ok, members]
+      properties:
+        ok:
+          const: true
+        members:
+          type: array
+          items:
+            type: object
+            required: [groupId, key, definitionName, input, generation, status]
+            properties:
+              groupId:
+                type: string
+              key:
+                type: string
+              definitionName:
+                type: string
+              input: {}
+              currentChildRunId:
+                type: [string, 'null']
+              generation:
+                type: integer
+              status:
+                type: string
+    SupervisionMemberCompleted:
+      type: object
+      required: [status, output]
+      properties:
+        status:
+          const: completed
+        output: {}
+        wait:
+          $ref: '#/components/schemas/WaitRef'
+    SupervisionMemberFailed:
+      type: object
+      required: [status, error]
+      properties:
+        status:
+          const: failed
+        error: {}
+        wait:
+          $ref: '#/components/schemas/WaitRef'
+    SupervisionMemberResultResponse:
+      type: object
+      required: [ok, member]
+      properties:
+        ok:
+          const: true
+        member:
+          oneOf:
+            - $ref: '#/components/schemas/SupervisionMemberCompleted'
+            - $ref: '#/components/schemas/SupervisionMemberFailed'
+            - $ref: '#/components/schemas/WaitSuspended'
     ServiceRunResponse:
       type: object
       required: [ok, run]
@@ -438,6 +566,107 @@ components:
         wait:
           $ref: '#/components/schemas/WaitRef'
     ServiceTurnCompleteResponse:
+      type: object
+      required: [ok, run]
+      properties:
+        ok:
+          const: true
+        run: {}
+    ServiceMailboxEnvelope:
+      type: object
+      required: [id, kind, name, attempt, createdAt]
+      properties:
+        id:
+          type: string
+        kind:
+          enum: [ask, send, signal]
+        name:
+          type: string
+        attempt:
+          type: [integer, 'null']
+        correlationId:
+          type: [string, 'null']
+        senderRunId:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        wakeAt:
+          type: [string, 'null']
+          format: date-time
+    ServiceMailboxQueuedSummary:
+      type: object
+      required: [total, ready, deferred, asks, sends, signals]
+      properties:
+        total:
+          type: integer
+        ready:
+          type: integer
+        deferred:
+          type: integer
+        asks:
+          type: integer
+        sends:
+          type: integer
+        signals:
+          type: integer
+        oldestAt:
+          type: [string, 'null']
+          format: date-time
+        nextWakeAt:
+          type: [string, 'null']
+          format: date-time
+    ServiceTurnMailboxResponse:
+      type: object
+      required: [ok, mailbox]
+      properties:
+        ok:
+          const: true
+        mailbox:
+          type: object
+          required: [current, queued]
+          properties:
+            current:
+              $ref: '#/components/schemas/ServiceMailboxEnvelope'
+            queued:
+              $ref: '#/components/schemas/ServiceMailboxQueuedSummary'
+    TopicPublishResponse:
+      type: object
+      required: [ok, publish]
+      properties:
+        ok:
+          const: true
+        publish:
+          type: object
+          required: [publishId, topic, matched, enqueued, rejected]
+          properties:
+            publishId:
+              type: string
+            topic:
+              type: string
+            matched:
+              type: integer
+            enqueued:
+              type: integer
+            rejected:
+              type: integer
+    TopicSubscriptionResponse:
+      type: object
+      required: [ok, subscription]
+      properties:
+        ok:
+          const: true
+        subscription:
+          type: object
+          required: [topic, signal, serviceRunId]
+          properties:
+            topic:
+              type: string
+            signal:
+              type: string
+            serviceRunId:
+              type: string
+    ServiceTurnDeferResponse:
       type: object
       required: [ok, run]
       properties:
@@ -554,6 +783,96 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RunStatusResponse'
+  /v1/leases/{leaseId}/runs/{id}/monitor:
+    post:
+      summary: Register a durable monitor on a related run.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key:
+                  type: string
+      responses:
+        '200':
+          description: Relationship state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationshipResolveResponse'
+  /v1/leases/{leaseId}/runs/{id}/link:
+    post:
+      summary: Register a durable link on a related run.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key:
+                  type: string
+                propagate:
+                  type: string
+                  enum: [abnormal, all]
+      responses:
+        '200':
+          description: Relationship state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationshipResolveResponse'
+  /v1/leases/{leaseId}/trap-exits:
+    post:
+      summary: Enable or disable trapping linked exits for the active run.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Run state updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunMutationResponse'
   /v1/leases/{leaseId}/runs/{id}/signals:
     post:
       summary: Send a signal to a child run from the active lease context.
@@ -956,6 +1275,184 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/WaitResolveResponse'
+  /v1/leases/{leaseId}/waits/exit:
+    post:
+      summary: Resolve or suspend on the next durable exit event.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key:
+                  type: string
+      responses:
+        '200':
+          description: Exit wait state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WaitResolveResponse'
+  /v1/leases/{leaseId}/supervision/groups:
+    post:
+      summary: Resolve or create a durable supervision group for the active run.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, strategy, maxRestarts, windowMs]
+              properties:
+                key:
+                  type: string
+                strategy:
+                  type: string
+                  enum: [one_for_one, one_for_all]
+                maxRestarts:
+                  type: integer
+                windowMs:
+                  type: integer
+                onExhausted:
+                  type: string
+                  enum: [fail_self]
+      responses:
+        '200':
+          description: Supervision group state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupervisionGroupResolveResponse'
+  /v1/leases/{leaseId}/supervision/groups/{groupId}/members:
+    get:
+      summary: List logical supervised workflow members for a durable supervision group.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: groupId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Supervision members
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupervisionMemberListResponse'
+    post:
+      summary: Resolve or create a logical supervised workflow member.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: groupId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, key, input]
+              properties:
+                name:
+                  type: string
+                key:
+                  type: string
+                input: {}
+      responses:
+        '200':
+          description: Supervision member state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupervisionMemberResolveResponse'
+  /v1/leases/{leaseId}/supervision/groups/{groupId}/members/{memberKey}/result:
+    post:
+      summary: Resolve or suspend on a logical supervised member result.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: groupId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: memberKey
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key:
+                  type: string
+      responses:
+        '200':
+          description: Supervision member result state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupervisionMemberResultResponse'
+  /v1/leases/{leaseId}/supervision/groups/{groupId}/members/{memberKey}/status:
+    get:
+      summary: Inspect a logical supervised member from the active lease context.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: groupId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: memberKey
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Supervision member state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupervisionMemberResolveResponse'
   /v1/leases/{leaseId}/spawns/resolve:
     post:
       summary: Resolve or create a child workflow run.
@@ -1046,6 +1543,122 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ServiceCallResolveResponse'
+  /v1/leases/{leaseId}/services/lookup-singleton:
+    post:
+      summary: Resolve an existing singleton-discoverable service from the active lease context.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+                keyInput: {}
+      responses:
+        '200':
+          description: Existing singleton service run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceRunResponse'
+  /v1/leases/{leaseId}/pubsub/publish:
+    post:
+      summary: Publish a durable topic event from the active lease context.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [topic, key]
+              properties:
+                topic:
+                  type: string
+                key:
+                  type: string
+                payload: {}
+      responses:
+        '200':
+          description: Topic publish state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicPublishResponse'
+  /v1/leases/{leaseId}/pubsub/subscriptions:
+    post:
+      summary: Subscribe the active service run to a durable topic.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [topic, signal]
+              properties:
+                topic:
+                  type: string
+                signal:
+                  type: string
+      responses:
+        '200':
+          description: Topic subscription state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopicSubscriptionResponse'
+  /v1/leases/{leaseId}/pubsub/subscriptions/delete:
+    post:
+      summary: Remove a durable topic subscription from the active service run.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [topic, signal]
+              properties:
+                topic:
+                  type: string
+                signal:
+                  type: string
+      responses:
+        '200':
+          description: Topic subscription removed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    const: true
   /v1/leases/{leaseId}/services/ask:
     post:
       summary: Resolve or suspend on a service ask.
@@ -1142,6 +1755,90 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ServiceTurnCompleteResponse'
+  /v1/leases/{leaseId}/service-turns/{envelopeId}/mailbox:
+    get:
+      summary: Inspect the current service turn envelope and queued backlog.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: envelopeId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service mailbox state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceTurnMailboxResponse'
+  /v1/leases/{leaseId}/service-turns/{envelopeId}/defer:
+    post:
+      summary: Requeue the current service turn for later processing.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: envelopeId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [delayMs]
+              properties:
+                delayMs:
+                  type: integer
+                reason:
+                  type: [string, 'null']
+      responses:
+        '200':
+          description: Service turn deferred
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceTurnDeferResponse'
+  /v1/leases/{leaseId}/service-turns/{envelopeId}/reject:
+    post:
+      summary: Reject the current service turn without retry.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: envelopeId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [error]
+              properties:
+                error: {}
+      responses:
+        '200':
+          description: Service turn rejected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunMutationResponse'
   /v1/leases/{leaseId}/service-turns/{envelopeId}/fail:
     post:
       summary: Fail a service turn.

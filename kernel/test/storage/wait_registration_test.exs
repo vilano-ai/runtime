@@ -82,9 +82,22 @@ defmodule VilanoKernel.Storage.WaitRegistrationTest do
       assert parent_run["status"] == "active"
     after
       SQL.query!(Repo, "delete from run_children where parent_run_id = ?", [parent_run_id])
-      SQL.query!(Repo, "delete from run_waits where run_id in (?, ?)", [parent_run_id, child_run_id])
-      SQL.query!(Repo, "delete from run_events where run_id in (?, ?)", [parent_run_id, child_run_id])
-      SQL.query!(Repo, "delete from run_event_sequences where run_id in (?, ?)", [parent_run_id, child_run_id])
+
+      SQL.query!(Repo, "delete from run_waits where run_id in (?, ?)", [
+        parent_run_id,
+        child_run_id
+      ])
+
+      SQL.query!(Repo, "delete from run_events where run_id in (?, ?)", [
+        parent_run_id,
+        child_run_id
+      ])
+
+      SQL.query!(Repo, "delete from run_event_sequences where run_id in (?, ?)", [
+        parent_run_id,
+        child_run_id
+      ])
+
       SQL.query!(Repo, "delete from runs where id in (?, ?)", [parent_run_id, child_run_id])
     end
   end
@@ -151,6 +164,135 @@ defmodule VilanoKernel.Storage.WaitRegistrationTest do
     end
   end
 
+  test "exit wait completes when a monitored child exits during wait registration" do
+    now = iso_now()
+    expires_at = iso_shift(30)
+    owner_run_id = "run_" <> Ecto.UUID.generate()
+    target_run_id = "run_" <> Ecto.UUID.generate()
+    owner_lease_id = "lease_" <> Ecto.UUID.generate()
+    target_lease_id = "lease_" <> Ecto.UUID.generate()
+    relationship_id = "rel_" <> Ecto.UUID.generate()
+
+    try do
+      insert_workflow_run!(owner_run_id, now, %{
+        status: "active",
+        definition_name: "monitorOwner",
+        lease_id: owner_lease_id,
+        lease_auth_token: "lease-auth-owner",
+        lease_worker_id: "managed-local-1",
+        lease_expires_at: expires_at
+      })
+
+      insert_workflow_run!(target_run_id, now, %{
+        status: "active",
+        definition_name: "monitorTarget",
+        lease_id: target_lease_id,
+        lease_auth_token: "lease-auth-target",
+        lease_worker_id: "managed-local-2",
+        lease_expires_at: expires_at
+      })
+
+      SQL.query!(
+        Repo,
+        """
+        insert into run_children (
+          parent_run_id,
+          op_key,
+          child_run_id,
+          definition_name,
+          status,
+          created_at,
+          updated_at
+        ) values (?, 'child:monitor', ?, 'monitorTarget', 'pending', ?, ?)
+        """,
+        [owner_run_id, target_run_id, now, now]
+      )
+
+      SQL.query!(
+        Repo,
+        """
+        insert into run_relationships (
+          id,
+          owner_run_id,
+          op_key,
+          target_run_id,
+          kind,
+          propagate,
+          status,
+          created_at,
+          updated_at
+        ) values (?, ?, 'monitor:child', ?, 'monitor', 'all', 'active', ?, ?)
+        """,
+        [relationship_id, owner_run_id, target_run_id, now, now]
+      )
+
+      Application.put_env(:vilano_kernel, :storage_test_hooks, %{
+        exit_wait_registered: fn _payload ->
+          Storage.complete_run_lease(target_lease_id, %{"ok" => true})
+        end
+      })
+
+      result = Storage.resolve_exit_wait(owner_lease_id, "exit:next")
+
+      assert result["status"] == "completed"
+
+      assert result["output"] == %{
+               "at" => result["output"]["at"],
+               "output" => %{"ok" => true},
+               "relationship" => "monitor",
+               "status" => "completed",
+               "targetId" => target_run_id,
+               "targetKind" => "workflow"
+             }
+
+      wait =
+        SQL.query!(
+          Repo,
+          "select status, output_json from run_waits where run_id = ? and op_key = 'exit:next'",
+          [owner_run_id]
+        )
+        |> row_map()
+
+      exit_event =
+        SQL.query!(
+          Repo,
+          "select consumed_at, event_json from run_exit_events where relationship_id = ?",
+          [relationship_id]
+        )
+        |> row_map()
+
+      assert wait["status"] == "completed"
+      assert Jason.decode!(wait["output_json"])["targetId"] == target_run_id
+      refute is_nil(exit_event["consumed_at"])
+      assert Jason.decode!(exit_event["event_json"])["status"] == "completed"
+    after
+      SQL.query!(Repo, "delete from run_exit_events where run_id in (?, ?)", [
+        owner_run_id,
+        target_run_id
+      ])
+
+      SQL.query!(Repo, "delete from run_relationships where owner_run_id = ?", [owner_run_id])
+      SQL.query!(Repo, "delete from run_children where parent_run_id = ?", [owner_run_id])
+
+      SQL.query!(Repo, "delete from run_waits where run_id in (?, ?)", [
+        owner_run_id,
+        target_run_id
+      ])
+
+      SQL.query!(Repo, "delete from run_events where run_id in (?, ?)", [
+        owner_run_id,
+        target_run_id
+      ])
+
+      SQL.query!(Repo, "delete from run_event_sequences where run_id in (?, ?)", [
+        owner_run_id,
+        target_run_id
+      ])
+
+      SQL.query!(Repo, "delete from runs where id in (?, ?)", [owner_run_id, target_run_id])
+    end
+  end
+
   defp insert_workflow_run!(run_id, now, attrs) do
     status = Map.get(attrs, :status, "pending")
     definition_name = Map.get(attrs, :definition_name, "probe")
@@ -205,7 +347,10 @@ defmodule VilanoKernel.Storage.WaitRegistrationTest do
   end
 
   defp iso_shift(seconds) do
-    DateTime.utc_now() |> DateTime.add(seconds, :second) |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()
+    DateTime.utc_now()
+    |> DateTime.add(seconds, :second)
+    |> DateTime.truncate(:millisecond)
+    |> DateTime.to_iso8601()
   end
 
   defp row_map(%{rows: [row], columns: columns}) do

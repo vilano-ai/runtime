@@ -6,17 +6,31 @@ import type {
   AskOptions,
   AskResult,
   ConnectOptions,
+  DiscoveredServiceRef,
+  ExitEvent,
   ExecResult,
   ExecSpec,
+  LinkOptions,
   MessageOptions,
+  MonitorOptions,
+  RelationshipRef,
   RunStatus,
+  SupervisionMemberInfo,
+  SupervisedSpawnOptions,
+  SupervisedWorkflowHandle,
+  SupervisionMemberStatus,
+  SuperviseOptions,
   ServiceDefinition,
   ServiceRef,
+  ServiceTurnContext,
   SignalOptions,
   SignalResult,
   SpawnOptions,
   StepContext,
   StepOptions,
+  TopicPublishResult,
+  TopicSubscriptionRef,
+  WorkflowSupervisionGroup,
   WorkflowHandle,
   WorkflowContext,
   WorkflowDefinition,
@@ -38,6 +52,7 @@ import {
   ActivationCancelledError,
   RunSuspendedError,
   StepControlError,
+  TurnHandledError,
   buildStepError,
   deterministicChildRunId,
   executeProcess,
@@ -201,6 +216,10 @@ export async function executeActivation(
       return;
     }
 
+    if (error instanceof TurnHandledError) {
+      return;
+    }
+
     if (error instanceof ActivationCancelledError || isInactiveActivationError(error)) {
       return;
     }
@@ -261,8 +280,9 @@ function createTurnContext(
   adapter: RuntimeAdapter,
   client: WorkerClient,
   activation: Activation,
-  activationCwd: string
-): WorkflowContext {
+  activationCwd: string,
+  currentServiceDefinition: ServiceDefinition<any, any, any, any, any> | null = null
+): ServiceTurnContext {
   const implicitActivationOpCounters = new Map<string, number>();
   const implicitServiceOpCounters = new Map<string, number>();
 
@@ -317,6 +337,47 @@ function createTurnContext(
           await spawnPromise;
           await client.sendChildRunSignal(activation.leaseId, childRunId, name, payload ?? null);
         },
+        async monitor(options: MonitorOptions = {}): Promise<RelationshipRef> {
+          await spawnPromise;
+          const key = scopeActivationOpKey(
+            activation,
+            nextImplicitActivationOpKey(
+              implicitActivationOpCounters,
+              "monitor",
+              childRunId,
+              options.key
+            )
+          );
+          const relationship = await client.resolveRunMonitor(activation.leaseId, childRunId, { key });
+
+          return {
+            id: relationship.id,
+            targetId: relationship.targetRunId,
+            kind: relationship.kind,
+          };
+        },
+        async link(options: LinkOptions = {}): Promise<RelationshipRef> {
+          await spawnPromise;
+          const key = scopeActivationOpKey(
+            activation,
+            nextImplicitActivationOpKey(
+              implicitActivationOpCounters,
+              "link",
+              childRunId,
+              options.key
+            )
+          );
+          const relationship = await client.resolveRunLink(activation.leaseId, childRunId, {
+            key,
+            propagate: options.propagate,
+          });
+
+          return {
+            id: relationship.id,
+            targetId: relationship.targetRunId,
+            kind: relationship.kind,
+          };
+        },
       };
     },
     async connect<
@@ -347,6 +408,48 @@ function createTurnContext(
         serviceRunId,
         implicitServiceOpCounters
       ) as ServiceRef<TSend, TAsk, TSignal>;
+    },
+    async lookup<
+      TKeyInput,
+      TState,
+      TSend extends Record<string, (...args: any[]) => any>,
+      TAsk extends Record<string, (...args: any[]) => any>,
+      TSignal extends Record<string, (...args: any[]) => any>
+    >(
+      definition: ServiceDefinition<TKeyInput, TState, TSend, TAsk, TSignal>,
+      input: TKeyInput
+    ): Promise<ServiceRef<TSend, TAsk, TSignal>> {
+      const serviceKey = definition.key(input);
+      const serviceRunId = await client.ensureService(
+        null,
+        definition.name,
+        serviceKey,
+        input,
+        activation.leaseId,
+        true
+      );
+
+      return createServiceRef(
+        client,
+        activation,
+        definition,
+        serviceRunId,
+        implicitServiceOpCounters
+      ) as ServiceRef<TSend, TAsk, TSignal>;
+    },
+    async lookupSingleton(role: string, keyInput: unknown = {}): Promise<DiscoveredServiceRef> {
+      const run = await client.lookupSingletonService(activation.leaseId, role, keyInput ?? {});
+
+      return createDiscoveredServiceRef(
+        client,
+        activation,
+        run.id,
+        run.project,
+        run.definitionName,
+        run.serviceKey,
+        run.keyInput,
+        implicitServiceOpCounters
+      );
     },
     runId: activation.run.id,
     turnAttempt: activation.kind === "service_turn"
@@ -564,6 +667,382 @@ function createTurnContext(
 
       throw new RunSuspendedError("signal", key);
     },
+    async publish(
+      topic: string,
+      payload?: unknown,
+      options?: MessageOptions
+    ): Promise<TopicPublishResult> {
+      const key = scopeActivationOpKey(
+        activation,
+        nextImplicitActivationOpKey(
+          implicitActivationOpCounters,
+          "publish",
+          topic,
+          options?.key
+        )
+      );
+
+      return await client.resolveTopicPublish(activation.leaseId, {
+        topic,
+        key,
+        payload: payload ?? null,
+      });
+    },
+    async supervise(options: SuperviseOptions): Promise<WorkflowSupervisionGroup> {
+      const key = scopeActivationOpKey(
+        activation,
+        nextImplicitActivationOpKey(
+          implicitActivationOpCounters,
+          "supervise",
+          options.strategy,
+          options.key
+        )
+      );
+      const windowMs = parseDurationToMs(options.window);
+      if (windowMs === undefined || windowMs <= 0) {
+        throw new Error("ctx.supervise() requires a positive window duration");
+      }
+
+      const group = await client.resolveSupervisionGroup(activation.leaseId, {
+        key,
+        strategy: options.strategy,
+        maxRestarts: options.maxRestarts,
+        windowMs,
+        onExhausted: options.onExhausted,
+      });
+      const implicitGroupMemberCounters = new Map<string, number>();
+
+      return {
+        id: group.id,
+        strategy: group.strategy,
+        maxRestarts: group.maxRestarts,
+        windowMs: group.windowMs,
+        onExhausted: group.onExhausted,
+        async members(): Promise<SupervisionMemberInfo[]> {
+          const members = await client.listSupervisionMembers(activation.leaseId, group.id);
+          return members.map((member) => ({
+            key: member.key,
+            definitionName: member.definitionName,
+            status: member.status as SupervisionMemberStatus,
+            currentRunId: member.currentChildRunId,
+            generation: member.generation,
+            input: member.input,
+          }));
+        },
+        async spawn<TInput, TOutput>(
+          definition: WorkflowDefinition<TInput, TOutput>,
+          input: TInput,
+          spawnOptions: SupervisedSpawnOptions = {}
+        ): Promise<SupervisedWorkflowHandle<TOutput>> {
+          const memberKey = nextImplicitSupervisionMemberKey(
+            implicitGroupMemberCounters,
+            definition.name,
+            spawnOptions.key
+          );
+          const member = await client.resolveSupervisionMember(activation.leaseId, group.id, {
+            name: definition.name,
+            key: memberKey,
+            input,
+          });
+          const resultKey = scopeActivationOpKey(
+            activation,
+            nextImplicitActivationOpKey(
+              implicitActivationOpCounters,
+              "supervision_member_result",
+              `${group.id}:${member.key}`
+            )
+          );
+
+          return {
+            groupId: group.id,
+            key: member.key,
+            async result() {
+              const resolved = await client.resolveSupervisionMemberResult(
+                activation.leaseId,
+                group.id,
+                member.key,
+                { key: resultKey }
+              );
+
+              if (resolved.status === "completed") {
+                return resolved.output as TOutput;
+              }
+
+              if (resolved.status === "failed") {
+                throw toChildRunError(
+                  `${group.id}:${member.key}`,
+                  "error" in resolved ? resolved.error : null
+                );
+              }
+
+              throw new RunSuspendedError(
+                "supervision_member_result",
+                `supervision_member_result:${group.id}:${member.key}`
+              );
+            },
+            async status() {
+              const current = await client.getSupervisionMemberStatus(
+                activation.leaseId,
+                group.id,
+                member.key
+              );
+
+              return current.status as SupervisionMemberStatus;
+            },
+            async currentRunId() {
+              const current = await client.getSupervisionMemberStatus(
+                activation.leaseId,
+                group.id,
+                member.key
+              );
+
+              return current.currentChildRunId ?? null;
+            },
+            async signal(name: string, payload?: unknown) {
+              const current = await client.getSupervisionMemberStatus(
+                activation.leaseId,
+                group.id,
+                member.key
+              );
+
+              if (!current.currentChildRunId) {
+                throw new Error(
+                  `Supervised member '${member.key}' has no active child run to signal`
+                );
+              }
+
+              await client.sendChildRunSignal(
+                activation.leaseId,
+                current.currentChildRunId,
+                name,
+                payload ?? null
+              );
+            },
+          };
+        },
+      };
+    },
+    async trapExit(enabled = true) {
+      await client.setTrapExits(activation.leaseId, enabled);
+    },
+    async nextExit(options?: { key?: string }) {
+      const key = scopeActivationOpKey(
+        activation,
+        nextImplicitActivationOpKey(
+          implicitActivationOpCounters,
+          "next_exit",
+          activation.run.id,
+          options?.key
+        )
+      );
+      const resolved = await client.resolveExitWait(activation.leaseId, { key });
+      if (resolved.status === "completed") {
+        return resolved.output as ExitEvent;
+      }
+
+      throw new RunSuspendedError("exit", key);
+    },
+    async mailbox() {
+      if (activation.kind !== "service_turn") {
+        throw new Error("ctx.mailbox() is only available in service turns");
+      }
+
+      return await client.getServiceTurnMailbox(activation.leaseId, activation.envelope.id);
+    },
+    async subscribe(topic: string, options?: { signal?: string }): Promise<TopicSubscriptionRef> {
+      if (activation.kind !== "service_turn") {
+        throw new Error("ctx.subscribe() is only available in service turns");
+      }
+
+      const signal = options?.signal ?? topic;
+      const availableSignals = currentServiceDefinition?.onSignal;
+      if (!availableSignals || !(signal in availableSignals)) {
+        const serviceName = currentServiceDefinition?.name ?? activation.definition.name;
+        throw new Error(
+          `Service '${serviceName}' cannot subscribe topic '${topic}' with unknown signal '${signal}'`
+        );
+      }
+
+      return await client.subscribeTopic(activation.leaseId, {
+        topic,
+        signal,
+      });
+    },
+    async unsubscribe(topic: string, options?: { signal?: string }): Promise<void> {
+      if (activation.kind !== "service_turn") {
+        throw new Error("ctx.unsubscribe() is only available in service turns");
+      }
+
+      await client.unsubscribeTopic(activation.leaseId, {
+        topic,
+        signal: options?.signal ?? topic,
+      });
+    },
+    async defer(options: { delay: string; reason?: string }): Promise<never> {
+      if (activation.kind !== "service_turn") {
+        throw new Error("ctx.defer() is only available in service turns");
+      }
+
+      const delayMs = parseDurationToMs(options.delay);
+      if (delayMs === undefined || delayMs <= 0) {
+        throw new Error("ctx.defer() requires a positive delay");
+      }
+
+      await client.deferServiceTurn(activation.leaseId, activation.envelope.id, {
+        delayMs,
+        reason: options.reason,
+      });
+
+      throw new TurnHandledError("deferred");
+    },
+    async reject(error: {
+      message: string;
+      reason?: string;
+      details?: unknown;
+    }): Promise<never> {
+      if (activation.kind !== "service_turn") {
+        throw new Error("ctx.reject() is only available in service turns");
+      }
+
+      await client.rejectServiceTurn(activation.leaseId, activation.envelope.id, {
+        error: {
+          name: "ServiceTurnRejectedError",
+          message: error.message,
+          reason: error.reason ?? "service_turn_rejected",
+          details: error.details ?? null,
+        },
+      });
+
+      throw new TurnHandledError("rejected");
+    },
+  };
+}
+
+function createDiscoveredServiceRef(
+  client: WorkerClient,
+  activation: Activation,
+  serviceRunId: string,
+  project: string,
+  definitionName: string,
+  serviceKey: string,
+  keyInput: unknown,
+  implicitOpCounters: Map<string, number>
+): DiscoveredServiceRef {
+  return {
+    id: serviceRunId,
+    project,
+    definitionName,
+    serviceKey,
+    keyInput,
+    async send(name: string, payload?: unknown, options?: MessageOptions) {
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "send",
+        name,
+        options?.key
+      );
+      const scopedKey = scopeActivationOpKey(activation, key);
+      const resolved = await client.resolveServiceSend(activation.leaseId, {
+        serviceRunId,
+        name,
+        key: scopedKey,
+        payload: payload ?? null,
+      });
+
+      if (resolved.status === "failed") {
+        throw toServiceCallError(serviceRunId, name, resolved.error, "send");
+      }
+    },
+    async ask(name: string, payload?: unknown, options?: AskOptions) {
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "ask",
+        name,
+        options?.key
+      );
+      const scopedKey = scopeActivationOpKey(activation, key);
+      const resolved = await client.resolveServiceAsk(activation.leaseId, {
+        serviceRunId,
+        name,
+        key: scopedKey,
+        payload: payload ?? null,
+        timeoutMs: typeof options?.timeout === "string" ? parseDurationToMs(options.timeout) : undefined,
+      });
+
+      if (resolved.status === "completed") {
+        return resolved.output;
+      }
+
+      if (resolved.status === "failed") {
+        throw toServiceAskError(serviceRunId, name, resolved.error);
+      }
+
+      throw new RunSuspendedError("ask_reply", `ask_reply:ask:${scopedKey}`);
+    },
+    async signal(name: string, payload?: unknown, options?: SignalOptions) {
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "signal",
+        name,
+        options?.key
+      );
+      const scopedKey = scopeActivationOpKey(activation, key);
+      const resolved = await client.resolveServiceSignal(activation.leaseId, {
+        serviceRunId,
+        name,
+        key: scopedKey,
+        payload: payload ?? null,
+      });
+
+      if (resolved.status === "failed") {
+        throw toServiceCallError(serviceRunId, name, resolved.error, "signal");
+      }
+    },
+    async status() {
+      return (await client.getRelatedRunStatus(activation.leaseId, serviceRunId)) as RunStatus;
+    },
+    async monitor(options: MonitorOptions = {}): Promise<RelationshipRef> {
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "monitor",
+        serviceRunId,
+        options.key
+      );
+      const scopedKey = scopeActivationOpKey(activation, key);
+      const relationship = await client.resolveRunMonitor(activation.leaseId, serviceRunId, {
+        key: scopedKey,
+      });
+
+      return {
+        id: relationship.id,
+        targetId: relationship.targetRunId,
+        kind: relationship.kind,
+      };
+    },
+    async link(options: LinkOptions = {}): Promise<RelationshipRef> {
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "link",
+        serviceRunId,
+        options.key
+      );
+      const scopedKey = scopeActivationOpKey(activation, key);
+      const relationship = await client.resolveRunLink(activation.leaseId, serviceRunId, {
+        key: scopedKey,
+        propagate: options.propagate,
+      });
+
+      return {
+        id: relationship.id,
+        targetId: relationship.targetRunId,
+        kind: relationship.kind,
+      };
+    },
   };
 }
 
@@ -665,6 +1144,45 @@ function createServiceRef(
     async status() {
       return (await client.getRelatedRunStatus(activation.leaseId, serviceRunId)) as RunStatus;
     },
+    async monitor(options: MonitorOptions = {}): Promise<RelationshipRef> {
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "monitor",
+        serviceRunId,
+        options.key
+      );
+      const scopedKey = scopeActivationOpKey(activation, key);
+      const relationship = await client.resolveRunMonitor(activation.leaseId, serviceRunId, {
+        key: scopedKey,
+      });
+
+      return {
+        id: relationship.id,
+        targetId: relationship.targetRunId,
+        kind: relationship.kind,
+      };
+    },
+    async link(options: LinkOptions = {}): Promise<RelationshipRef> {
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "link",
+        serviceRunId,
+        options.key
+      );
+      const scopedKey = scopeActivationOpKey(activation, key);
+      const relationship = await client.resolveRunLink(activation.leaseId, serviceRunId, {
+        key: scopedKey,
+        propagate: options.propagate,
+      });
+
+      return {
+        id: relationship.id,
+        targetId: relationship.targetRunId,
+        kind: relationship.kind,
+      };
+    },
   };
 }
 
@@ -675,7 +1193,7 @@ async function executeServiceTurn(
   definition: ServiceDefinition<any, any, any, any, any>,
   activationCwd: string
 ): Promise<void> {
-  const ctx = createTurnContext(adapter, client, activation, activationCwd);
+  const ctx = createTurnContext(adapter, client, activation, activationCwd, definition);
   let state = activation.service.state;
   let shouldCommitState = false;
 
@@ -781,7 +1299,7 @@ function looksLikeOptions(value: unknown, kind: ServiceMethodKind): boolean {
 function nextImplicitServiceOpKey(
   counters: Map<string, number>,
   serviceRunId: string,
-  opKind: "send" | "ask" | "signal",
+  opKind: "send" | "ask" | "signal" | "monitor" | "link",
   messageName: string,
   explicitKey?: string
 ): string {
@@ -805,7 +1323,18 @@ function scopeActivationOpKey(activation: Activation, key: string): string {
 
 function nextImplicitActivationOpKey(
   counters: Map<string, number>,
-  opKind: "spawn" | "step" | "exec" | "sleep" | "wait_for_signal",
+  opKind:
+    | "spawn"
+    | "step"
+    | "exec"
+    | "publish"
+    | "sleep"
+    | "wait_for_signal"
+    | "monitor"
+    | "link"
+    | "next_exit"
+    | "supervise"
+    | "supervision_member_result",
   name: string,
   explicitKey?: string
 ): string {
@@ -817,6 +1346,20 @@ function nextImplicitActivationOpKey(
   const nextCount = (counters.get(counterKey) ?? 0) + 1;
   counters.set(counterKey, nextCount);
   return `${opKind}:${name}:${nextCount}`;
+}
+
+function nextImplicitSupervisionMemberKey(
+  counters: Map<string, number>,
+  definitionName: string,
+  explicitKey?: string
+): string {
+  if (explicitKey) {
+    return explicitKey;
+  }
+
+  const nextCount = (counters.get(definitionName) ?? 0) + 1;
+  counters.set(definitionName, nextCount);
+  return `member:${definitionName}:${nextCount}`;
 }
 
 function createStepController(

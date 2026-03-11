@@ -46,9 +46,148 @@ interface SpawnResolveResponse {
 type ChildResultResponse = WorkerComponents["schemas"]["ChildResultResponse"];
 type RunStatusResponse = WorkerComponents["schemas"]["RunStatusResponse"];
 type LeaseStatusResponse = WorkerComponents["schemas"]["LeaseStatusResponse"];
+type RelationshipResolveResponse = WorkerComponents["schemas"]["RelationshipResolveResponse"];
 type ServiceRunResponse = WorkerComponents["schemas"]["ServiceRunResponse"];
 type ServiceCallResolveResponse = WorkerComponents["schemas"]["ServiceCallResolveResponse"];
 type ServiceTurnFailResponse = WorkerComponents["schemas"]["ServiceTurnFailResponse"];
+
+interface SupervisionGroupResolveResponse {
+  ok: true;
+  group: {
+    id: string;
+    strategy: "one_for_one" | "one_for_all";
+    maxRestarts: number;
+    windowMs: number;
+    onExhausted: "fail_self";
+    status: string;
+  };
+}
+
+interface SupervisionMemberResolveResponse {
+  ok: true;
+  member: {
+    groupId: string;
+    key: string;
+    currentChildRunId: string | null;
+    generation: number;
+    status: string;
+  };
+}
+
+interface SupervisionMemberListResponse {
+  ok: true;
+  members: Array<{
+    groupId: string;
+    key: string;
+    definitionName: string;
+    input: unknown;
+    currentChildRunId: string | null;
+    generation: number;
+    status: string;
+  }>;
+}
+
+interface SupervisionMemberResultResponse {
+  ok: true;
+  member:
+    | {
+        status: "completed";
+        output: unknown;
+        wait?: WaitResolveResponse["wait"];
+      }
+    | {
+        status: "failed";
+        error: unknown;
+        wait?: WaitResolveResponse["wait"];
+      }
+    | {
+        status: "suspended";
+        wait: WaitResolveResponse["wait"];
+      };
+}
+
+interface TrapExitsResponse {
+  ok: true;
+  run: {
+    id: string;
+    status: string;
+  };
+}
+
+interface SingletonLookupResponse {
+  ok: true;
+  run: {
+    id: string;
+    project: string;
+    definitionName: string;
+    serviceKey: string;
+    keyInput: unknown;
+    status: string;
+  };
+}
+
+interface TopicPublishResponse {
+  ok: true;
+  publish: {
+    publishId: string;
+    topic: string;
+    matched: number;
+    enqueued: number;
+    rejected: number;
+  };
+}
+
+interface TopicSubscriptionResponse {
+  ok: true;
+  subscription: {
+    topic: string;
+    signal: string;
+    serviceRunId: string;
+  };
+}
+
+interface ServiceTurnMailboxResponse {
+  ok: true;
+  mailbox: {
+    current: {
+      id: string;
+      kind: "ask" | "send" | "signal";
+      name: string;
+      attempt: number | null;
+      correlationId?: string | null;
+      senderRunId?: string | null;
+      createdAt: string;
+      wakeAt?: string | null;
+    };
+    queued: {
+      total: number;
+      ready: number;
+      deferred: number;
+      asks: number;
+      sends: number;
+      signals: number;
+      oldestAt?: string | null;
+      nextWakeAt?: string | null;
+    };
+  };
+}
+
+interface ServiceTurnDeferResponse {
+  ok: true;
+  run: {
+    id: string;
+    status: string;
+  };
+  wait?: WaitResolveResponse["wait"];
+}
+
+interface ServiceTurnRejectResponse {
+  ok: true;
+  run: {
+    id: string;
+    status: string;
+  };
+}
 
 export class WorkerRequestError extends Error {
   readonly status?: number;
@@ -68,6 +207,7 @@ export class WorkerClient {
   private readonly workerId: string;
   private readonly bootstrapAuthToken?: string;
   private readonly leaseAuthTokens = new Map<string, string>();
+  private requestTail: Promise<void> = Promise.resolve();
 
   constructor(
     serverUrl: string,
@@ -296,6 +436,20 @@ export class WorkerClient {
     return response.wait;
   }
 
+  async resolveExitWait(
+    leaseId: string,
+    spec: { key: string }
+  ): Promise<WaitResolveResponse["wait"]> {
+    const response = await this.request<WaitResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/waits/exit`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.wait;
+  }
+
   async resolveSpawn(
     leaseId: string,
     spec: { name: string; key: string; childRunId: string; input: unknown }
@@ -308,6 +462,86 @@ export class WorkerClient {
     );
 
     return response.spawn;
+  }
+
+  async resolveSupervisionGroup(
+    leaseId: string,
+    spec: {
+      key: string;
+      strategy: "one_for_one" | "one_for_all";
+      maxRestarts: number;
+      windowMs: number;
+      onExhausted?: "fail_self";
+    }
+  ): Promise<SupervisionGroupResolveResponse["group"]> {
+    const response = await this.request<SupervisionGroupResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/supervision/groups`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.group;
+  }
+
+  async resolveSupervisionMember(
+    leaseId: string,
+    groupId: string,
+    spec: { name: string; key: string; input: unknown }
+  ): Promise<SupervisionMemberResolveResponse["member"]> {
+    const response = await this.request<SupervisionMemberResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/supervision/groups/${encodeURIComponent(groupId)}/members`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.member;
+  }
+
+  async resolveSupervisionMemberResult(
+    leaseId: string,
+    groupId: string,
+    memberKey: string,
+    spec: { key: string }
+  ): Promise<SupervisionMemberResultResponse["member"]> {
+    const response = await this.request<SupervisionMemberResultResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/supervision/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(memberKey)}/result`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.member;
+  }
+
+  async getSupervisionMemberStatus(
+    leaseId: string,
+    groupId: string,
+    memberKey: string
+  ): Promise<SupervisionMemberResolveResponse["member"]> {
+    const response = await this.request<SupervisionMemberResolveResponse>(
+      "GET",
+      `/v1/leases/${encodeURIComponent(leaseId)}/supervision/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(memberKey)}/status`,
+      undefined,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.member;
+  }
+
+  async listSupervisionMembers(
+    leaseId: string,
+    groupId: string
+  ): Promise<SupervisionMemberListResponse["members"]> {
+    const response = await this.request<SupervisionMemberListResponse>(
+      "GET",
+      `/v1/leases/${encodeURIComponent(leaseId)}/supervision/groups/${encodeURIComponent(groupId)}/members`,
+      undefined,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.members;
   }
 
   async resolveChildResult(
@@ -332,6 +566,45 @@ export class WorkerClient {
       this.requireLeaseAuthToken(leaseId)
     );
     return response.run.status;
+  }
+
+  async resolveRunMonitor(
+    leaseId: string,
+    runId: string,
+    spec: { key: string }
+  ): Promise<RelationshipResolveResponse["relationship"]> {
+    const response = await this.request<RelationshipResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/runs/${encodeURIComponent(runId)}/monitor`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.relationship;
+  }
+
+  async resolveRunLink(
+    leaseId: string,
+    runId: string,
+    spec: { key: string; propagate?: "abnormal" | "all" }
+  ): Promise<RelationshipResolveResponse["relationship"]> {
+    const response = await this.request<RelationshipResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/runs/${encodeURIComponent(runId)}/link`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.relationship;
+  }
+
+  async setTrapExits(leaseId: string, enabled: boolean): Promise<void> {
+    await this.request<TrapExitsResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/trap-exits`,
+      { enabled },
+      this.requireLeaseAuthToken(leaseId)
+    );
   }
 
   async sendChildRunSignal(leaseId: string, runId: string, name: string, payload: unknown): Promise<void> {
@@ -364,6 +637,61 @@ export class WorkerClient {
     }, leaseId ? this.requireLeaseAuthToken(leaseId) : this.bootstrapAuthToken);
 
     return response.run.id;
+  }
+
+  async lookupSingletonService(
+    leaseId: string,
+    role: string,
+    keyInput: unknown
+  ): Promise<SingletonLookupResponse["run"]> {
+    const response = await this.request<SingletonLookupResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/services/lookup-singleton`,
+      {
+        role,
+        keyInput,
+      },
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.run;
+  }
+
+  async resolveTopicPublish(
+    leaseId: string,
+    spec: { topic: string; key: string; payload: unknown }
+  ): Promise<TopicPublishResponse["publish"]> {
+    const response = await this.request<TopicPublishResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/pubsub/publish`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.publish;
+  }
+
+  async subscribeTopic(
+    leaseId: string,
+    spec: { topic: string; signal: string }
+  ): Promise<TopicSubscriptionResponse["subscription"]> {
+    const response = await this.request<TopicSubscriptionResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/pubsub/subscriptions`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.subscription;
+  }
+
+  async unsubscribeTopic(leaseId: string, spec: { topic: string; signal: string }): Promise<void> {
+    await this.request(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/pubsub/subscriptions/delete`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
   }
 
   async resolveServiceSend(
@@ -421,6 +749,46 @@ export class WorkerClient {
     );
   }
 
+  async getServiceTurnMailbox(
+    leaseId: string,
+    envelopeId: string
+  ): Promise<ServiceTurnMailboxResponse["mailbox"]> {
+    const response = await this.request<ServiceTurnMailboxResponse>(
+      "GET",
+      `/v1/leases/${encodeURIComponent(leaseId)}/service-turns/${encodeURIComponent(envelopeId)}/mailbox`,
+      undefined,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.mailbox;
+  }
+
+  async deferServiceTurn(
+    leaseId: string,
+    envelopeId: string,
+    body: { delayMs: number; reason?: string }
+  ): Promise<ServiceTurnDeferResponse> {
+    return await this.request<ServiceTurnDeferResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/service-turns/${encodeURIComponent(envelopeId)}/defer`,
+      body,
+      this.requireLeaseAuthToken(leaseId)
+    );
+  }
+
+  async rejectServiceTurn(
+    leaseId: string,
+    envelopeId: string,
+    body: { error: Record<string, unknown> }
+  ): Promise<ServiceTurnRejectResponse> {
+    return await this.request<ServiceTurnRejectResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/service-turns/${encodeURIComponent(envelopeId)}/reject`,
+      body,
+      this.requireLeaseAuthToken(leaseId)
+    );
+  }
+
   async failServiceTurn(
     leaseId: string,
     envelopeId: string,
@@ -472,6 +840,25 @@ export class WorkerClient {
   }
 
   private async request<T>(method: string, pathname: string, body?: unknown, authToken?: string): Promise<T> {
+    const request = this.requestTail.then(
+      async () => await this.performRequest<T>(method, pathname, body, authToken),
+      async () => await this.performRequest<T>(method, pathname, body, authToken)
+    );
+
+    this.requestTail = request.then(
+      () => undefined,
+      () => undefined
+    );
+
+    return await request;
+  }
+
+  private async performRequest<T>(
+    method: string,
+    pathname: string,
+    body?: unknown,
+    authToken?: string
+  ): Promise<T> {
     const url = new URL(pathname, this.serverUrl);
     const raw = await new Promise<{ status: number; body: string }>((resolve, reject) => {
       const payload = body === undefined ? undefined : JSON.stringify(body);

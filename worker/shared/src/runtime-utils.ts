@@ -546,17 +546,40 @@ export function deterministicChildRunId(parentRunId: string, key: string): strin
 }
 
 export class RunSuspendedError extends Error {
-  readonly waitKind: "sleep" | "signal" | "child_result" | "ask_reply" | "retry_backoff";
+  readonly waitKind:
+    | "sleep"
+    | "signal"
+    | "exit"
+    | "child_result"
+    | "supervision_member_result"
+    | "ask_reply"
+    | "retry_backoff";
   readonly key: string;
 
   constructor(
-    waitKind: "sleep" | "signal" | "child_result" | "ask_reply" | "retry_backoff",
+    waitKind:
+      | "sleep"
+      | "signal"
+      | "exit"
+      | "child_result"
+      | "supervision_member_result"
+      | "ask_reply"
+      | "retry_backoff",
     key: string
   ) {
     super(`Run suspended on ${waitKind}:${key}`);
     this.name = "RunSuspendedError";
     this.waitKind = waitKind;
     this.key = key;
+  }
+}
+
+export class TurnHandledError extends Error {
+  readonly disposition: "deferred" | "rejected";
+
+  constructor(disposition: "deferred" | "rejected") {
+    super(`Service turn ${disposition}`);
+    this.disposition = disposition;
   }
 }
 

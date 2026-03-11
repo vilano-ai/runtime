@@ -5,6 +5,13 @@ export interface DefinitionRecord {
   file: string;
   runtimeKind: "javascript";
   sourceLanguage: "typescript" | "javascript";
+  mailbox?: {
+    maxQueued: number;
+    overload?: "reject_new";
+  };
+  discovery?: {
+    singletonRole: string;
+  };
 }
 
 export type DefinitionKind = DefinitionRecord["kind"];
@@ -107,6 +114,13 @@ export interface RunRecord {
   state?: unknown | null;
   output: unknown | null;
   error: unknown | null;
+  passivation?: {
+    state: "passivated" | "ready" | "active" | "stopped";
+    reason: string | null;
+    wakeOn: string[];
+    queuedMessages: number;
+    nextWakeAt?: string | null;
+  } | null;
   createdAt: string;
   updatedAt: string;
 }

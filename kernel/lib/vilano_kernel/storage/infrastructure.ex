@@ -117,6 +117,7 @@ defmodule VilanoKernel.Storage.Infrastructure do
         definition_runtime_kind text,
         definition_source_language text,
         status text not null,
+        trap_exits integer not null default 0,
         lease_id text,
         lease_auth_token text,
         lease_worker_id text,
@@ -126,6 +127,41 @@ defmodule VilanoKernel.Storage.Infrastructure do
         error_json text,
         created_at text not null,
         updated_at text not null
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists run_relationships (
+        id text primary key,
+        owner_run_id text not null,
+        op_key text not null,
+        target_run_id text not null,
+        kind text not null,
+        propagate text not null,
+        status text not null,
+        created_at text not null,
+        updated_at text not null,
+        unique (owner_run_id, op_key)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists run_exit_events (
+        id text primary key,
+        run_id text not null,
+        relationship_id text not null,
+        event_json text not null,
+        consumed_at text,
+        created_at text not null,
+        unique (relationship_id)
       )
       """,
       []
@@ -256,6 +292,61 @@ defmodule VilanoKernel.Storage.Infrastructure do
     SQL.query!(
       Repo,
       """
+      create table if not exists run_supervision_groups (
+        id text primary key,
+        owner_run_id text not null,
+        op_key text not null,
+        strategy text not null,
+        max_restarts integer not null,
+        window_ms integer not null,
+        on_exhausted text not null,
+        status text not null,
+        created_at text not null,
+        updated_at text not null,
+        unique (owner_run_id, op_key)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists run_supervision_members (
+        group_id text not null,
+        member_key text not null,
+        definition_name text not null,
+        input_json text not null,
+        current_child_run_id text,
+        generation integer not null,
+        status text not null,
+        created_at text not null,
+        updated_at text not null,
+        primary key (group_id, member_key),
+        unique (current_child_run_id)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create table if not exists run_supervision_restarts (
+        id text primary key,
+        group_id text not null,
+        member_key text not null,
+        child_run_id text not null,
+        created_at text not null,
+        unique (child_run_id)
+      )
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
       create table if not exists run_service_refs (
         caller_run_id text not null,
         service_run_id text not null,
@@ -297,6 +388,7 @@ defmodule VilanoKernel.Storage.Infrastructure do
         status text not null,
         reply_json text,
         error_json text,
+        wake_at text,
         created_at text not null,
         updated_at text not null
       )
@@ -355,6 +447,60 @@ defmodule VilanoKernel.Storage.Infrastructure do
       """
       create index if not exists run_events_run_seq_idx
       on run_events(run_id, seq)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create index if not exists service_envelopes_run_status_wake_created_idx
+      on service_envelopes(service_run_id, status, wake_at, created_at)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create index if not exists run_relationships_target_status_idx
+      on run_relationships(target_run_id, status, created_at)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create index if not exists run_exit_events_run_consumed_created_idx
+      on run_exit_events(run_id, consumed_at, created_at)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create index if not exists run_supervision_groups_owner_status_idx
+      on run_supervision_groups(owner_run_id, status, created_at)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create index if not exists run_supervision_members_child_idx
+      on run_supervision_members(current_child_run_id)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create index if not exists run_supervision_restarts_group_created_idx
+      on run_supervision_restarts(group_id, created_at)
       """,
       []
     )
