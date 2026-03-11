@@ -276,6 +276,14 @@
       },
       {
         "kind": "workflow",
+        "name": "workerPidProbe",
+        "exportName": "workerPidProbe",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "execEnvSecretProbe",
         "exportName": "execEnvSecretProbe",
         "file": "src/definitions.ts",

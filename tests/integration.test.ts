@@ -338,6 +338,25 @@ test("worker loads fresh modules for each activation", async () => {
   }
 });
 
+test("managed workers run each activation in a fresh JS process", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const first = await harness.startWorkflow("demo/workerPidProbe", {});
+    const firstCompleted = await harness.waitForRun(first.run.id, (inspect) => inspect.run.status === "completed");
+    const second = await harness.startWorkflow("demo/workerPidProbe", {});
+    const secondCompleted = await harness.waitForRun(second.run.id, (inspect) => inspect.run.status === "completed");
+
+    expect(firstCompleted.run.output).toBeTruthy();
+    expect(secondCompleted.run.output).toBeTruthy();
+    expect((firstCompleted.run.output as { pid: number }).pid).not.toBe(
+      (secondCompleted.run.output as { pid: number }).pid
+    );
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("activations execute from writable workspaces while snapshots stay read-only", async () => {
   const harness = await RuntimeHarness.create();
 

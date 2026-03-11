@@ -805,6 +805,15 @@ export const workerEnvProbe = workflow({
   },
 });
 
+export const workerPidProbe = workflow({
+  name: "workerPidProbe",
+  run: async () => {
+    return {
+      pid: process.pid,
+    };
+  },
+});
+
 export const moduleStateProbe = workflow({
   name: "moduleStateProbe",
   run: async (_input, ctx) => {

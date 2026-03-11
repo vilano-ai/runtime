@@ -16,6 +16,7 @@ defmodule VilanoKernel.Storage do
 
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
+
   alias VilanoKernel.Storage.{
     Infrastructure,
     Projects,
@@ -96,7 +97,8 @@ defmodule VilanoKernel.Storage do
   def valid_lease_auth_token?(lease_id, lease_auth_token),
     do: lease_auth_token_valid?(lease_id, lease_auth_token)
 
-  def list_definitions(kind, project_name \\ nil), do: Projects.list_definitions(kind, project_name)
+  def list_definitions(kind, project_name \\ nil),
+    do: Projects.list_definitions(kind, project_name)
 
   def get_definition(project_name, kind, definition_name),
     do: Projects.get_definition(project_name, kind, definition_name)
@@ -114,7 +116,14 @@ defmodule VilanoKernel.Storage do
     get_run(run_id)
   end
 
-  def ensure_service_run!(project, definition, service_key, key_input, lease_id \\ nil, must_exist \\ false) do
+  def ensure_service_run!(
+        project,
+        definition,
+        service_key,
+        key_input,
+        lease_id \\ nil,
+        must_exist \\ false
+      ) do
     now = Infrastructure.now_iso8601()
 
     Infrastructure.transaction_with_busy_retry(fn ->
@@ -166,7 +175,8 @@ defmodule VilanoKernel.Storage do
 
     Infrastructure.transaction_with_busy_retry(fn ->
       with caller_run when not is_nil(caller_run) <- get_fenced_run_by_lease(lease_id, now),
-           child_ref when not is_nil(child_ref) <- get_run_child_by_child(caller_run["id"], child_run_id) do
+           child_ref when not is_nil(child_ref) <-
+             get_run_child_by_child(caller_run["id"], child_run_id) do
         _ = child_ref
         ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
         result = send_run_signal(child_run_id, signal_name, payload)
@@ -243,10 +253,21 @@ defmodule VilanoKernel.Storage do
 
         %{"definitionKind" => "service"} ->
           service_run = get_service_run_by_id(run_id)
-          stop_service_run_instance!(service_run, cancellation_error("Service stopped", reason), reason, now)
+
+          stop_service_run_instance!(
+            service_run,
+            cancellation_error("Service stopped", reason),
+            reason,
+            now
+          )
 
         run ->
-          cancel_workflow_run_instance!(run, cancellation_error("Run cancelled", reason), reason, now)
+          cancel_workflow_run_instance!(
+            run,
+            cancellation_error("Run cancelled", reason),
+            reason,
+            now
+          )
       end
     end)
     |> unwrap_transaction_result()
@@ -265,7 +286,8 @@ defmodule VilanoKernel.Storage do
           {"where r.definition_kind = 'service' and r.project_name = ?", [project]}
 
         {project, true} ->
-          {"where r.definition_kind = 'service' and r.project_name = ? and r.status not in ('idle', 'stopped')", [project]}
+          {"where r.definition_kind = 'service' and r.project_name = ? and r.status not in ('idle', 'stopped')",
+           [project]}
       end
 
     Repo
@@ -322,7 +344,13 @@ defmodule VilanoKernel.Storage do
               |> project_definitions_for_run()
               |> definition_from_project_definitions!("workflow", definition_name)
 
-            insert_workflow_run!(child_run_id, project_record_for_run(parent_run), definition, input || %{}, now)
+            insert_workflow_run!(
+              child_run_id,
+              project_record_for_run(parent_run),
+              definition,
+              input || %{},
+              now
+            )
 
             SQL.query!(
               Repo,
@@ -468,7 +496,11 @@ defmodule VilanoKernel.Storage do
                                   append_event!(
                                     parent_run["id"],
                                     "WaitRegistered",
-                                    %{"kind" => "child_result", "key" => wait_key, "childRunId" => child_run_id},
+                                    %{
+                                      "kind" => "child_result",
+                                      "key" => wait_key,
+                                      "childRunId" => child_run_id
+                                    },
                                     now
                                   )
 
@@ -485,7 +517,10 @@ defmodule VilanoKernel.Storage do
                                     now
                                   )
 
-                                  %{"status" => "completed", "output" => rechecked_child_run["output"]}
+                                  %{
+                                    "status" => "completed",
+                                    "output" => rechecked_child_run["output"]
+                                  }
 
                                 rechecked_child_run["status"] in ["failed", "cancelled"] ->
                                   SQL.query!(
@@ -509,7 +544,11 @@ defmodule VilanoKernel.Storage do
                                   append_event!(
                                     parent_run["id"],
                                     "WaitRegistered",
-                                    %{"kind" => "child_result", "key" => wait_key, "childRunId" => child_run_id},
+                                    %{
+                                      "kind" => "child_result",
+                                      "key" => wait_key,
+                                      "childRunId" => child_run_id
+                                    },
                                     now
                                   )
 
@@ -550,14 +589,22 @@ defmodule VilanoKernel.Storage do
                                   append_event!(
                                     parent_run["id"],
                                     "WaitRegistered",
-                                    %{"kind" => "child_result", "key" => wait_key, "childRunId" => child_run_id},
+                                    %{
+                                      "kind" => "child_result",
+                                      "key" => wait_key,
+                                      "childRunId" => child_run_id
+                                    },
                                     now
                                   )
 
                                   append_event!(
                                     parent_run["id"],
                                     "RunSuspended",
-                                    %{"reason" => "child_result", "key" => wait_key, "childRunId" => child_run_id},
+                                    %{
+                                      "reason" => "child_result",
+                                      "key" => wait_key,
+                                      "childRunId" => child_run_id
+                                    },
                                     now
                                   )
 
@@ -612,7 +659,10 @@ defmodule VilanoKernel.Storage do
             existing when not is_nil(existing) ->
               case existing["status"] do
                 "failed" ->
-                  %{"status" => "failed", "error" => decode_json_value(existing["error_json"], nil)}
+                  %{
+                    "status" => "failed",
+                    "error" => decode_json_value(existing["error_json"], nil)
+                  }
 
                 _ ->
                   %{"status" => existing["status"]}
@@ -649,13 +699,26 @@ defmodule VilanoKernel.Storage do
                       updated_at
                     ) values (?, ?, ?, 'send', ?, null, 'completed', ?, null, null, ?, ?)
                     """,
-                    [caller_run["id"], op_key, service_run_id, name, Jason.encode!(payload), now, now]
+                    [
+                      caller_run["id"],
+                      op_key,
+                      service_run_id,
+                      name,
+                      Jason.encode!(payload),
+                      now,
+                      now
+                    ]
                   )
 
                   append_event!(
                     caller_run["id"],
                     "MessageSent",
-                    %{"key" => op_key, "serviceRunId" => service_run_id, "name" => name, "payload" => payload},
+                    %{
+                      "key" => op_key,
+                      "serviceRunId" => service_run_id,
+                      "name" => name,
+                      "payload" => payload
+                    },
                     now
                   )
 
@@ -700,7 +763,10 @@ defmodule VilanoKernel.Storage do
             existing when not is_nil(existing) ->
               case existing["status"] do
                 "failed" ->
-                  %{"status" => "failed", "error" => decode_json_value(existing["error_json"], nil)}
+                  %{
+                    "status" => "failed",
+                    "error" => decode_json_value(existing["error_json"], nil)
+                  }
 
                 _ ->
                   %{"status" => existing["status"]}
@@ -737,13 +803,26 @@ defmodule VilanoKernel.Storage do
                       updated_at
                     ) values (?, ?, ?, 'signal', ?, null, 'completed', ?, null, null, ?, ?)
                     """,
-                    [caller_run["id"], op_key, service_run_id, name, Jason.encode!(payload), now, now]
+                    [
+                      caller_run["id"],
+                      op_key,
+                      service_run_id,
+                      name,
+                      Jason.encode!(payload),
+                      now,
+                      now
+                    ]
                   )
 
                   append_event!(
                     caller_run["id"],
                     "SignalSent",
-                    %{"key" => op_key, "serviceRunId" => service_run_id, "name" => name, "payload" => payload},
+                    %{
+                      "key" => op_key,
+                      "serviceRunId" => service_run_id,
+                      "name" => name,
+                      "payload" => payload
+                    },
                     now
                   )
 
@@ -814,7 +893,7 @@ defmodule VilanoKernel.Storage do
                       "wakeAt" => wake_at,
                       "output" => nil
                     }
-                }
+                  }
               end
 
             nil ->
@@ -882,7 +961,14 @@ defmodule VilanoKernel.Storage do
                       output_json = null,
                       updated_at = excluded.updated_at
                     """,
-                    [caller_run["id"], "ask_reply:" <> correlation_id, correlation_id, wake_at, now, now]
+                    [
+                      caller_run["id"],
+                      "ask_reply:" <> correlation_id,
+                      correlation_id,
+                      wake_at,
+                      now,
+                      now
+                    ]
                   )
 
                   append_event!(
@@ -913,7 +999,11 @@ defmodule VilanoKernel.Storage do
                   append_event!(
                     caller_run["id"],
                     "RunSuspended",
-                    %{"reason" => "ask_reply", "key" => "ask_reply:" <> correlation_id, "correlationId" => correlation_id},
+                    %{
+                      "reason" => "ask_reply",
+                      "key" => "ask_reply:" <> correlation_id,
+                      "correlationId" => correlation_id
+                    },
                     now
                   )
 
@@ -1047,13 +1137,22 @@ defmodule VilanoKernel.Storage do
                 now
               )
 
-              wake_service_ask_waiter!(envelope["correlation_id"], "completed", Map.get(body, "reply"), now)
+              wake_service_ask_waiter!(
+                envelope["correlation_id"],
+                "completed",
+                Map.get(body, "reply"),
+                now
+              )
             end
 
             append_event!(
               service_run["id"],
               "TurnCompleted",
-              %{"envelopeId" => envelope_id, "kind" => envelope["kind"], "name" => envelope["name"]},
+              %{
+                "envelopeId" => envelope_id,
+                "kind" => envelope["kind"],
+                "name" => envelope["name"]
+              },
               now
             )
 
@@ -1110,7 +1209,14 @@ defmodule VilanoKernel.Storage do
 
         {service_run, envelope} ->
           if envelope["service_run_id"] == service_run["id"] do
-            fail_service_turn_attempt!(service_run, envelope, error_body, retry_options, now, lease_id)
+            fail_service_turn_attempt!(
+              service_run,
+              envelope,
+              error_body,
+              retry_options,
+              now,
+              lease_id
+            )
           else
             nil
           end
@@ -1548,7 +1654,8 @@ defmodule VilanoKernel.Storage do
                         Map.get(retry_policy, "maxAttempts") > 0 ->
                       Map.get(retry_policy, "maxAttempts")
 
-                    existing && is_integer(existing["max_attempts"]) && existing["max_attempts"] > 0 ->
+                    existing && is_integer(existing["max_attempts"]) &&
+                        existing["max_attempts"] > 0 ->
                       existing["max_attempts"]
 
                     true ->
@@ -1569,7 +1676,8 @@ defmodule VilanoKernel.Storage do
 
                 persisted_backoff_ms =
                   cond do
-                    is_integer(Map.get(retry_policy, "backoffMs")) and Map.get(retry_policy, "backoffMs") >= 0 ->
+                    is_integer(Map.get(retry_policy, "backoffMs")) and
+                        Map.get(retry_policy, "backoffMs") >= 0 ->
                       Map.get(retry_policy, "backoffMs")
 
                     existing && is_integer(existing["backoff_ms"]) && existing["backoff_ms"] >= 0 ->
@@ -1585,7 +1693,8 @@ defmodule VilanoKernel.Storage do
                         Map.get(retry_policy, "backoffStepMs") >= 0 ->
                       Map.get(retry_policy, "backoffStepMs")
 
-                    existing && is_integer(existing["backoff_step_ms"]) && existing["backoff_step_ms"] >= 0 ->
+                    existing && is_integer(existing["backoff_step_ms"]) &&
+                        existing["backoff_step_ms"] >= 0 ->
                       existing["backoff_step_ms"]
 
                     true ->
@@ -1594,10 +1703,12 @@ defmodule VilanoKernel.Storage do
 
                 persisted_backoff_factor =
                   cond do
-                    is_number(Map.get(retry_policy, "backoffFactor")) and Map.get(retry_policy, "backoffFactor") > 0 ->
+                    is_number(Map.get(retry_policy, "backoffFactor")) and
+                        Map.get(retry_policy, "backoffFactor") > 0 ->
                       Map.get(retry_policy, "backoffFactor")
 
-                    existing && is_number(existing["backoff_factor"]) && existing["backoff_factor"] > 0 ->
+                    existing && is_number(existing["backoff_factor"]) &&
+                        existing["backoff_factor"] > 0 ->
                       existing["backoff_factor"]
 
                     true ->
@@ -1606,10 +1717,12 @@ defmodule VilanoKernel.Storage do
 
                 persisted_max_backoff_ms =
                   cond do
-                    is_integer(Map.get(retry_policy, "maxBackoffMs")) and Map.get(retry_policy, "maxBackoffMs") >= 0 ->
+                    is_integer(Map.get(retry_policy, "maxBackoffMs")) and
+                        Map.get(retry_policy, "maxBackoffMs") >= 0 ->
                       Map.get(retry_policy, "maxBackoffMs")
 
-                    existing && is_integer(existing["max_backoff_ms"]) && existing["max_backoff_ms"] >= 0 ->
+                    existing && is_integer(existing["max_backoff_ms"]) &&
+                        existing["max_backoff_ms"] >= 0 ->
                       existing["max_backoff_ms"]
 
                     true ->
@@ -1645,7 +1758,10 @@ defmodule VilanoKernel.Storage do
                       )
 
                     true ->
-                      RetryPolicy.normalize_backoff_jitter_ratio(nil, persisted_backoff_jitter_kind)
+                      RetryPolicy.normalize_backoff_jitter_ratio(
+                        nil,
+                        persisted_backoff_jitter_kind
+                      )
                   end
 
                 persisted_retry_on =
@@ -1774,44 +1890,49 @@ defmodule VilanoKernel.Storage do
           nil ->
             nil
 
-        run ->
-          case get_run_step_row(run["id"], op_key) do
-            nil ->
-              nil
+          run ->
+            case get_run_step_row(run["id"], op_key) do
+              nil ->
+                nil
 
-            _step ->
-              ensure_fenced_related_write!(
-                run["id"],
-                lease_id,
-                now,
-                """
-                update run_steps
-                set
-                  name = ?,
-                  status = 'completed',
-                  output_json = ?,
-                  error_json = null,
-                  updated_at = ?
-                where
-                  run_id = ?
-                  and op_key = ?
-                  and #{@fenced_run_exists_sql}
-                """,
-                [name, Jason.encode!(output), now, run["id"], op_key]
-              )
+              _step ->
+                ensure_fenced_related_write!(
+                  run["id"],
+                  lease_id,
+                  now,
+                  """
+                  update run_steps
+                  set
+                    name = ?,
+                    status = 'completed',
+                    output_json = ?,
+                    error_json = null,
+                    updated_at = ?
+                  where
+                    run_id = ?
+                    and op_key = ?
+                    and #{@fenced_run_exists_sql}
+                  """,
+                  [name, Jason.encode!(output), now, run["id"], op_key]
+                )
 
-              append_event!(
-                run["id"],
-                "StepCompleted",
-                %{"name" => name, "key" => op_key, "output" => output},
-                now
-              )
+                append_event!(
+                  run["id"],
+                  "StepCompleted",
+                  %{"name" => name, "key" => op_key, "output" => output},
+                  now
+                )
 
-              %{"status" => "completed", "output" => output, "runId" => run["id"], "key" => op_key}
-          end
-      end
-    end)
-    |> unwrap_transaction_result()
+                %{
+                  "status" => "completed",
+                  "output" => output,
+                  "runId" => run["id"],
+                  "key" => op_key
+                }
+            end
+        end
+      end)
+      |> unwrap_transaction_result()
 
     if is_map(result) && result["status"] == "completed" do
       VilanoKernel.StepDeadlineManager.clear_step(result["runId"], result["key"])
@@ -1829,17 +1950,17 @@ defmodule VilanoKernel.Storage do
           nil ->
             nil
 
-        run ->
-          case get_run_step_row(run["id"], op_key) do
-            nil ->
-              nil
+          run ->
+            case get_run_step_row(run["id"], op_key) do
+              nil ->
+                nil
 
-            step ->
-              fail_step_attempt!(run, step, name, error_body, now, lease_id)
-          end
-      end
-    end)
-    |> unwrap_transaction_result()
+              step ->
+                fail_step_attempt!(run, step, name, error_body, now, lease_id)
+            end
+        end
+      end)
+      |> unwrap_transaction_result()
 
     if is_map(result) && result["status"] in ["failed", "retry_waiting"] do
       VilanoKernel.StepDeadlineManager.clear_step(result["runId"], result["key"])
@@ -1920,6 +2041,7 @@ defmodule VilanoKernel.Storage do
 
               args = Map.get(exec_spec, "args", [])
               env_map = Map.get(exec_spec, "env")
+
               env_keys_json =
                 if is_map(env_map) do
                   env_map
@@ -2216,7 +2338,8 @@ defmodule VilanoKernel.Storage do
           nil
 
         wait ->
-          if wait["status"] != "waiting" or is_nil(wait["wake_at"]) or wait["wake_at"] != expected_wake_at do
+          if wait["status"] != "waiting" or is_nil(wait["wake_at"]) or
+               wait["wake_at"] != expected_wake_at do
             nil
           else
             case wait["wait_kind"] do
@@ -2421,65 +2544,65 @@ defmodule VilanoKernel.Storage do
                       }
 
                     signal ->
-                  SQL.query!(
-                    Repo,
-                    """
-                    update run_signals
-                    set consumed_at = ?
-                    where id = ?
-                    """,
-                    [now, signal["id"]]
-                  )
+                      SQL.query!(
+                        Repo,
+                        """
+                        update run_signals
+                        set consumed_at = ?
+                        where id = ?
+                        """,
+                        [now, signal["id"]]
+                      )
 
-                  SQL.query!(
-                    Repo,
-                    """
-                    insert into run_waits (
-                      run_id,
-                      op_key,
-                      wait_kind,
-                      wait_name,
-                      status,
-                      wake_at,
-                      output_json,
-                      created_at,
-                      updated_at
-                    ) values (?, ?, 'signal', ?, 'completed', null, ?, ?, ?)
-                    on conflict(run_id, op_key) do update set
-                      wait_kind = excluded.wait_kind,
-                      wait_name = excluded.wait_name,
-                      status = 'completed',
-                      wake_at = null,
-                      output_json = excluded.output_json,
-                      updated_at = excluded.updated_at
-                    """,
-                    [run["id"], op_key, name, signal["payload_json"], now, now]
-                  )
+                      SQL.query!(
+                        Repo,
+                        """
+                        insert into run_waits (
+                          run_id,
+                          op_key,
+                          wait_kind,
+                          wait_name,
+                          status,
+                          wake_at,
+                          output_json,
+                          created_at,
+                          updated_at
+                        ) values (?, ?, 'signal', ?, 'completed', null, ?, ?, ?)
+                        on conflict(run_id, op_key) do update set
+                          wait_kind = excluded.wait_kind,
+                          wait_name = excluded.wait_name,
+                          status = 'completed',
+                          wake_at = null,
+                          output_json = excluded.output_json,
+                          updated_at = excluded.updated_at
+                        """,
+                        [run["id"], op_key, name, signal["payload_json"], now, now]
+                      )
 
-                  append_event!(
-                    run["id"],
-                    "WaitRegistered",
-                    %{"kind" => "signal", "key" => op_key, "signal" => name},
-                    now
-                  )
+                      append_event!(
+                        run["id"],
+                        "WaitRegistered",
+                        %{"kind" => "signal", "key" => op_key, "signal" => name},
+                        now
+                      )
 
-                  append_event!(
-                    run["id"],
-                    "WaitSatisfied",
-                    %{
-                      "kind" => "signal",
-                      "key" => op_key,
-                      "signal" => name,
-                      "payload" => decode_json_value(signal["payload_json"], nil)
-                    },
-                    now
-                  )
+                      append_event!(
+                        run["id"],
+                        "WaitSatisfied",
+                        %{
+                          "kind" => "signal",
+                          "key" => op_key,
+                          "signal" => name,
+                          "payload" => decode_json_value(signal["payload_json"], nil)
+                        },
+                        now
+                      )
 
-                  %{
-                    "status" => "completed",
-                    "wait" => wait_from_row(get_run_wait(run["id"], op_key)),
-                    "output" => decode_json_value(signal["payload_json"], nil)
-                  }
+                      %{
+                        "status" => "completed",
+                        "wait" => wait_from_row(get_run_wait(run["id"], op_key)),
+                        "output" => decode_json_value(signal["payload_json"], nil)
+                      }
                   end
               end
           end
@@ -2624,6 +2747,11 @@ defmodule VilanoKernel.Storage do
     end
   end
 
+  def runnable_activation_available? do
+    now = Infrastructure.now_iso8601()
+    not is_nil(next_activation_candidate(now))
+  end
+
   def list_run_events(run_id), do: ReadModels.list_run_events(run_id)
 
   def list_run_steps(run_id), do: ReadModels.list_run_steps(run_id)
@@ -2638,7 +2766,8 @@ defmodule VilanoKernel.Storage do
 
   def list_run_children(run_id), do: ReadModels.list_run_children(run_id)
 
-  def list_service_envelopes(service_run_id), do: ReadModels.list_service_envelopes(service_run_id)
+  def list_service_envelopes(service_run_id),
+    do: ReadModels.list_service_envelopes(service_run_id)
 
   defp run_from_row(row) do
     %{
@@ -2782,15 +2911,18 @@ defmodule VilanoKernel.Storage do
   defp first_integer(_), do: 0
 
   defp wait_deadline(_now, nil), do: nil
+
   defp wait_deadline(now, timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0 do
     shift_milliseconds(now, timeout_ms)
   end
+
   defp wait_deadline(_now, _timeout_ms), do: nil
 
   defp decode_json_list(nil), do: []
   defp decode_json_list(value) when is_binary(value), do: Jason.decode!(value)
 
   defp decode_json_map_keys(nil), do: []
+
   defp decode_json_map_keys(value) when is_binary(value) do
     case Jason.decode!(value) do
       decoded when is_map(decoded) ->
@@ -2975,9 +3107,12 @@ defmodule VilanoKernel.Storage do
     is_binary(run["projectSnapshotPath"]) and run["projectSnapshotPath"] != "" and
       is_map(run["definition"]) and
       is_binary(get_in(run, ["definition", "file"])) and get_in(run, ["definition", "file"]) != "" and
-      is_binary(get_in(run, ["definition", "exportName"])) and get_in(run, ["definition", "exportName"]) != "" and
-      is_binary(get_in(run, ["definition", "runtimeKind"])) and get_in(run, ["definition", "runtimeKind"]) != "" and
-      is_binary(get_in(run, ["definition", "sourceLanguage"])) and get_in(run, ["definition", "sourceLanguage"]) != ""
+      is_binary(get_in(run, ["definition", "exportName"])) and
+      get_in(run, ["definition", "exportName"]) != "" and
+      is_binary(get_in(run, ["definition", "runtimeKind"])) and
+      get_in(run, ["definition", "runtimeKind"]) != "" and
+      is_binary(get_in(run, ["definition", "sourceLanguage"])) and
+      get_in(run, ["definition", "sourceLanguage"]) != ""
   end
 
   defp invalidate_unpinned_run!(%{"definitionKind" => "service"} = run, now) do
@@ -3280,86 +3415,86 @@ defmodule VilanoKernel.Storage do
 
     service_run =
       case get_service_run(project_name, definition_name, service_key) do
-      nil when must_exist ->
-        nil
+        nil when must_exist ->
+          nil
 
-      nil ->
-        run_id = deterministic_service_run_id(project_name, definition_name, service_key)
-        definitions_json = Jason.encode!(Map.fetch!(project, "definitions"))
+        nil ->
+          run_id = deterministic_service_run_id(project_name, definition_name, service_key)
+          definitions_json = Jason.encode!(Map.fetch!(project, "definitions"))
 
-        SQL.query!(
-          Repo,
-          """
-          insert or ignore into runs (
-            id,
-            project_name,
-            definition_kind,
-            definition_name,
-            project_snapshot_path,
-            project_definitions_json,
-            definition_file,
-            definition_export_name,
-            definition_runtime_kind,
-            definition_source_language,
-            status,
-            lease_id,
-            lease_worker_id,
-            lease_expires_at,
-            input_json,
-            output_json,
-            error_json,
-            created_at,
-            updated_at
-          ) values (?, ?, 'service', ?, ?, ?, ?, ?, ?, ?, 'idle', null, null, null, ?, null, null, ?, ?)
-          """,
-          [
-            run_id,
-            project_name,
-            definition_name,
-            Map.get(project, "snapshotPath") || Map.fetch!(project, "path"),
-            definitions_json,
-            Map.fetch!(definition, "file"),
-            Map.fetch!(definition, "exportName"),
-            Map.fetch!(definition, "runtimeKind"),
-            Map.fetch!(definition, "sourceLanguage"),
-            Jason.encode!(key_input || %{}),
-            now,
-            now
-          ]
-        )
-
-        inserted_service_rows =
-          write_changes!(
+          SQL.query!(
+            Repo,
             """
-            insert or ignore into service_runs (
-              run_id,
-              service_key,
-              key_input_json,
-              state_json,
+            insert or ignore into runs (
+              id,
+              project_name,
+              definition_kind,
+              definition_name,
+              project_snapshot_path,
+              project_definitions_json,
+              definition_file,
+              definition_export_name,
+              definition_runtime_kind,
+              definition_source_language,
+              status,
+              lease_id,
+              lease_worker_id,
+              lease_expires_at,
+              input_json,
+              output_json,
+              error_json,
               created_at,
               updated_at
-            ) values (?, ?, ?, null, ?, ?)
+            ) values (?, ?, 'service', ?, ?, ?, ?, ?, ?, ?, 'idle', null, null, null, ?, null, null, ?, ?)
             """,
-            [run_id, service_key, Jason.encode!(key_input || %{}), now, now]
+            [
+              run_id,
+              project_name,
+              definition_name,
+              Map.get(project, "snapshotPath") || Map.fetch!(project, "path"),
+              definitions_json,
+              Map.fetch!(definition, "file"),
+              Map.fetch!(definition, "exportName"),
+              Map.fetch!(definition, "runtimeKind"),
+              Map.fetch!(definition, "sourceLanguage"),
+              Jason.encode!(key_input || %{}),
+              now,
+              now
+            ]
           )
 
-        if inserted_service_rows == 1 do
-          append_event!(
-            run_id,
-            "ServiceInstantiated",
-            %{
-              "serviceKey" => service_key,
-              "definitionName" => definition_name,
-              "keyInput" => key_input || %{}
-            },
-            now
-          )
-        end
+          inserted_service_rows =
+            write_changes!(
+              """
+              insert or ignore into service_runs (
+                run_id,
+                service_key,
+                key_input_json,
+                state_json,
+                created_at,
+                updated_at
+              ) values (?, ?, ?, null, ?, ?)
+              """,
+              [run_id, service_key, Jason.encode!(key_input || %{}), now, now]
+            )
 
-        get_service_run(project_name, definition_name, service_key)
+          if inserted_service_rows == 1 do
+            append_event!(
+              run_id,
+              "ServiceInstantiated",
+              %{
+                "serviceKey" => service_key,
+                "definitionName" => definition_name,
+                "keyInput" => key_input || %{}
+              },
+              now
+            )
+          end
 
-      service_run ->
-        service_run
+          get_service_run(project_name, definition_name, service_key)
+
+        service_run ->
+          service_run
       end
 
     case service_run do
@@ -3369,7 +3504,8 @@ defmodule VilanoKernel.Storage do
       resolved ->
         record_service_ref!(caller_run_id, resolved["id"], now)
 
-        if is_binary(caller_run_id) and caller_run_id != "" and is_binary(lease_id) and lease_id != "" do
+        if is_binary(caller_run_id) and caller_run_id != "" and is_binary(lease_id) and
+             lease_id != "" do
           ensure_fenced_run_ownership!(caller_run_id, lease_id, now)
         end
 
@@ -3707,8 +3843,12 @@ defmodule VilanoKernel.Storage do
       cancelled_wait_count = cancel_waiting_waits!(run["id"], error_body, now)
       _cancelled_step_count = cancel_running_steps!(run["id"], error_body, now)
       _cancelled_exec_count = cancel_running_execs!(run["id"], error_body, now)
-      cancelled_service_ask_count = cancel_outbound_service_asks!(run["id"], error_body, reason, now)
-      cancelled_child_run_count = cancel_child_runs_for_parent!(run["id"], error_body, reason, now)
+
+      cancelled_service_ask_count =
+        cancel_outbound_service_asks!(run["id"], error_body, reason, now)
+
+      cancelled_child_run_count =
+        cancel_child_runs_for_parent!(run["id"], error_body, reason, now)
 
       append_event!(
         run["id"],
@@ -3803,6 +3943,7 @@ defmodule VilanoKernel.Storage do
       cancelled_wait_count = cancel_waiting_waits!(service_run["id"], error_body, now)
       _cancelled_step_count = cancel_running_steps!(service_run["id"], error_body, now)
       _cancelled_exec_count = cancel_running_execs!(service_run["id"], error_body, now)
+
       cancelled_service_ask_count =
         cancel_outbound_service_asks!(service_run["id"], error_body, reason, now)
 
@@ -3998,15 +4139,22 @@ defmodule VilanoKernel.Storage do
     attempt = step_attempt(step)
     max_attempts = RetryPolicy.normalize_max_attempts(step["max_attempts"])
     retry_on = decode_json_list(step["retry_on_json"])
-    backoff = compute_backoff_details(%{
-      "backoffKind" => step["backoff_kind"],
-      "backoffMs" => step["backoff_ms"],
-      "backoffStepMs" => step["backoff_step_ms"],
-      "backoffFactor" => step["backoff_factor"],
-      "maxBackoffMs" => step["max_backoff_ms"],
-      "backoffJitterKind" => step["backoff_jitter_kind"],
-      "backoffJitterRatio" => step["backoff_jitter_ratio"]
-    }, attempt, {"step", run["id"], step["op_key"]})
+
+    backoff =
+      compute_backoff_details(
+        %{
+          "backoffKind" => step["backoff_kind"],
+          "backoffMs" => step["backoff_ms"],
+          "backoffStepMs" => step["backoff_step_ms"],
+          "backoffFactor" => step["backoff_factor"],
+          "maxBackoffMs" => step["max_backoff_ms"],
+          "backoffJitterKind" => step["backoff_jitter_kind"],
+          "backoffJitterRatio" => step["backoff_jitter_ratio"]
+        },
+        attempt,
+        {"step", run["id"], step["op_key"]}
+      )
+
     backoff_kind = backoff["backoffKind"]
     backoff_ms = backoff["backoffMs"]
     decision = retry_decision(error_body, attempt, max_attempts, retry_on)
@@ -4120,7 +4268,12 @@ defmodule VilanoKernel.Storage do
         [name, encoded_error, now, run["id"], step["op_key"]]
       )
 
-      %{"status" => "failed", "error" => error_body, "runId" => run["id"], "key" => step["op_key"]}
+      %{
+        "status" => "failed",
+        "error" => error_body,
+        "runId" => run["id"],
+        "key" => step["op_key"]
+      }
     end
   end
 
@@ -4295,7 +4448,14 @@ defmodule VilanoKernel.Storage do
     max_attempts = RetryPolicy.normalize_max_attempts(Map.get(retry_options, "maxAttempts"))
     attempt = envelope["attempt"] || 1
     retry_on = RetryPolicy.normalize_retry_on(Map.get(retry_options, "retryOn"))
-    backoff = compute_backoff_details(retry_options, attempt, {"service_turn", service_run["id"], envelope["id"]})
+
+    backoff =
+      compute_backoff_details(
+        retry_options,
+        attempt,
+        {"service_turn", service_run["id"], envelope["id"]}
+      )
+
     backoff_kind = backoff["backoffKind"]
     backoff_ms = backoff["backoffMs"]
     decision = retry_decision(error_body, attempt, max_attempts, retry_on)
@@ -4457,7 +4617,14 @@ defmodule VilanoKernel.Storage do
         output_json = null,
         updated_at = excluded.updated_at
       """,
-      [run["id"], wait_key, Map.fetch!(body, "operationName"), Map.fetch!(body, "wakeAt"), now, now]
+      [
+        run["id"],
+        wait_key,
+        Map.fetch!(body, "operationName"),
+        Map.fetch!(body, "wakeAt"),
+        now,
+        now
+      ]
     )
 
     ensure_fenced_run_write!(
@@ -4572,7 +4739,6 @@ defmodule VilanoKernel.Storage do
 
   defp compute_backoff_details(policy, attempt, seed),
     do: RetryPolicy.compute_backoff_details(policy, attempt, seed)
-
 
   defp cancel_waiting_waits!(run_id, error_body, now) do
     waits = list_waiting_wait_rows(run_id)
@@ -5074,7 +5240,15 @@ defmodule VilanoKernel.Storage do
     |> List.first()
   end
 
-  defp maybe_insert_service_envelope(service_run, kind, name, payload, correlation_id, sender_run_id, now) do
+  defp maybe_insert_service_envelope(
+         service_run,
+         kind,
+         name,
+         payload,
+         correlation_id,
+         sender_run_id,
+         now
+       ) do
     if service_run["status"] == "stopped" do
       {:error,
        %{
@@ -5098,10 +5272,20 @@ defmodule VilanoKernel.Storage do
     end
   end
 
-  defp insert_service_envelope!(service_run_id, kind, name, payload, correlation_id, sender_run_id, now) do
+  defp insert_service_envelope!(
+         service_run_id,
+         kind,
+         name,
+         payload,
+         correlation_id,
+         sender_run_id,
+         now
+       ) do
     envelope_id = "env_" <> Ecto.UUID.generate()
     current_run = get_run(service_run_id)
-    next_status = ServiceLifecycle.enqueue_status(current_run["status"], current_run["leaseExpiresAt"], now)
+
+    next_status =
+      ServiceLifecycle.enqueue_status(current_run["status"], current_run["leaseExpiresAt"], now)
 
     SQL.query!(
       Repo,
@@ -5305,7 +5489,12 @@ defmodule VilanoKernel.Storage do
       append_event!(
         op["caller_run_id"],
         "WaitSatisfied",
-        %{"kind" => "ask_reply", "key" => wait_key, "correlationId" => correlation_id, "payload" => payload},
+        %{
+          "kind" => "ask_reply",
+          "key" => wait_key,
+          "correlationId" => correlation_id,
+          "payload" => payload
+        },
         now
       )
     end
@@ -5313,6 +5502,7 @@ defmodule VilanoKernel.Storage do
 
   defp timeout_service_ask_wait!(run_id, op_key, wait, now) do
     correlation_id = wait["wait_name"]
+
     error_body = %{
       "message" => "Service ask timed out",
       "reason" => "ask_timeout",
@@ -5390,7 +5580,12 @@ defmodule VilanoKernel.Storage do
 
   defp service_next_status(service_run_id, stop?) do
     current_run = get_run(service_run_id)
-    ServiceLifecycle.next_status(current_run["status"], service_has_queued_envelopes?(service_run_id), stop?)
+
+    ServiceLifecycle.next_status(
+      current_run["status"],
+      service_has_queued_envelopes?(service_run_id),
+      stop?
+    )
   end
 
   defp service_has_queued_envelopes?(service_run_id) do
@@ -5495,5 +5690,4 @@ defmodule VilanoKernel.Storage do
 
   defp unwrap_transaction_result({:ok, value}), do: value
   defp unwrap_transaction_result({:error, reason}), do: raise(reason)
-
 end

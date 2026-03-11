@@ -14,6 +14,7 @@ defmodule VilanoKernel.Runtime do
     :worker_auth_token,
     :managed_worker_count,
     :managed_worker_runtime,
+    :managed_worker_mode,
     :lease_duration_seconds
   ]
 
@@ -49,6 +50,7 @@ defmodule VilanoKernel.Runtime do
       end
 
     managed_worker_runtime = System.get_env("VILANO_MANAGED_WORKER_RUNTIME", "bun")
+    managed_worker_mode = System.get_env("VILANO_MANAGED_WORKER_MODE", "per_activation")
 
     lease_duration_seconds =
       case System.get_env("VILANO_LEASE_DURATION_SECONDS", "30") do
@@ -69,6 +71,7 @@ defmodule VilanoKernel.Runtime do
       worker_auth_token: System.get_env("VILANO_WORKER_TOKEN"),
       managed_worker_count: managed_worker_count,
       managed_worker_runtime: managed_worker_runtime,
+      managed_worker_mode: managed_worker_mode,
       lease_duration_seconds: lease_duration_seconds
     }
   end
