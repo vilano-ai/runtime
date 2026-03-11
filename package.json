@@ -17,7 +17,7 @@
     "check:manifest": "bun scripts/check-manifest-contract.ts",
     "check:launch": "bun run check && bun run smoke:install && bun run smoke:release-install && bun run test:preview-node && bun run test:soak",
     "typecheck": "tsc -p cli/tsconfig.json && tsc -p sdk/typescript/tsconfig.json && tsc -p worker/bun/tsconfig.json && tsc -p worker/node/tsconfig.json && tsc -p tests/tsconfig.json",
-    "test": "bun run build:sdk && bun test tests/worker-core.test.ts tests/integration.test.ts tests/protocol-contract.test.ts tests/manifest-contract.test.ts tests/update-check.test.ts --timeout 30000 --max-concurrency 1",
+    "test": "bun run build:sdk && bun test tests/activation-workspace.test.ts tests/worker-core.test.ts tests/integration.test.ts tests/protocol-contract.test.ts tests/manifest-contract.test.ts tests/update-check.test.ts --timeout 30000 --max-concurrency 1",
     "test:preview-node": "bun run build:sdk && bun test tests/node-worker.test.ts --timeout 60000 --max-concurrency 1",
     "test:integration": "bun run test",
     "test:kernel": "bash -lc 'export VILANO_HOME=\"$(mktemp -d)\"; trap \"rm -rf \\\"$VILANO_HOME\\\"\" EXIT; cd kernel && VILANO_KERNEL_PORT=0 VILANO_MANAGED_WORKERS=0 mix test'",

@@ -243,9 +243,6 @@ export async function executeActivation(
     if (activationWorkspace) {
       await fs.rm(activationWorkspace, { recursive: true, force: true }).catch(() => undefined);
     }
-    if (activationImportRoot) {
-      await fs.rm(activationImportRoot, { recursive: true, force: true }).catch(() => undefined);
-    }
   }
 }
 
