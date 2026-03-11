@@ -943,7 +943,7 @@ defmodule VilanoKernel.Router do
           send_json(conn, 200, %{ok: true, run: run, envelope: envelope})
 
         {:error, error} ->
-          send_error(conn, 409, "service_stopped", Map.fetch!(error, "message"))
+          send_service_enqueue_error(conn, error)
       end
     else
       nil ->
@@ -972,7 +972,7 @@ defmodule VilanoKernel.Router do
           send_json(conn, 200, %{ok: true, run: run, envelope: envelope})
 
         {:error, error} ->
-          send_error(conn, 409, "service_stopped", Map.fetch!(error, "message"))
+          send_service_enqueue_error(conn, error)
       end
     else
       nil ->
@@ -1001,7 +1001,7 @@ defmodule VilanoKernel.Router do
           send_json(conn, 200, %{ok: true, run: run, envelope: envelope})
 
         {:error, error} ->
-          send_error(conn, 409, "service_stopped", Map.fetch!(error, "message"))
+          send_service_enqueue_error(conn, error)
       end
     else
       nil ->
@@ -1162,6 +1162,16 @@ defmodule VilanoKernel.Router do
 
   defp activation_definition(run) do
     run["definition"]
+  end
+
+  defp send_service_enqueue_error(conn, error) do
+    case Map.get(error, "reason") do
+      "service_overloaded" ->
+        send_error(conn, 429, "service_overloaded", Map.fetch!(error, "message"))
+
+      _ ->
+        send_error(conn, 409, "service_stopped", Map.fetch!(error, "message"))
+    end
   end
 
   match _ do

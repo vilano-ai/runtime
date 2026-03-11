@@ -6538,25 +6538,70 @@ defmodule VilanoKernel.Storage do
          now
        ) do
     if service_run["status"] == "stopped" do
-      {:error,
+       {:error,
        %{
          "message" => "Service is stopped",
+         "reason" => "service_stopped",
          "serviceRunId" => service_run["id"],
          "serviceKey" => service_run["serviceKey"],
          "kind" => kind,
          "name" => name
        }}
     else
-      {:ok,
-       insert_service_envelope!(
-         service_run["id"],
-         kind,
-         name,
-         payload,
-         correlation_id,
-         sender_run_id,
-         now
-       )}
+      case maybe_reject_service_envelope(service_run, kind, name, now) do
+        nil ->
+          {:ok,
+           insert_service_envelope!(
+             service_run["id"],
+             kind,
+             name,
+             payload,
+             correlation_id,
+             sender_run_id,
+             now
+           )}
+
+        {:error, error} ->
+          {:error, error}
+      end
+    end
+  end
+
+  defp maybe_reject_service_envelope(service_run, kind, name, now) do
+    mailbox = service_mailbox_config(service_run)
+    max_queued = mailbox["maxQueued"]
+    queued = queued_mailbox_summary(service_run["id"], now)["total"] || 0
+
+    if is_integer(max_queued) and max_queued > 0 and queued >= max_queued do
+      error = %{
+        "message" => "Service mailbox overloaded",
+        "reason" => "service_overloaded",
+        "serviceRunId" => service_run["id"],
+        "serviceKey" => service_run["serviceKey"],
+        "kind" => kind,
+        "name" => name,
+        "queued" => queued,
+        "maxQueued" => max_queued,
+        "overload" => mailbox["overload"] || "reject_new"
+      }
+
+      append_event!(
+        service_run["id"],
+        "InboundRejected",
+        %{
+          "reason" => "service_overloaded",
+          "kind" => kind,
+          "name" => name,
+          "queued" => queued,
+          "maxQueued" => max_queued,
+          "overload" => mailbox["overload"] || "reject_new"
+        },
+        now
+      )
+
+      {:error, error}
+    else
+      nil
     end
   end
 
@@ -6928,6 +6973,26 @@ defmodule VilanoKernel.Storage do
         "nextWakeAt" => row["next_wake_at"]
       }
     end)
+  end
+
+  defp service_mailbox_config(service_run) do
+    definition =
+      project_definitions_for_run(service_run)
+      |> Map.get("services", [])
+      |> Enum.find(&(&1["name"] == service_run["definitionName"]))
+
+    mailbox = Map.get(definition || %{}, "mailbox") || %{}
+    max_queued = Map.get(mailbox, "maxQueued")
+
+    %{
+      "maxQueued" => if(is_integer(max_queued) and max_queued > 0, do: max_queued, else: nil),
+      "overload" =>
+        case Map.get(mailbox, "overload") do
+          "reject_new" -> "reject_new"
+          _ when is_integer(max_queued) and max_queued > 0 -> "reject_new"
+          _ -> nil
+        end
+    }
   end
 
   defp resolve_run_relationship(lease_id, target_run_id, op_key, kind, propagate) do

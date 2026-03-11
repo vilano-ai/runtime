@@ -5,6 +5,10 @@ export interface DefinitionRecord {
   file: string;
   runtimeKind: "javascript";
   sourceLanguage: "typescript" | "javascript";
+  mailbox?: {
+    maxQueued: number;
+    overload?: "reject_new";
+  };
 }
 
 export type DefinitionKind = DefinitionRecord["kind"];

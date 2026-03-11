@@ -755,6 +755,40 @@ export const mailboxRejectWorkflow = workflow({
   },
 });
 
+export const boundedMailboxDelayWorkflow = workflow({
+  name: "boundedMailboxDelayWorkflow",
+  run: async (input: { sessionId: string; id: string; delayMs?: number }, ctx) => {
+    const ref = await ctx.connect(boundedMailboxProbe, { sessionId: input.sessionId });
+    return await ref.ask.delay({ id: input.id, delayMs: input.delayMs ?? 0 });
+  },
+});
+
+export const boundedMailboxOverflowWorkflow = workflow({
+  name: "boundedMailboxOverflowWorkflow",
+  run: async (input: { sessionId: string }, ctx) => {
+    const ref = await ctx.connect(boundedMailboxProbe, { sessionId: input.sessionId });
+
+    try {
+      await ref.ask.history(undefined, { key: "overflow-history" });
+      return {
+        overloaded: false,
+      };
+    } catch (error) {
+      const cause =
+        error instanceof Error && "cause" in error ? (error as Error & { cause?: unknown }).cause : null;
+
+      return {
+        overloaded: true,
+        message: error instanceof Error ? error.message : String(error),
+        reason:
+          cause && typeof cause === "object" && "reason" in cause
+            ? String((cause as { reason?: unknown }).reason)
+            : null,
+      };
+    }
+  },
+});
+
 export const reviewer = service({
   name: "reviewer",
   key: (input: { repoId: string }) => input.repoId,
@@ -1033,6 +1067,64 @@ export const mailboxProbe = service({
         reason: "mailbox_rejected",
       });
     },
+  },
+});
+
+export const boundedMailboxProbe = service({
+  name: "boundedMailboxProbe",
+  mailbox: {
+    maxQueued: 1,
+    overload: "reject_new",
+  },
+  key: (input: { sessionId: string }) => input.sessionId,
+  init: async (input: { sessionId: string }) => ({
+    sessionId: input.sessionId,
+    history: [] as string[],
+  }),
+  onSend: {
+    record: async (payload: { id: string }, state) => ({
+      state: {
+        ...state,
+        history: [...state.history, `send:${payload.id}`],
+      },
+    }),
+  },
+  onAsk: {
+    delay: async (payload: { id: string; delayMs?: number }, state, ctx) => {
+      if ((payload.delayMs ?? 0) > 0) {
+        await ctx.step(
+          "bounded-mailbox-delay",
+          async () => {
+            await new Promise((resolve) => {
+              setTimeout(resolve, payload.delayMs ?? 0);
+            });
+
+            return null;
+          },
+          {
+            key: `bounded-mailbox-delay:${payload.id}:${payload.delayMs ?? 0}`,
+          }
+        );
+      }
+
+      const history = [...state.history, `ask:${payload.id}`];
+
+      return {
+        state: {
+          ...state,
+          history,
+        },
+        reply: {
+          id: payload.id,
+          history,
+        },
+      };
+    },
+    history: async (_payload: void, state) => ({
+      reply: {
+        history: state.history,
+      },
+    }),
   },
 });
 

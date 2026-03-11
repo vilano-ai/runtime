@@ -284,7 +284,7 @@ function compareDefinitions(a: DefinitionRecord, b: DefinitionRecord): number {
   return a.name.localeCompare(b.name) || a.file.localeCompare(b.file);
 }
 
-function hashDefinitions(definitions: ProjectManifestFile["definitions"]): string {
+export function hashDefinitions(definitions: ProjectManifestFile["definitions"]): string {
   return crypto.createHash("sha256").update(JSON.stringify(definitions)).digest("hex");
 }
 

@@ -60,6 +60,22 @@
       },
       {
         "kind": "workflow",
+        "name": "boundedMailboxDelayWorkflow",
+        "exportName": "boundedMailboxDelayWorkflow",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "boundedMailboxOverflowWorkflow",
+        "exportName": "boundedMailboxOverflowWorkflow",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "childTask",
         "exportName": "childTask",
         "file": "src/definitions.ts",
@@ -388,6 +404,14 @@
       }
     ],
     "services": [
+      {
+        "kind": "service",
+        "name": "boundedMailboxProbe",
+        "exportName": "boundedMailboxProbe",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
       {
         "kind": "service",
         "name": "mailboxProbe",

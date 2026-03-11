@@ -108,10 +108,11 @@ defmodule VilanoKernel.ProjectContract do
          "kind" => kind,
          "name" => name,
          "exportName" => export_name,
-         "file" => file,
+          "file" => file,
          "runtimeKind" => runtime_kind,
          "sourceLanguage" => source_language
        }}
+      |> maybe_put_mailbox(record, expected_kind)
     end
   end
 
@@ -213,6 +214,47 @@ defmodule VilanoKernel.ProjectContract do
       else
         {:error, "#{key} '#{value}' is not supported by this runtime"}
       end
+    end
+  end
+
+  defp maybe_put_mailbox({:ok, record}, source_record, "service") do
+    case validate_mailbox(Map.get(source_record, "mailbox")) do
+      {:ok, nil} -> {:ok, record}
+      {:ok, mailbox} -> {:ok, Map.put(record, "mailbox", mailbox)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp maybe_put_mailbox({:ok, record}, _source_record, _kind), do: {:ok, record}
+  defp maybe_put_mailbox(error, _source_record, _kind), do: error
+
+  defp validate_mailbox(nil), do: {:ok, nil}
+
+  defp validate_mailbox(mailbox) when is_map(mailbox) do
+    with {:ok, max_queued} <- validate_positive_integer(mailbox, "maxQueued"),
+         {:ok, overload} <- validate_optional_overload(mailbox) do
+      {:ok,
+       %{
+         "maxQueued" => max_queued,
+         "overload" => overload || "reject_new"
+       }}
+    end
+  end
+
+  defp validate_mailbox(_mailbox), do: {:error, "mailbox must be an object"}
+
+  defp validate_positive_integer(record, key) do
+    case Map.get(record, key) do
+      value when is_integer(value) and value > 0 -> {:ok, value}
+      _ -> {:error, "#{key} must be a positive integer"}
+    end
+  end
+
+  defp validate_optional_overload(record) do
+    case Map.get(record, "overload") do
+      nil -> {:ok, nil}
+      "reject_new" -> {:ok, "reject_new"}
+      _ -> {:error, "mailbox overload must be 'reject_new'"}
     end
   end
 end

@@ -3105,6 +3105,80 @@ test("service turns can reject an envelope without retry", async () => {
   }
 });
 
+test("bounded service mailboxes reject new work when queued backlog is full", async () => {
+  const harness = await RuntimeHarness.create({
+    env: {
+      VILANO_MANAGED_WORKERS: "2",
+    },
+  });
+  const keyInput = { sessionId: "bounded-mailbox-overflow" };
+
+  try {
+    const blocker = await harness.startWorkflow("demo/boundedMailboxDelayWorkflow", {
+      sessionId: keyInput.sessionId,
+      id: "processing",
+      delayMs: 400,
+    });
+
+    await harness.waitForService(
+      "demo/boundedMailboxProbe",
+      keyInput,
+      (body) =>
+        body.run.status === "active" &&
+        body.envelopes.some((envelope) => envelope.name === "delay" && envelope.status === "processing")
+    );
+
+    await harness.sendService("demo/boundedMailboxProbe", "record", keyInput, { id: "queued" });
+
+    await harness.waitForService(
+      "demo/boundedMailboxProbe",
+      keyInput,
+      (body) => body.envelopes.some((envelope) => envelope.name === "record" && envelope.status === "queued")
+    );
+
+    const overflow = await harness.startWorkflow("demo/boundedMailboxOverflowWorkflow", {
+      sessionId: keyInput.sessionId,
+    });
+
+    const overflowCompleted = await harness.waitForRun(
+      overflow.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+
+    expect(overflowCompleted.run.output).toMatchObject({
+      overloaded: true,
+      reason: "service_overloaded",
+    });
+
+    let cliError: Error | null = null;
+    try {
+      await harness.sendService("demo/boundedMailboxProbe", "record", keyInput, { id: "overflow" });
+    } catch (error) {
+      cliError = error as Error;
+    }
+
+    expect(cliError).toBeTruthy();
+    expect(cliError?.message ?? "").toContain("Service mailbox overloaded");
+
+    await harness.waitForRun(
+      blocker.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+
+    const serviceInspect = await harness.waitForService(
+      "demo/boundedMailboxProbe",
+      keyInput,
+      (body) =>
+        body.run.status === "idle" &&
+        body.envelopes.some((envelope) => envelope.name === "record" && envelope.status === "completed")
+    );
+
+    expect(serviceInspect.events.map((event) => event.type)).toContain("InboundRejected");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
 

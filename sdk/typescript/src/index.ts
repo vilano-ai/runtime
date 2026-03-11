@@ -314,11 +314,17 @@ export interface ServiceDefinition<
   readonly kind: "service";
   readonly name: string;
   readonly retry?: RetryOptions;
+  readonly mailbox?: ServiceMailboxPolicy;
   readonly key: (input: TKeyInput) => string;
   readonly init?: (input: TKeyInput, ctx: ServiceTurnContext) => Promise<TState> | TState;
   readonly onSend?: TSend;
   readonly onAsk?: TAsk;
   readonly onSignal?: TSignal;
+}
+
+export interface ServiceMailboxPolicy {
+  maxQueued: number;
+  overload?: "reject_new";
 }
 
 type FirstArg<THandler extends (...args: any[]) => any> = THandler extends (
