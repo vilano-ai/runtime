@@ -2,7 +2,30 @@ import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import fs from "node:fs/promises";
 import path from "node:path";
+import process from "node:process";
 import { RuntimeHarness, expectInOrder, sleep } from "./runtime-harness.ts";
+
+test("runtime harness dispose reaps daemon and spawned worker processes", async () => {
+  const harness = await RuntimeHarness.create();
+
+  const daemonPid = harness.daemonProcessId;
+  const run = await harness.startWorkflow("demo/blockingStep", {
+    durationMs: 5_000,
+  });
+
+  await harness.waitForRun(run.run.id, (body) => body.run.status === "running");
+
+  const processCommandsBeforeDispose = await listProcessesContaining(harness.homeDir);
+  expect(processCommandsBeforeDispose.some((command) => command.includes("worker"))).toBe(true);
+
+  await harness.dispose();
+
+  expect(daemonPid).toBeTruthy();
+  expect(await waitForProcessExit(daemonPid as number, 5_000)).toBe(true);
+  expect(await waitFor(async () => (await listProcessesContaining(harness.homeDir)).length === 0, 5_000)).toBe(
+    true
+  );
+});
 
 test("run cancel fails waiting workflows and records cancellation counts", async () => {
   const harness = await RuntimeHarness.create();
@@ -2748,3 +2771,54 @@ test("service handler stop drains queued backlog behind the completing turn", as
     await harness.dispose();
   }
 });
+
+async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) {
+      return true;
+    }
+
+    await sleep(100);
+  }
+
+  return !isProcessAlive(pid);
+}
+
+async function listProcessesContaining(fragment: string): Promise<string[]> {
+  const proc = Bun.spawn(["ps", "-axo", "command="], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const output = await new Response(proc.stdout).text();
+
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.includes(fragment));
+}
+
+async function waitFor(fn: () => Promise<boolean>, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (await fn()) {
+      return true;
+    }
+
+    await sleep(100);
+  }
+
+  return await fn();
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "EPERM";
+  }
+}
