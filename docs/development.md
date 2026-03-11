@@ -42,7 +42,7 @@ bun run pack
 ## Repository Structure
 
 - [kernel/](../kernel)
-  - BEAM kernel, durable storage, timers, leases, routing, managed workers
+  - BEAM kernel, durable storage, timers, leases, routing, supervision, and agent coordination
 - [cli/](../cli)
   - Bun CLI, project registry, install/runtime materialization, inspect/replay rendering
 - [sdk/typescript/](../sdk/typescript)
@@ -70,6 +70,8 @@ The kernel owns durable truth. It should remain the source of truth for:
 - leases and lease fencing
 - waits, retries, and cancellation
 - signals and service envelopes
+- monitors, links, exit notifications, and supervision policy
+- mailbox policy, passivation state, discovery, and pubsub fanout
 - managed worker supervision
 
 ### Worker
@@ -78,6 +80,7 @@ The worker owns execution only:
 
 - loading definitions
 - replaying orchestration
+- executing workflow and agent behavior
 - running in-process `step()` logic
 - spawning `exec()` subprocesses
 
@@ -118,6 +121,9 @@ The current suite already covers:
 - retries and retry policy selection
 - waits and signals
 - service backlog and FIFO semantics
+- relationship semantics and supervision behavior
+- mailbox controls and overload policy
+- discovery and pubsub flows
 - packaged install smoke
 
 ## Current Refactor Priorities

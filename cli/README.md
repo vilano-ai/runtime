@@ -13,7 +13,8 @@ It is responsible for:
 - rendering inspect and replay output
 - packaging and smoke-install validation
 
-The CLI is intentionally a client of the kernel, not a second runtime authority.
+The CLI is intentionally a client of the kernel, not a second runtime authority. It should make
+the BEAM-backed agent-kernel model visible and operable, not hide it behind ad hoc client logic.
 
 ## Runtime Assumptions
 

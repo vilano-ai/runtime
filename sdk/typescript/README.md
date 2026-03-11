@@ -1,11 +1,11 @@
 # TypeScript SDK
 
-The TypeScript SDK is the primary authoring surface for Vilano Runtime.
+The TypeScript SDK is the primary authoring surface for Vilano Runtime's BEAM-backed agent kernel.
 
 It gives you two durable definition types:
 
 - `workflow()` for bounded execution
-- `service()` for addressable, inbox-driven execution
+- `service()` for durable keyed, inbox-driven agent execution
 
 ## Core APIs
 
@@ -18,6 +18,17 @@ Inside workflows and service turns, the runtime context supports:
 - `ctx.spawn(workflow, input, options?)`
 - `ctx.connect(service, keyInput, options?)`
 - `ctx.log(message, fields?)`
+- `ctx.monitor(target, options?)`
+- `ctx.link(target, options?)`
+- `ctx.trapExit(enabled?)`
+- `ctx.nextExit(options?)`
+- `ctx.supervise(options)`
+- `ctx.mailbox()`
+- `ctx.defer(options)`
+- `ctx.reject(error)`
+- `ctx.lookupSingleton(name, scope?)`
+- `ctx.publish(topic, payload, options?)`
+- `ctx.subscribe(options)` / `ctx.unsubscribe(options)`
 
 Connected services expose typed refs:
 
@@ -34,6 +45,9 @@ The SDK follows the Vilano replay model:
 - orchestration replays from the top
 - durable operations resolve from history
 - arbitrary JavaScript continuation capture is not attempted
+
+JS/TS gets BEAM-like operational semantics from the runtime kernel. It does not become BEAM in
+process memory.
 
 ### `step()`
 

@@ -13,7 +13,8 @@ Recommended first-run definitions:
 - `serviceTurnCoordinator`
   A service that exercises service-turn orchestration, including `sleep`, child workflows, and `exec()`.
 
-Most of the other definitions in `src/definitions.ts` are intentional failure, retry, cancellation, replay, and soak fixtures for the integration suite.
+Most of the other definitions in `src/definitions.ts` are intentional failure, retry, cancellation,
+replay, supervision, mailbox, discovery, pubsub, and soak fixtures for the integration suite.
 
 Try it from the repo root:
 

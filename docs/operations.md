@@ -1,6 +1,6 @@
 # Operations Guide
 
-Vilano Runtime is currently designed as a local runtime on a single machine.
+Vilano Runtime is currently designed as a local BEAM-backed agent runtime on a single machine.
 
 ## Runtime Home
 
@@ -125,6 +125,10 @@ Use `run replay` when you want the durable timeline, including:
 - retry decisions and retry series
 
 These views are derived from durable kernel state, not from worker-local memory.
+
+For services, inspect output now also exposes passivation state, queued mailbox depth, and wake
+reasons so operators can reason about long-lived agents without guessing whether a JS worker is
+currently live.
 
 For external CLI asks, `--wait-timeout` only controls how long the CLI waits for a reply. Durable
 ask timeouts are available inside workflow/service code.

@@ -1,13 +1,13 @@
 # First-Run Walkthrough
 
-This is the fastest end-to-end path for evaluating Vilano Runtime as it exists today.
+This is the fastest end-to-end path for evaluating Vilano Runtime as a BEAM-backed agent runtime.
 
 It proves five things in one pass:
 
 - packaged install works
 - the daemon starts cleanly
 - project registration succeeds
-- a workflow run completes durably
+- a multi-agent workflow run completes durably
 - inspect/replay and service inspection work from the operator surface
 
 ## Prerequisites
@@ -34,8 +34,8 @@ cd runtime
 bun install
 ```
 
-This walkthrough uses the checked-in `multi-agent-demo` project because it exercises both workflow
-and service behavior.
+This walkthrough uses the checked-in `multi-agent-demo` project because it exercises both
+coordinator workflows and long-lived agent services.
 
 ## 3. Start The Daemon
 
@@ -55,7 +55,7 @@ managed worker runtime.
 ~/.vilano/bin/vilano service list --project multi-agent
 ```
 
-You should see `multiAgentCoordinator` plus the three agent-like services.
+You should see `multiAgentCoordinator` plus the three durable agent services.
 
 ## 5. Start A Run
 
@@ -73,7 +73,7 @@ Copy the returned run id.
 ```
 
 `run inspect` should show the current durable state. `run replay` should render the timeline of the
-coordinator workflow and the service interactions that happened during the run.
+coordinator workflow and the agent/service interactions that happened during the run.
 
 ## 7. Inspect The Created Services
 

@@ -4,7 +4,7 @@
 
 It shows:
 
-- three long-lived agent-like services with their own local state
+- three durable agent services with their own local state
 - a coordinator workflow that connects to them through typed service refs
 - a simple “research -> draft -> review” handoff across multiple agents
 

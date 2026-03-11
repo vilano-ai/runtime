@@ -1,6 +1,6 @@
 # Tests
 
-This directory holds Bun-driven integration coverage for the local runtime.
+This directory holds Bun-driven integration coverage for the local BEAM-backed agent runtime.
 
 There are several test modes:
 
@@ -52,6 +52,10 @@ Current coverage:
 - `service stop` failing queued backlog behind an active turn
 - service ask correlation isolation across concurrent caller runs
 - handler-triggered service stop draining queued backlog
+- durable monitor/link/trap-exit behavior
+- kernel-owned workflow supervision groups
+- explicit mailbox defer/reject flows and overload rejection
+- registry/discovery and durable pubsub flows
 - worker-core handling of activation setup failures and lease cleanup
 - Node worker parity for unmanaged and managed JS worker paths in the preview lane
 

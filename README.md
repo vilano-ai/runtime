@@ -3,15 +3,16 @@
 [![CI](https://github.com/vilano-ai/runtime/actions/workflows/ci.yml/badge.svg)](https://github.com/vilano-ai/runtime/actions/workflows/ci.yml)
 [![Launch Gate](https://github.com/vilano-ai/runtime/actions/workflows/launch-gate.yml/badge.svg)](https://github.com/vilano-ai/runtime/actions/workflows/launch-gate.yml)
 
-Vilano Runtime is a local-first durable execution runtime with a BEAM kernel and external
-JavaScript/TypeScript workers.
+Vilano Runtime is a local-first BEAM-backed agent runtime.
 
 Vilano Runtime is a product by Vilano AI.
 
 It is built for workflows and long-lived services that need:
 
 - durable replay instead of best-effort retries
-- explicit waits, signals, and child execution
+- long-lived keyed agents instead of ad hoc background processes
+- supervision, exit relationships, and passivation from the runtime itself
+- explicit waits, signals, pubsub, and child execution
 - subprocess-heavy work with durable artifacts
 - inspectable execution timelines instead of opaque background jobs
 
@@ -23,20 +24,28 @@ should still be treated as preview software.
 Vilano Runtime has three main pieces:
 
 - **BEAM kernel**
-  - durable state, leases, waits, retries, signals, service inboxes, and managed worker
-    supervision
+  - durable state, leases, waits, retries, signals, service inboxes, relationship semantics,
+    supervision policy, passivation state, and managed worker supervision
 - **JS/TS workers**
-  - replay workflows and service turns, execute in-process `step()` logic, and run durable
-    subprocesses through `exec()`
+  - replay workflows and service turns, execute agent behavior, run in-process `step()` logic,
+    and run durable subprocesses through `exec()`
 - **CLI**
   - local operator surface for bootstrapping the daemon, registering projects, starting runs,
     inspecting timelines, and delivering signals
+
+The simplest mental model is:
+
+- BEAM owns truth and coordination
+- JS/TS owns agent behavior
+- workers are disposable
+- services are durable keyed agents
+- workflows orchestrate and supervise them
 
 The runtime is intentionally local-first today:
 
 - single-machine
 - SQLite-backed
-- loopback-only control plane
+- loopback-only coordination plane
 - per-runtime access token under `VILANO_HOME`
 
 By default, installed runtime payloads are intended to live under `~/.vilano/installs`, while
@@ -51,8 +60,16 @@ Vilano Runtime is released under the [Apache-2.0 License](./LICENSE).
 ## Current Capabilities
 
 - workflows with replay-from-the-top semantics
+- services that behave like durable keyed agents
 - services with durable inboxes and typed `send` / `ask` / `signal`
 - durable `step`, `exec`, `sleep`, `waitForSignal`, `spawn`, and `connect`
+- durable `monitor`, `link`, `trapExit`, and `nextExit`
+- kernel-owned workflow supervision groups with restart budgets
+- explicit mailbox inspection plus `defer()` / `reject()`
+- bounded service inboxes and overload rejection
+- explicit service passivation / wake-on-message state
+- singleton discovery and supervision-group inspection
+- durable topic pubsub with dedupe and restart persistence
 - kernel-scheduled retries with fixed, linear, or exponential backoff plus jitter
 - cancellation propagation across waits, child runs, service asks, and subprocesses
 - managed-worker hard-stop fallback for timed blocking steps
@@ -75,6 +92,8 @@ Not supported yet:
 - clustering / multi-node scheduling
 - language-native SDKs beyond TypeScript
 - exact-once side-effect guarantees
+- pooled / replicated agent services
+- broad topology policy beyond the current discovery + pubsub layer
 
 Managed workers supervised by the kernel get hard-stop fallback for blocking timed steps. External
 workers currently rely on cooperative in-process step cancellation.
@@ -272,12 +291,31 @@ await reviewerRef.send.hint({ note: "Focus on migrations" });
 const status = await reviewerRef.ask.status();
 ```
 
+### Agent Runtime Primitives
+
+These are now part of the TypeScript surface:
+
+- `ctx.monitor(...)`
+- `ctx.link(...)`
+- `ctx.trapExit()`
+- `ctx.nextExit()`
+- `ctx.supervise(...)`
+- `ctx.mailbox()`
+- `ctx.defer(...)`
+- `ctx.reject(...)`
+- `ctx.publish(...)`
+- `ctx.subscribe(...)` / `ctx.unsubscribe(...)`
+- `ctx.lookupSingleton(...)`
+
 ## Execution Semantics
 
 Vilano does **not** capture arbitrary JavaScript stack frames.
 
 Recovery works by rerunning workflow or service-turn orchestration code from the top against durable
 kernel state until the next incomplete operation boundary.
+
+That means JS/TS gets BEAM-like operational semantics from the outside, not by pretending JS is
+running inside the BEAM VM.
 
 Durable boundaries today:
 
@@ -287,6 +325,7 @@ Durable boundaries today:
 - `ctx.waitForSignal()`
 - `ctx.spawn()` / `child.result()`
 - `ctx.connect()` and service `send` / `ask` / `signal`
+- relationship waits such as `ctx.nextExit()`
 
 ### `step()` vs `exec()`
 
@@ -339,7 +378,7 @@ If a failure should never retry, throw `nonRetryable(...)`.
 
 ## Repository Layout
 
-- [kernel/](./kernel) — BEAM kernel and durable control plane
+- [kernel/](./kernel) — BEAM kernel and durable agent coordination plane
 - [cli/](./cli) — Bun-based operator CLI
 - [sdk/typescript/](./sdk/typescript) — TypeScript SDK
 - [worker/](./worker) — shared JS/TS worker core and runtime-specific entrypoints

@@ -6,7 +6,7 @@ It shows:
 
 - a workflow that drafts work durably
 - a workflow that waits for an external approval signal
-- the operator path for resuming a waiting run
+- the operator path for resuming a waiting run through the kernel-owned signal path
 
 Try it from the repo root:
 

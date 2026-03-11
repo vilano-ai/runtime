@@ -4,8 +4,8 @@ This document describes the current OSS runtime support posture. It is intention
 
 ## Current Positioning
 
-Vilano Runtime is currently a local-first durable execution runtime for a single machine with a BEAM kernel
-and external JavaScript/TypeScript workers.
+Vilano Runtime is currently a local-first BEAM-backed agent runtime for a single machine with
+external JavaScript/TypeScript workers.
 
 ## Supported Today
 
@@ -23,15 +23,18 @@ The canonical path for the first OSS release is:
 
 - Elixir / BEAM kernel
 - SQLite-backed local durable state
-- loopback-only HTTP control plane
+- loopback-only HTTP coordination plane
 - per-runtime access token under `VILANO_HOME`
 
 ### Authoring
 
 - TypeScript SDK in [sdk/typescript](../sdk/typescript)
 - workflows
-- services
+- services as durable keyed agents
 - durable `step`, `exec`, `sleep`, `waitForSignal`, `spawn`, `connect`
+- durable `monitor`, `link`, `trapExit`, `nextExit`
+- workflow supervision groups
+- mailbox controls, passivation state, discovery, and pubsub
 
 ### Worker Runtimes
 
@@ -88,6 +91,7 @@ If the support matrix changes, the CI matrix should change with it.
 - unmanaged worker hard-stop guarantees
 - fully language-neutral manifest generation
 - permanent backwards-compatibility promises across pre-1.0 releases
+- pooled / replicated agent services
 
 ## Operational Assumptions
 

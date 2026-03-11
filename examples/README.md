@@ -6,6 +6,9 @@ The repo now has two kinds of example projects:
 - `bootstrap-demo/`, which still doubles as first-run material and as a richer fixture source for
   integration and soak tests
 
+Together they show the current agent-runtime surface: coordinator workflows, durable keyed
+services, signals, fanout, supervision, mailbox behavior, discovery, and pubsub.
+
 Use it with the local CLI:
 
 ```bash
@@ -17,11 +20,12 @@ Use it with the local CLI:
 Reference examples:
 
 - `multi-agent-demo/`
-  Canonical cooperating-agents example using multiple services plus a coordinator workflow.
+  Canonical BEAM-backed agent-runtime example using multiple durable services plus a coordinator
+  workflow.
 - `approval-loop-demo/`
-  Minimal signal-driven workflow example.
+  Minimal signal-driven durable coordination example.
 - `fanout-demo/`
-  Minimal child-workflow fanout example.
+  Minimal child-workflow fanout and supervision-oriented example.
 
 Fixture-heavy example:
 

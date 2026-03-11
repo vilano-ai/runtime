@@ -1,18 +1,20 @@
 # Architecture
 
-Vilano Runtime is a local-first durable execution runtime with a BEAM kernel and external
-JavaScript/TypeScript workers.
+Vilano Runtime is a local-first BEAM-backed agent runtime with external JavaScript/TypeScript
+workers.
 
 ## Runtime Layers
 
 ### 1. BEAM Kernel
 
-The Elixir side is the durable control plane. It owns:
+The Elixir side is the durable agent kernel. It owns:
 
 - persistent runtime state
 - worker leasing and lease fencing
 - waits, timers, and signal routing
 - service inbox state and one-turn-at-a-time service semantics
+- run relationships, exit events, and supervision policy
+- singleton discovery and pubsub fanout
 - retries, cancellation, and managed-worker hard-stop escalation
 - the loopback HTTP API used by the CLI and workers
 
@@ -41,7 +43,7 @@ Behavioral rules that the wire format does not express live in
 ### 3. JS/TS Worker Core
 
 The worker replays orchestration code from the top and resolves durable operations through the
-kernel.
+kernel. It executes agent behavior, but it is not the source of truth.
 
 The shared core lives in:
 
@@ -58,8 +60,8 @@ The public authoring model is currently TypeScript-first:
 
 - [sdk/typescript/src/index.ts](../sdk/typescript/src/index.ts)
 
-This layer defines `workflow()`, `service()`, `step()`, `exec()`, `spawn()`, `connect()`, and the
-typed service refs.
+This layer defines `workflow()`, `service()`, `step()`, `exec()`, `spawn()`, `connect()`,
+relationship primitives, supervision, mailbox controls, discovery, and pubsub.
 
 ### 5. CLI
 
@@ -92,6 +94,8 @@ Primary modules:
 7. The kernel wakes the run later via timer, signal, child completion, or retry schedule.
 8. The worker replays again until the run completes or fails.
 
+This is why workflows are durable orchestration, not long-lived in-memory coordinators.
+
 ### Service Turn
 
 1. A workflow, service, or external CLI call enqueues a service envelope.
@@ -103,6 +107,8 @@ Primary modules:
    - fails and may retry depending on policy
 5. The kernel preserves service inbox ordering and state across churn.
 
+This is what makes services behave like durable keyed agents instead of plain request handlers.
+
 ## Ownership Boundaries
 
 ### What the Kernel Owns
@@ -111,6 +117,8 @@ Primary modules:
 - version/schema compatibility checks
 - retries and retry scheduling
 - timers and signals
+- monitors, links, exit notifications, and supervision state
+- passivation and mailbox policy
 - cancellation propagation
 - managed worker lifecycle
 

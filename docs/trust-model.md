@@ -1,6 +1,6 @@
 # Trust Model
 
-Vilano Runtime is currently a local-first `0.x` runtime for a single machine.
+Vilano Runtime is currently a local-first `0.x` BEAM-backed agent runtime for a single machine.
 
 This document is the canonical OSS trust posture for the current codebase.
 
@@ -19,10 +19,11 @@ It is not a hosted or multi-tenant system today.
 
 For the current OSS path, the runtime provides:
 
-- a loopback-only HTTP control plane
+- a loopback-only HTTP coordination plane
 - a per-runtime token under `VILANO_HOME`
 - separation between immutable packaged runtime payloads and mutable runtime state
 - pinned project snapshots for registered projects before the worker runs them
+- a kernel-owned coordination plane instead of userland-only agent state
 
 The token and loopback binding are meant to reduce blind localhost access by unrelated local
 processes.

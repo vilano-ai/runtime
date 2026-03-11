@@ -38,6 +38,11 @@ Each definition entry currently includes:
 - `runtimeKind`
 - `sourceLanguage`
 
+For the current OSS path, these entries should be thought of as agent-runtime definitions:
+
+- workflows define durable orchestration behavior
+- services define durable keyed agent behavior
+
 That contract is validated by [cli/src/project-manifest-contract.ts](../cli/src/project-manifest-contract.ts)
 and checked in CI through `bun run check:manifest`.
 
@@ -85,5 +90,6 @@ For broader language support later:
 - projects should emit `vilano.manifest.json` directly
 - the runtime should not need to discover definitions by scanning source files
 
-This is the bridge from the current TS/JS-first path to a broader manifest system. It should not be
-read as “fully language-neutral today”; the current supported execution family is still JS/TS.
+This is the bridge from the current TS/JS-first agent-runtime path to a broader manifest system. It
+should not be read as “fully language-neutral today”; the current supported execution family is
+still JS/TS.

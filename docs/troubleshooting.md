@@ -79,6 +79,9 @@ If the run is waiting, the runtime may be behaving correctly and expecting:
 - a sleep wake-up
 - a child result
 
+For long-lived services, inspect output also shows passivation and queued mailbox state so you can
+tell whether the agent is idle, waiting, or overloaded without guessing from process liveness.
+
 ## Preview Node Worker Confusion
 
 Node worker support is still preview.

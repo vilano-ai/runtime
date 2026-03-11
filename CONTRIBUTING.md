@@ -4,7 +4,7 @@ Thanks for contributing.
 
 ## Before You Start
 
-Vilano is currently a `0.x` local-first runtime. Please read these first:
+Vilano is currently a `0.x` local-first BEAM-backed agent runtime. Please read these first:
 
 - [README.md](./README.md)
 - [docs/support-matrix.md](./docs/support-matrix.md)
@@ -15,7 +15,7 @@ Vilano is currently a `0.x` local-first runtime. Please read these first:
 Contributions should preserve the core model:
 
 - the BEAM kernel owns durable truth and coordination
-- workers execute user code
+- workers execute user code and agent behavior
 - protocol and manifest changes are release-facing changes
 
 ## Development Setup

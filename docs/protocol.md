@@ -34,6 +34,7 @@ The OpenAPI files describe the wire format. The semantics document is the behavi
 - retry decisions
 - cancellation semantics
 - service turn guarantees
+- relationship, supervision, mailbox, discovery, and pubsub semantics where the routes expose them
 
 Do not change the OpenAPI files without changing the semantics document when the meaning of the
 runtime changes.

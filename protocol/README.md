@@ -2,7 +2,7 @@
 
 This directory holds the shared transport contract between:
 
-- the Elixir kernel
+- the Elixir agent kernel
 - the Bun worker
 - the CLI / kernel client surface
 

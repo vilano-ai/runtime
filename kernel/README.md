@@ -1,12 +1,14 @@
 # Kernel
 
-The kernel is the durable control plane for Vilano Runtime.
+The kernel is the durable BEAM-backed agent kernel for Vilano Runtime.
 
 It runs on Elixir/BEAM and owns:
 
 - runtime metadata and schema state
 - durable runs, events, waits, steps, execs, and child lineage
 - service instances and service inboxes
+- run relationships, exit notifications, and supervision policy
+- passivation state, discovery, and pubsub fanout
 - activation leasing and lease fencing
 - retry scheduling
 - timers and signals
@@ -21,7 +23,7 @@ and resolve durable operations back through the kernel.
 
 That split is the core of the runtime:
 
-- kernel = coordination, durability, supervision
+- kernel = coordination, durability, supervision, agent semantics
 - worker = execution
 
 ## Main Modules

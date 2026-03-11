@@ -9,7 +9,7 @@ ignored by git.
 ## Index
 
 - [Architecture](./architecture.md)
-  - Runtime layers, control flow, ownership boundaries, and current coupling points.
+  - Runtime layers, control flow, ownership boundaries, and how the BEAM kernel shapes agent semantics.
 - [First-Run Walkthrough](./first-run.md)
   - Canonical install-to-replay evaluation path for the repo and packaged runtime.
 - [Support Matrix](./support-matrix.md)
@@ -44,7 +44,7 @@ ignored by git.
 
 1. Start with the top-level [README](../README.md) for install and first-run usage.
 2. Read [First-Run Walkthrough](./first-run.md) to see the canonical evaluator path.
-3. Read [Architecture](./architecture.md) to understand the kernel/worker/CLI split.
+3. Read [Architecture](./architecture.md) to understand the kernel/worker/CLI split and the agent-kernel model.
 4. Read [Support Matrix](./support-matrix.md) before changing packaging, worker runtimes, or
    release posture.
 5. Read [Development Guide](./development.md) before refactoring core modules or changing the

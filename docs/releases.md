@@ -8,6 +8,9 @@ Vilano releases should be explicit about compatibility. The runtime has multiple
 - manifest contract
 - protocol contract
 
+Release notes should also make the product thesis obvious: Vilano is a BEAM-backed agent runtime,
+not a generic background job runner.
+
 Every release note should include a short compatibility section.
 
 ## Required Sections
@@ -54,6 +57,9 @@ For the first OSS release, the expected language is:
 - Node worker: preview
 
 Do not ship release notes that imply broader support than the current support matrix.
+Do call out the agent-runtime primitives that are actually part of the release surface: workflows,
+durable keyed services, supervision, mailbox control, passivation, discovery, and pubsub where
+applicable.
 
 ## Release Checklist
 
