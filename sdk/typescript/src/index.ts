@@ -174,7 +174,34 @@ export type SendResult<TState> = void | { state?: TState; stop?: true };
 export type AskResult<TState, TReply> = { reply: TReply; state?: TState; stop?: true };
 export type SignalResult<TState> = void | { state?: TState; stop?: true };
 
-export interface ServiceTurnContext {
+export interface ServiceMailboxEnvelope {
+  id: string;
+  kind: "ask" | "send" | "signal";
+  name: string;
+  attempt: number | null;
+  correlationId?: string | null;
+  senderRunId?: string | null;
+  createdAt: string;
+  wakeAt?: string | null;
+}
+
+export interface ServiceMailboxQueuedSummary {
+  total: number;
+  ready: number;
+  deferred: number;
+  asks: number;
+  sends: number;
+  signals: number;
+  oldestAt?: string | null;
+  nextWakeAt?: string | null;
+}
+
+export interface ServiceMailboxInfo {
+  current: ServiceMailboxEnvelope;
+  queued: ServiceMailboxQueuedSummary;
+}
+
+export interface TurnContext {
   readonly runId: string;
   readonly turnAttempt: number;
   step<TOutput>(
@@ -207,7 +234,13 @@ export interface ServiceTurnContext {
   ): Promise<ServiceRef<TSend, TAsk, TSignal>>;
 }
 
-export interface WorkflowContext extends ServiceTurnContext {}
+export interface ServiceTurnContext extends TurnContext {
+  mailbox(): Promise<ServiceMailboxInfo>;
+  defer(options: { delay: string; reason?: string }): Promise<never>;
+  reject(error: { message: string; reason?: string; details?: unknown }): Promise<never>;
+}
+
+export interface WorkflowContext extends TurnContext {}
 
 export interface ExecSpec<TOutput = unknown> {
   name: string;

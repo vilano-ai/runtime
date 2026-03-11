@@ -20,6 +20,7 @@ import type {
   SuperviseOptions,
   ServiceDefinition,
   ServiceRef,
+  ServiceTurnContext,
   SignalOptions,
   SignalResult,
   SpawnOptions,
@@ -47,6 +48,7 @@ import {
   ActivationCancelledError,
   RunSuspendedError,
   StepControlError,
+  TurnHandledError,
   buildStepError,
   deterministicChildRunId,
   executeProcess,
@@ -210,6 +212,10 @@ export async function executeActivation(
       return;
     }
 
+    if (error instanceof TurnHandledError) {
+      return;
+    }
+
     if (error instanceof ActivationCancelledError || isInactiveActivationError(error)) {
       return;
     }
@@ -271,7 +277,7 @@ function createTurnContext(
   client: WorkerClient,
   activation: Activation,
   activationCwd: string
-): WorkflowContext {
+): ServiceTurnContext {
   const implicitActivationOpCounters = new Map<string, number>();
   const implicitServiceOpCounters = new Map<string, number>();
 
@@ -756,6 +762,50 @@ function createTurnContext(
       }
 
       throw new RunSuspendedError("exit", key);
+    },
+    async mailbox() {
+      if (activation.kind !== "service_turn") {
+        throw new Error("ctx.mailbox() is only available in service turns");
+      }
+
+      return await client.getServiceTurnMailbox(activation.leaseId, activation.envelope.id);
+    },
+    async defer(options: { delay: string; reason?: string }): Promise<never> {
+      if (activation.kind !== "service_turn") {
+        throw new Error("ctx.defer() is only available in service turns");
+      }
+
+      const delayMs = parseDurationToMs(options.delay);
+      if (delayMs === undefined || delayMs <= 0) {
+        throw new Error("ctx.defer() requires a positive delay");
+      }
+
+      await client.deferServiceTurn(activation.leaseId, activation.envelope.id, {
+        delayMs,
+        reason: options.reason,
+      });
+
+      throw new TurnHandledError("deferred");
+    },
+    async reject(error: {
+      message: string;
+      reason?: string;
+      details?: unknown;
+    }): Promise<never> {
+      if (activation.kind !== "service_turn") {
+        throw new Error("ctx.reject() is only available in service turns");
+      }
+
+      await client.rejectServiceTurn(activation.leaseId, activation.envelope.id, {
+        error: {
+          name: "ServiceTurnRejectedError",
+          message: error.message,
+          reason: error.reason ?? "service_turn_rejected",
+          details: error.details ?? null,
+        },
+      });
+
+      throw new TurnHandledError("rejected");
     },
   };
 }

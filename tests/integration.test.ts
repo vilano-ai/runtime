@@ -2988,6 +2988,123 @@ test("service handler stop drains queued backlog behind the completing turn", as
   }
 });
 
+test("service turns can inspect mailbox backlog state", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/mailboxSnapshotWorkflow", {
+      sessionId: "mailbox-snapshot",
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+
+    expect(completed.run.output).toMatchObject({
+      current: {
+        kind: "send",
+        name: "recordMailbox",
+      },
+      queued: {
+        total: 2,
+        ready: 2,
+        deferred: 0,
+        asks: 1,
+        sends: 1,
+        signals: 0,
+      },
+    });
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("service turns can defer an envelope and let later mail run first", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { sessionId: "mailbox-defer" };
+
+  try {
+    const run = await harness.startWorkflow("demo/mailboxDeferWorkflow", {
+      sessionId: keyInput.sessionId,
+      delay: "200ms",
+      followupDelay: "50ms",
+      followupValue: "after-defer",
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed",
+      20_000
+    );
+
+    expect(completed.run.output).toMatchObject({
+      attempt: 2,
+      log: ["after-defer"],
+      mailbox: {
+        current: {
+          kind: "ask",
+          name: "deferOnce",
+        },
+      },
+    });
+
+    const serviceInspect = await harness.waitForService(
+      "demo/mailboxProbe",
+      keyInput,
+      (body) =>
+        body.run.status === "idle" &&
+        body.envelopes.some((envelope) => envelope.name === "deferOnce" && envelope.status === "completed")
+    );
+
+    const deferredEnvelope = serviceInspect.envelopes.find((envelope) => envelope.name === "deferOnce");
+    expect(deferredEnvelope?.attempt).toBe(2);
+    expect(
+      serviceInspect.envelopes.some(
+        (envelope) => envelope.name === "appendLog" && envelope.status === "completed"
+      )
+    ).toBeTrue();
+    expect(serviceInspect.events.map((event) => event.type)).toContain("TurnDeferred");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("service turns can reject an envelope without retry", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { sessionId: "mailbox-reject" };
+
+  try {
+    const run = await harness.startWorkflow("demo/mailboxRejectWorkflow", {
+      sessionId: keyInput.sessionId,
+      message: "mailbox rejected this turn",
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+
+    expect(completed.run.output).toMatchObject({
+      rejected: true,
+      message: "mailbox rejected this turn",
+      reason: "mailbox_rejected",
+    });
+
+    const serviceInspect = await harness.waitForService(
+      "demo/mailboxProbe",
+      keyInput,
+      (body) =>
+        body.run.status === "idle" &&
+        body.envelopes.some((envelope) => envelope.name === "rejectTurn" && envelope.status === "failed")
+    );
+
+    expect(serviceInspect.events.map((event) => event.type)).toContain("TurnRejected");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
 

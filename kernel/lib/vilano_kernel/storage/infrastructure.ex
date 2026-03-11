@@ -388,6 +388,7 @@ defmodule VilanoKernel.Storage.Infrastructure do
         status text not null,
         reply_json text,
         error_json text,
+        wake_at text,
         created_at text not null,
         updated_at text not null
       )
@@ -446,6 +447,15 @@ defmodule VilanoKernel.Storage.Infrastructure do
       """
       create index if not exists run_events_run_seq_idx
       on run_events(run_id, seq)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create index if not exists service_envelopes_run_status_wake_created_idx
+      on service_envelopes(service_run_id, status, wake_at, created_at)
       """,
       []
     )

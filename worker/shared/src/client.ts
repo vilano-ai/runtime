@@ -101,6 +101,49 @@ interface TrapExitsResponse {
   };
 }
 
+interface ServiceTurnMailboxResponse {
+  ok: true;
+  mailbox: {
+    current: {
+      id: string;
+      kind: "ask" | "send" | "signal";
+      name: string;
+      attempt: number | null;
+      correlationId?: string | null;
+      senderRunId?: string | null;
+      createdAt: string;
+      wakeAt?: string | null;
+    };
+    queued: {
+      total: number;
+      ready: number;
+      deferred: number;
+      asks: number;
+      sends: number;
+      signals: number;
+      oldestAt?: string | null;
+      nextWakeAt?: string | null;
+    };
+  };
+}
+
+interface ServiceTurnDeferResponse {
+  ok: true;
+  run: {
+    id: string;
+    status: string;
+  };
+  wait?: WaitResolveResponse["wait"];
+}
+
+interface ServiceTurnRejectResponse {
+  ok: true;
+  run: {
+    id: string;
+    status: string;
+  };
+}
+
 export class WorkerRequestError extends Error {
   readonly status?: number;
   readonly code?: string;
@@ -119,6 +162,7 @@ export class WorkerClient {
   private readonly workerId: string;
   private readonly bootstrapAuthToken?: string;
   private readonly leaseAuthTokens = new Map<string, string>();
+  private requestTail: Promise<void> = Promise.resolve();
 
   constructor(
     serverUrl: string,
@@ -591,6 +635,46 @@ export class WorkerClient {
     );
   }
 
+  async getServiceTurnMailbox(
+    leaseId: string,
+    envelopeId: string
+  ): Promise<ServiceTurnMailboxResponse["mailbox"]> {
+    const response = await this.request<ServiceTurnMailboxResponse>(
+      "GET",
+      `/v1/leases/${encodeURIComponent(leaseId)}/service-turns/${encodeURIComponent(envelopeId)}/mailbox`,
+      undefined,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.mailbox;
+  }
+
+  async deferServiceTurn(
+    leaseId: string,
+    envelopeId: string,
+    body: { delayMs: number; reason?: string }
+  ): Promise<ServiceTurnDeferResponse> {
+    return await this.request<ServiceTurnDeferResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/service-turns/${encodeURIComponent(envelopeId)}/defer`,
+      body,
+      this.requireLeaseAuthToken(leaseId)
+    );
+  }
+
+  async rejectServiceTurn(
+    leaseId: string,
+    envelopeId: string,
+    body: { error: Record<string, unknown> }
+  ): Promise<ServiceTurnRejectResponse> {
+    return await this.request<ServiceTurnRejectResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/service-turns/${encodeURIComponent(envelopeId)}/reject`,
+      body,
+      this.requireLeaseAuthToken(leaseId)
+    );
+  }
+
   async failServiceTurn(
     leaseId: string,
     envelopeId: string,
@@ -642,6 +726,25 @@ export class WorkerClient {
   }
 
   private async request<T>(method: string, pathname: string, body?: unknown, authToken?: string): Promise<T> {
+    const request = this.requestTail.then(
+      async () => await this.performRequest<T>(method, pathname, body, authToken),
+      async () => await this.performRequest<T>(method, pathname, body, authToken)
+    );
+
+    this.requestTail = request.then(
+      () => undefined,
+      () => undefined
+    );
+
+    return await request;
+  }
+
+  private async performRequest<T>(
+    method: string,
+    pathname: string,
+    body?: unknown,
+    authToken?: string
+  ): Promise<T> {
     const url = new URL(pathname, this.serverUrl);
     const raw = await new Promise<{ status: number; body: string }>((resolve, reject) => {
       const payload = body === undefined ? undefined : JSON.stringify(body);

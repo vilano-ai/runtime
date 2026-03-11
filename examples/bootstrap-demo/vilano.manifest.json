@@ -132,6 +132,38 @@
       },
       {
         "kind": "workflow",
+        "name": "mailboxDeferWorkflow",
+        "exportName": "mailboxDeferWorkflow",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "mailboxDeferredFollowup",
+        "exportName": "mailboxDeferredFollowup",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "mailboxRejectWorkflow",
+        "exportName": "mailboxRejectWorkflow",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "mailboxSnapshotWorkflow",
+        "exportName": "mailboxSnapshotWorkflow",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "moduleStateProbe",
         "exportName": "moduleStateProbe",
         "file": "src/definitions.ts",

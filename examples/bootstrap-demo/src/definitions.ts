@@ -671,6 +671,90 @@ export const mailboxAskWorkflow = workflow({
   },
 });
 
+export const mailboxSnapshotWorkflow = workflow({
+  name: "mailboxSnapshotWorkflow",
+  run: async (input: { sessionId: string }, ctx) => {
+    const ref = await ctx.connect(mailboxProbe, { sessionId: input.sessionId });
+
+    await ref.send.recordMailbox({ id: "record-mailbox" }, { key: "record-mailbox" });
+    await ref.send.appendLog({ value: "queued-send" }, { key: "queued-send" });
+
+    return await ref.ask.recordedMailbox(undefined, { key: "recorded-mailbox" });
+  },
+});
+
+export const mailboxDeferredFollowup = workflow({
+  name: "mailboxDeferredFollowup",
+  run: async (input: { sessionId: string; delay?: string; value: string }, ctx) => {
+    await ctx.sleep(input.delay ?? "50ms", { key: "mailbox-deferred-followup-delay" });
+
+    const ref = await ctx.connect(mailboxProbe, { sessionId: input.sessionId });
+    await ref.send.appendLog({ value: input.value }, { key: `append-log:${input.value}` });
+
+    return {
+      value: input.value,
+    };
+  },
+});
+
+export const mailboxDeferWorkflow = workflow({
+  name: "mailboxDeferWorkflow",
+  run: async (
+    input: { sessionId: string; delay?: string; followupDelay?: string; followupValue?: string },
+    ctx
+  ) => {
+    const ref = await ctx.connect(mailboxProbe, { sessionId: input.sessionId });
+    const followup = ctx.spawn(
+      mailboxDeferredFollowup,
+      {
+        sessionId: input.sessionId,
+        delay: input.followupDelay ?? "50ms",
+        value: input.followupValue ?? "after-defer",
+      },
+      { key: "followup" }
+    );
+
+    const reply = await ref.ask.deferOnce(
+      { delay: input.delay ?? "200ms" },
+      { key: "defer-once" }
+    );
+
+    await followup.result();
+
+    return reply;
+  },
+});
+
+export const mailboxRejectWorkflow = workflow({
+  name: "mailboxRejectWorkflow",
+  run: async (input: { sessionId: string; message?: string }, ctx) => {
+    const ref = await ctx.connect(mailboxProbe, { sessionId: input.sessionId });
+
+    try {
+      await ref.ask.rejectTurn(
+        { message: input.message ?? "mailbox turn rejected" },
+        { key: "reject-turn" }
+      );
+
+      return {
+        rejected: false,
+      };
+    } catch (error) {
+      const cause =
+        error instanceof Error && "cause" in error ? (error as Error & { cause?: unknown }).cause : null;
+
+      return {
+        rejected: true,
+        message: error instanceof Error ? error.message : String(error),
+        reason:
+          cause && typeof cause === "object" && "reason" in cause
+            ? String((cause as { reason?: unknown }).reason)
+            : null,
+      };
+    }
+  },
+});
+
 export const reviewer = service({
   name: "reviewer",
   key: (input: { repoId: string }) => input.repoId,
@@ -836,12 +920,27 @@ export const mailboxProbe = service({
   init: async (input: { sessionId: string }) => ({
     sessionId: input.sessionId,
     history: [] as string[],
+    log: [] as string[],
+    recordedMailbox: null as unknown,
   }),
   onSend: {
     record: async (payload: { id: string }, state) => ({
       state: {
         ...state,
         history: [...state.history, `send:${payload.id}`],
+      },
+    }),
+    recordMailbox: async (payload: { id: string }, state, ctx) => ({
+      state: {
+        ...state,
+        history: [...state.history, `send:${payload.id}`],
+        recordedMailbox: await ctx.mailbox(),
+      },
+    }),
+    appendLog: async (payload: { value: string }, state) => ({
+      state: {
+        ...state,
+        log: [...state.log, payload.value],
       },
     }),
   },
@@ -909,6 +1008,31 @@ export const mailboxProbe = service({
         history: state.history,
       },
     }),
+    recordedMailbox: async (_payload: void, state) => ({
+      reply: state.recordedMailbox,
+    }),
+    deferOnce: async (payload: { delay?: string }, state, ctx) => {
+      if (ctx.turnAttempt === 1) {
+        await ctx.defer({
+          delay: payload.delay ?? "200ms",
+          reason: "mailbox_not_ready",
+        });
+      }
+
+      return {
+        reply: {
+          attempt: ctx.turnAttempt,
+          log: state.log,
+          mailbox: await ctx.mailbox(),
+        },
+      };
+    },
+    rejectTurn: async (payload: { message?: string }, _state, ctx) => {
+      await ctx.reject({
+        message: payload.message ?? "mailbox turn rejected",
+        reason: "mailbox_rejected",
+      });
+    },
   },
 });
 

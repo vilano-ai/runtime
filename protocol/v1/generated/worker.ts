@@ -1387,6 +1387,136 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/leases/{leaseId}/service-turns/{envelopeId}/mailbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect the current service turn envelope and queued backlog. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    envelopeId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Service mailbox state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ServiceTurnMailboxResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/service-turns/{envelopeId}/defer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Requeue the current service turn for later processing. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    envelopeId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        delayMs: number;
+                        reason?: string | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description Service turn deferred */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ServiceTurnDeferResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/service-turns/{envelopeId}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject the current service turn without retry. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    envelopeId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        error: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Service turn rejected */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunMutationResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/leases/{leaseId}/service-turns/{envelopeId}/fail": {
         parameters: {
             query?: never;
@@ -1802,6 +1932,44 @@ export interface components {
             wait?: components["schemas"]["WaitRef"];
         };
         ServiceTurnCompleteResponse: {
+            /** @constant */
+            ok: true;
+            run: unknown;
+        };
+        ServiceMailboxEnvelope: {
+            id: string;
+            /** @enum {unknown} */
+            kind: "ask" | "send" | "signal";
+            name: string;
+            attempt: number | null;
+            correlationId?: string | null;
+            senderRunId?: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            wakeAt?: string | null;
+        };
+        ServiceMailboxQueuedSummary: {
+            total: number;
+            ready: number;
+            deferred: number;
+            asks: number;
+            sends: number;
+            signals: number;
+            /** Format: date-time */
+            oldestAt?: string | null;
+            /** Format: date-time */
+            nextWakeAt?: string | null;
+        };
+        ServiceTurnMailboxResponse: {
+            /** @constant */
+            ok: true;
+            mailbox: {
+                current: components["schemas"]["ServiceMailboxEnvelope"];
+                queued: components["schemas"]["ServiceMailboxQueuedSummary"];
+            };
+        };
+        ServiceTurnDeferResponse: {
             /** @constant */
             ok: true;
             run: unknown;

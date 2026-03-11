@@ -574,6 +574,15 @@ export class RunSuspendedError extends Error {
   }
 }
 
+export class TurnHandledError extends Error {
+  readonly disposition: "deferred" | "rejected";
+
+  constructor(disposition: "deferred" | "rejected") {
+    super(`Service turn ${disposition}`);
+    this.disposition = disposition;
+  }
+}
+
 async function streamToText(
   stream: ReadableStream<Uint8Array<ArrayBufferLike>> | number | null | undefined
 ): Promise<string> {

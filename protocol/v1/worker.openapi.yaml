@@ -547,6 +547,71 @@ components:
         ok:
           const: true
         run: {}
+    ServiceMailboxEnvelope:
+      type: object
+      required: [id, kind, name, attempt, createdAt]
+      properties:
+        id:
+          type: string
+        kind:
+          enum: [ask, send, signal]
+        name:
+          type: string
+        attempt:
+          type: [integer, 'null']
+        correlationId:
+          type: [string, 'null']
+        senderRunId:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        wakeAt:
+          type: [string, 'null']
+          format: date-time
+    ServiceMailboxQueuedSummary:
+      type: object
+      required: [total, ready, deferred, asks, sends, signals]
+      properties:
+        total:
+          type: integer
+        ready:
+          type: integer
+        deferred:
+          type: integer
+        asks:
+          type: integer
+        sends:
+          type: integer
+        signals:
+          type: integer
+        oldestAt:
+          type: [string, 'null']
+          format: date-time
+        nextWakeAt:
+          type: [string, 'null']
+          format: date-time
+    ServiceTurnMailboxResponse:
+      type: object
+      required: [ok, mailbox]
+      properties:
+        ok:
+          const: true
+        mailbox:
+          type: object
+          required: [current, queued]
+          properties:
+            current:
+              $ref: '#/components/schemas/ServiceMailboxEnvelope'
+            queued:
+              $ref: '#/components/schemas/ServiceMailboxQueuedSummary'
+    ServiceTurnDeferResponse:
+      type: object
+      required: [ok, run]
+      properties:
+        ok:
+          const: true
+        run: {}
     RunMutationResponse:
       type: object
       required: [ok, run]
@@ -1493,6 +1558,90 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ServiceTurnCompleteResponse'
+  /v1/leases/{leaseId}/service-turns/{envelopeId}/mailbox:
+    get:
+      summary: Inspect the current service turn envelope and queued backlog.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: envelopeId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service mailbox state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceTurnMailboxResponse'
+  /v1/leases/{leaseId}/service-turns/{envelopeId}/defer:
+    post:
+      summary: Requeue the current service turn for later processing.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: envelopeId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [delayMs]
+              properties:
+                delayMs:
+                  type: integer
+                reason:
+                  type: [string, 'null']
+      responses:
+        '200':
+          description: Service turn deferred
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceTurnDeferResponse'
+  /v1/leases/{leaseId}/service-turns/{envelopeId}/reject:
+    post:
+      summary: Reject the current service turn without retry.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: envelopeId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [error]
+              properties:
+                error: {}
+      responses:
+        '200':
+          description: Service turn rejected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunMutationResponse'
   /v1/leases/{leaseId}/service-turns/{envelopeId}/fail:
     post:
       summary: Fail a service turn.

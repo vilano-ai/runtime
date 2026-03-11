@@ -813,6 +813,35 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  get "/v1/leases/:lease_id/service-turns/:envelope_id/mailbox" do
+    case Storage.get_service_turn_mailbox(lease_id, envelope_id) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active service turn: #{lease_id}")
+      mailbox -> send_json(conn, 200, %{ok: true, mailbox: mailbox})
+    end
+  end
+
+  post "/v1/leases/:lease_id/service-turns/:envelope_id/defer" do
+    delay_ms = fetch_required_integer(conn.body_params, "delayMs")
+    reason = Map.get(conn.body_params, "reason")
+
+    case Storage.defer_service_turn(lease_id, envelope_id, delay_ms, reason) do
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown active service turn: #{lease_id}")
+
+      %{"run" => run} = result ->
+        send_json(conn, 200, %{ok: true, run: run, wait: Map.get(result, "wait")})
+    end
+  end
+
+  post "/v1/leases/:lease_id/service-turns/:envelope_id/reject" do
+    error_body = Map.get(conn.body_params, "error", %{})
+
+    case Storage.reject_service_turn(lease_id, envelope_id, error_body) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active service turn: #{lease_id}")
+      run -> send_json(conn, 200, %{ok: true, run: run})
+    end
+  end
+
   post "/v1/leases/:lease_id/service-turns/:envelope_id/fail" do
     error_body = Map.get(conn.body_params, "error", %{})
 

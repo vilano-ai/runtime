@@ -1099,6 +1099,7 @@ defmodule VilanoKernel.Storage do
                 status = 'completed',
                 reply_json = ?,
                 error_json = null,
+                wake_at = null,
                 updated_at = ?
               where
                 id = ?
@@ -1186,6 +1187,196 @@ defmodule VilanoKernel.Storage do
                 [next_status, now, service_run["id"]]
               )
             end
+
+            get_run(service_run["id"])
+          else
+            nil
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def get_service_turn_mailbox(lease_id, envelope_id) do
+    now = Infrastructure.now_iso8601()
+
+    Repo.transaction(fn ->
+      case {get_fenced_run_by_lease(lease_id, now), get_service_envelope(envelope_id)} do
+        {nil, _} ->
+          nil
+
+        {_, nil} ->
+          nil
+
+        {service_run, envelope} ->
+          if envelope["service_run_id"] == service_run["id"] and
+               envelope["status"] == "processing" do
+            %{
+              "current" => mailbox_envelope_from_row(envelope),
+              "queued" => queued_mailbox_summary(service_run["id"], now)
+            }
+          else
+            nil
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def defer_service_turn(lease_id, envelope_id, delay_ms, reason \\ nil) do
+    now = Infrastructure.now_iso8601()
+    wake_at = shift_milliseconds(now, delay_ms)
+
+    Repo.transaction(fn ->
+      case {get_fenced_run_by_lease(lease_id, now), get_service_envelope(envelope_id)} do
+        {nil, _} ->
+          nil
+
+        {_, nil} ->
+          nil
+
+        {service_run, envelope} ->
+          if envelope["service_run_id"] == service_run["id"] and
+               envelope["status"] == "processing" do
+            ensure_fenced_run_ownership!(service_run["id"], lease_id, now)
+            next_attempt = (envelope["attempt"] || 1) + 1
+
+            ensure_fenced_related_write!(
+              service_run["id"],
+              lease_id,
+              now,
+              """
+              update service_envelopes
+              set
+                status = 'queued',
+                attempt = ?,
+                reply_json = null,
+                error_json = null,
+                wake_at = ?,
+                updated_at = ?
+              where
+                id = ?
+                and #{@fenced_run_exists_sql}
+              """,
+              [next_attempt, wake_at, now, envelope_id]
+            )
+
+            next_status = service_next_status(service_run["id"], false)
+
+            ensure_fenced_run_write!(
+              service_run["id"],
+              lease_id,
+              now,
+              """
+              update runs
+              set
+                status = ?,
+                lease_id = null,
+                lease_auth_token = null,
+                lease_worker_id = null,
+                lease_expires_at = null,
+                updated_at = ?
+              where id = ?
+              """,
+              [next_status, now, service_run["id"]]
+            )
+
+            append_event!(
+              service_run["id"],
+              "TurnDeferred",
+              %{
+                "envelopeId" => envelope_id,
+                "kind" => envelope["kind"],
+                "name" => envelope["name"],
+                "reason" => reason,
+                "delayMs" => delay_ms,
+                "wakeAt" => wake_at,
+                "nextAttempt" => next_attempt
+              },
+              now
+            )
+
+            %{
+              "run" => get_run(service_run["id"])
+            }
+          else
+            nil
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def reject_service_turn(lease_id, envelope_id, error_body) do
+    now = Infrastructure.now_iso8601()
+
+    Repo.transaction(fn ->
+      case {get_fenced_run_by_lease(lease_id, now), get_service_envelope(envelope_id)} do
+        {nil, _} ->
+          nil
+
+        {_, nil} ->
+          nil
+
+        {service_run, envelope} ->
+          if envelope["service_run_id"] == service_run["id"] and
+               envelope["status"] == "processing" do
+            ensure_fenced_run_ownership!(service_run["id"], lease_id, now)
+
+            ensure_fenced_related_write!(
+              service_run["id"],
+              lease_id,
+              now,
+              """
+              update service_envelopes
+              set
+                status = 'failed',
+                error_json = ?,
+                reply_json = null,
+                wake_at = null,
+                updated_at = ?
+              where
+                id = ?
+                and #{@fenced_run_exists_sql}
+              """,
+              [Jason.encode!(error_body), now, envelope_id]
+            )
+
+            if envelope["kind"] == "ask" do
+              wake_service_ask_waiter!(envelope["correlation_id"], "failed", error_body, now)
+            end
+
+            append_event!(
+              service_run["id"],
+              "TurnRejected",
+              %{
+                "envelopeId" => envelope_id,
+                "kind" => envelope["kind"],
+                "name" => envelope["name"],
+                "error" => error_body
+              },
+              now
+            )
+
+            next_status = service_next_status(service_run["id"], false)
+
+            ensure_fenced_run_write!(
+              service_run["id"],
+              lease_id,
+              now,
+              """
+              update runs
+              set
+                status = ?,
+                lease_id = null,
+                lease_auth_token = null,
+                lease_worker_id = null,
+                lease_expires_at = null,
+                updated_at = ?
+              where id = ?
+              """,
+              [next_status, now, service_run["id"]]
+            )
 
             get_run(service_run["id"])
           else
@@ -1322,6 +1513,7 @@ defmodule VilanoKernel.Storage do
                        set
                          status = 'processing',
                          attempt = ?,
+                         wake_at = null,
                          updated_at = ?
                        where id = ? and status = 'queued'
                        """,
@@ -3456,8 +3648,22 @@ defmodule VilanoKernel.Storage do
       "status" => row["status"],
       "reply" => decode_json_value(row["reply_json"], nil),
       "error" => decode_json_value(row["error_json"], nil),
+      "wakeAt" => row["wake_at"],
       "createdAt" => row["created_at"],
       "updatedAt" => row["updated_at"]
+    }
+  end
+
+  defp mailbox_envelope_from_row(row) do
+    %{
+      "id" => row["id"],
+      "kind" => row["kind"],
+      "name" => row["name"],
+      "attempt" => row["attempt"],
+      "correlationId" => row["correlation_id"],
+      "senderRunId" => row["sender_run_id"],
+      "createdAt" => row["created_at"],
+      "wakeAt" => row["wake_at"]
     }
   end
 
@@ -4486,6 +4692,7 @@ defmodule VilanoKernel.Storage do
         status,
         reply_json,
         error_json,
+        wake_at,
         created_at,
         updated_at
       from service_envelopes
@@ -4513,6 +4720,7 @@ defmodule VilanoKernel.Storage do
         status,
         reply_json,
         error_json,
+        wake_at,
         created_at,
         updated_at
       from service_envelopes
@@ -5156,6 +5364,7 @@ defmodule VilanoKernel.Storage do
               set
                 status = 'failed',
                 error_json = ?,
+                wake_at = null,
                 updated_at = ?
               where id = ?
               """,
@@ -5576,6 +5785,7 @@ defmodule VilanoKernel.Storage do
         set
           attempt = ?,
           error_json = ?,
+          wake_at = null,
           updated_at = ?
         where
           id = ?
@@ -5631,6 +5841,7 @@ defmodule VilanoKernel.Storage do
         set
           status = 'failed',
           error_json = ?,
+          wake_at = null,
           updated_at = ?
         where
           id = ?
@@ -5961,6 +6172,7 @@ defmodule VilanoKernel.Storage do
       set
         status = 'failed',
         error_json = ?,
+        wake_at = null,
         updated_at = ?
       where id = ?
       """,
@@ -6042,6 +6254,7 @@ defmodule VilanoKernel.Storage do
         status,
         reply_json,
         error_json,
+        wake_at,
         created_at,
         updated_at
       from service_envelopes
@@ -6193,6 +6406,7 @@ defmodule VilanoKernel.Storage do
         status,
         reply_json,
         error_json,
+        wake_at,
         created_at,
         updated_at
       from service_envelopes
@@ -6291,6 +6505,7 @@ defmodule VilanoKernel.Storage do
         e.status as envelope_status,
         e.reply_json,
         e.error_json,
+        e.wake_at,
         e.created_at,
         e.updated_at,
         r.status as run_status,
@@ -6298,7 +6513,7 @@ defmodule VilanoKernel.Storage do
       from service_envelopes e
       join runs r on r.id = e.service_run_id
       where
-        e.status in ('queued', 'processing')
+        (e.status = 'processing' or (e.status = 'queued' and (e.wake_at is null or e.wake_at <= ?)))
         and r.definition_kind = 'service'
         and r.status in ('idle', 'pending', 'active')
         and (r.lease_expires_at is null or r.lease_expires_at < ?)
@@ -6307,7 +6522,7 @@ defmodule VilanoKernel.Storage do
         e.created_at asc
       limit 1
       """,
-      [now]
+      [now, now]
     )
     |> rows_to_maps()
     |> List.first()
@@ -6375,9 +6590,10 @@ defmodule VilanoKernel.Storage do
         status,
         reply_json,
         error_json,
+        wake_at,
         created_at,
         updated_at
-      ) values (?, ?, ?, ?, 1, ?, ?, ?, 'queued', null, null, ?, ?)
+      ) values (?, ?, ?, ?, 1, ?, ?, ?, 'queued', null, null, null, ?, ?)
       """,
       [
         envelope_id,
@@ -6656,23 +6872,62 @@ defmodule VilanoKernel.Storage do
 
     ServiceLifecycle.next_status(
       current_run["status"],
-      service_has_queued_envelopes?(service_run_id),
+      service_has_ready_queued_envelopes?(service_run_id),
       stop?
     )
   end
 
-  defp service_has_queued_envelopes?(service_run_id) do
+  defp service_has_ready_queued_envelopes?(service_run_id) do
+    now = Infrastructure.now_iso8601()
+
     Repo
     |> SQL.query!(
       """
       select count(*)
       from service_envelopes
-      where service_run_id = ? and status = 'queued'
+      where
+        service_run_id = ?
+        and status = 'queued'
+        and (wake_at is null or wake_at <= ?)
       """,
-      [service_run_id]
+      [service_run_id, now]
     )
     |> first_integer()
     |> Kernel.>(0)
+  end
+
+  defp queued_mailbox_summary(service_run_id, now) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        count(*) as total,
+        sum(case when wake_at is null or wake_at <= ? then 1 else 0 end) as ready,
+        sum(case when wake_at is not null and wake_at > ? then 1 else 0 end) as deferred,
+        sum(case when kind = 'ask' then 1 else 0 end) as asks,
+        sum(case when kind = 'send' then 1 else 0 end) as sends,
+        sum(case when kind = 'signal' then 1 else 0 end) as signals,
+        min(created_at) as oldest_at,
+        min(case when wake_at is not null and wake_at > ? then wake_at end) as next_wake_at
+      from service_envelopes
+      where service_run_id = ? and status = 'queued'
+      """,
+      [now, now, now, service_run_id]
+    )
+    |> rows_to_maps()
+    |> List.first()
+    |> then(fn row ->
+      %{
+        "total" => row["total"] || 0,
+        "ready" => row["ready"] || 0,
+        "deferred" => row["deferred"] || 0,
+        "asks" => row["asks"] || 0,
+        "sends" => row["sends"] || 0,
+        "signals" => row["signals"] || 0,
+        "oldestAt" => row["oldest_at"],
+        "nextWakeAt" => row["next_wake_at"]
+      }
+    end)
   end
 
   defp resolve_run_relationship(lease_id, target_run_id, op_key, kind, propagate) do
