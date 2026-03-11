@@ -460,6 +460,31 @@ components:
           const: true
         member:
           $ref: '#/components/schemas/SupervisionMemberRef'
+    SupervisionMemberListResponse:
+      type: object
+      required: [ok, members]
+      properties:
+        ok:
+          const: true
+        members:
+          type: array
+          items:
+            type: object
+            required: [groupId, key, definitionName, input, generation, status]
+            properties:
+              groupId:
+                type: string
+              key:
+                type: string
+              definitionName:
+                type: string
+              input: {}
+              currentChildRunId:
+                type: [string, 'null']
+              generation:
+                type: integer
+              status:
+                type: string
     SupervisionMemberCompleted:
       type: object
       required: [status, output]
@@ -1277,6 +1302,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/SupervisionGroupResolveResponse'
   /v1/leases/{leaseId}/supervision/groups/{groupId}/members:
+    get:
+      summary: List logical supervised workflow members for a durable supervision group.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: groupId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Supervision members
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupervisionMemberListResponse'
     post:
       summary: Resolve or create a logical supervised workflow member.
       parameters:
@@ -1462,6 +1507,33 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ServiceCallResolveResponse'
+  /v1/leases/{leaseId}/services/lookup-singleton:
+    post:
+      summary: Resolve an existing singleton-discoverable service from the active lease context.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+                keyInput: {}
+      responses:
+        '200':
+          description: Existing singleton service run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceRunResponse'
   /v1/leases/{leaseId}/services/ask:
     post:
       summary: Resolve or suspend on a service ask.

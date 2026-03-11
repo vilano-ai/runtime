@@ -6,6 +6,7 @@ import type {
   AskOptions,
   AskResult,
   ConnectOptions,
+  DiscoveredServiceRef,
   ExitEvent,
   ExecResult,
   ExecSpec,
@@ -14,6 +15,7 @@ import type {
   MonitorOptions,
   RelationshipRef,
   RunStatus,
+  SupervisionMemberInfo,
   SupervisedSpawnOptions,
   SupervisedWorkflowHandle,
   SupervisionMemberStatus,
@@ -404,6 +406,48 @@ function createTurnContext(
         implicitServiceOpCounters
       ) as ServiceRef<TSend, TAsk, TSignal>;
     },
+    async lookup<
+      TKeyInput,
+      TState,
+      TSend extends Record<string, (...args: any[]) => any>,
+      TAsk extends Record<string, (...args: any[]) => any>,
+      TSignal extends Record<string, (...args: any[]) => any>
+    >(
+      definition: ServiceDefinition<TKeyInput, TState, TSend, TAsk, TSignal>,
+      input: TKeyInput
+    ): Promise<ServiceRef<TSend, TAsk, TSignal>> {
+      const serviceKey = definition.key(input);
+      const serviceRunId = await client.ensureService(
+        null,
+        definition.name,
+        serviceKey,
+        input,
+        activation.leaseId,
+        true
+      );
+
+      return createServiceRef(
+        client,
+        activation,
+        definition,
+        serviceRunId,
+        implicitServiceOpCounters
+      ) as ServiceRef<TSend, TAsk, TSignal>;
+    },
+    async lookupSingleton(role: string, keyInput: unknown = {}): Promise<DiscoveredServiceRef> {
+      const run = await client.lookupSingletonService(activation.leaseId, role, keyInput ?? {});
+
+      return createDiscoveredServiceRef(
+        client,
+        activation,
+        run.id,
+        run.project,
+        run.definitionName,
+        run.serviceKey,
+        run.keyInput,
+        implicitServiceOpCounters
+      );
+    },
     runId: activation.run.id,
     turnAttempt: activation.kind === "service_turn"
       ? (((activation.envelope as { attempt?: number }).attempt ?? 1))
@@ -650,6 +694,17 @@ function createTurnContext(
         maxRestarts: group.maxRestarts,
         windowMs: group.windowMs,
         onExhausted: group.onExhausted,
+        async members(): Promise<SupervisionMemberInfo[]> {
+          const members = await client.listSupervisionMembers(activation.leaseId, group.id);
+          return members.map((member) => ({
+            key: member.key,
+            definitionName: member.definitionName,
+            status: member.status as SupervisionMemberStatus,
+            currentRunId: member.currentChildRunId,
+            generation: member.generation,
+            input: member.input,
+          }));
+        },
         async spawn<TInput, TOutput>(
           definition: WorkflowDefinition<TInput, TOutput>,
           input: TInput,
@@ -806,6 +861,134 @@ function createTurnContext(
       });
 
       throw new TurnHandledError("rejected");
+    },
+  };
+}
+
+function createDiscoveredServiceRef(
+  client: WorkerClient,
+  activation: Activation,
+  serviceRunId: string,
+  project: string,
+  definitionName: string,
+  serviceKey: string,
+  keyInput: unknown,
+  implicitOpCounters: Map<string, number>
+): DiscoveredServiceRef {
+  return {
+    id: serviceRunId,
+    project,
+    definitionName,
+    serviceKey,
+    keyInput,
+    async send(name: string, payload?: unknown, options?: MessageOptions) {
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "send",
+        name,
+        options?.key
+      );
+      const scopedKey = scopeActivationOpKey(activation, key);
+      const resolved = await client.resolveServiceSend(activation.leaseId, {
+        serviceRunId,
+        name,
+        key: scopedKey,
+        payload: payload ?? null,
+      });
+
+      if (resolved.status === "failed") {
+        throw toServiceCallError(serviceRunId, name, resolved.error, "send");
+      }
+    },
+    async ask(name: string, payload?: unknown, options?: AskOptions) {
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "ask",
+        name,
+        options?.key
+      );
+      const scopedKey = scopeActivationOpKey(activation, key);
+      const resolved = await client.resolveServiceAsk(activation.leaseId, {
+        serviceRunId,
+        name,
+        key: scopedKey,
+        payload: payload ?? null,
+        timeoutMs: typeof options?.timeout === "string" ? parseDurationToMs(options.timeout) : undefined,
+      });
+
+      if (resolved.status === "completed") {
+        return resolved.output;
+      }
+
+      if (resolved.status === "failed") {
+        throw toServiceAskError(serviceRunId, name, resolved.error);
+      }
+
+      throw new RunSuspendedError("ask_reply", `ask_reply:ask:${scopedKey}`);
+    },
+    async signal(name: string, payload?: unknown, options?: SignalOptions) {
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "signal",
+        name,
+        options?.key
+      );
+      const scopedKey = scopeActivationOpKey(activation, key);
+      const resolved = await client.resolveServiceSignal(activation.leaseId, {
+        serviceRunId,
+        name,
+        key: scopedKey,
+        payload: payload ?? null,
+      });
+
+      if (resolved.status === "failed") {
+        throw toServiceCallError(serviceRunId, name, resolved.error, "signal");
+      }
+    },
+    async status() {
+      return (await client.getRelatedRunStatus(activation.leaseId, serviceRunId)) as RunStatus;
+    },
+    async monitor(options: MonitorOptions = {}): Promise<RelationshipRef> {
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "monitor",
+        serviceRunId,
+        options.key
+      );
+      const scopedKey = scopeActivationOpKey(activation, key);
+      const relationship = await client.resolveRunMonitor(activation.leaseId, serviceRunId, {
+        key: scopedKey,
+      });
+
+      return {
+        id: relationship.id,
+        targetId: relationship.targetRunId,
+        kind: relationship.kind,
+      };
+    },
+    async link(options: LinkOptions = {}): Promise<RelationshipRef> {
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "link",
+        serviceRunId,
+        options.key
+      );
+      const scopedKey = scopeActivationOpKey(activation, key);
+      const relationship = await client.resolveRunLink(activation.leaseId, serviceRunId, {
+        key: scopedKey,
+        propagate: options.propagate,
+      });
+
+      return {
+        id: relationship.id,
+        targetId: relationship.targetRunId,
+        kind: relationship.kind,
+      };
     },
   };
 }

@@ -98,14 +98,13 @@ function normalizeDefinitionRecord(
   }
 
   const mailbox = normalizeMailboxConfig(exportedDefinition.mailbox, definition);
-  if (!mailbox) {
-    return definition;
-  }
+  const discovery = normalizeDiscoveryConfig(exportedDefinition.discovery, definition);
 
-  return {
+  return cleanupDefinitionRecord({
     ...definition,
     mailbox,
-  };
+    discovery,
+  });
 }
 
 function normalizeMailboxConfig(
@@ -134,4 +133,40 @@ function normalizeMailboxConfig(
     maxQueued: Number(maxQueued),
     overload: "reject_new",
   };
+}
+
+function normalizeDiscoveryConfig(
+  discovery: unknown,
+  definition: DefinitionRecord
+): DefinitionRecord["discovery"] | undefined {
+  if (discovery == null) {
+    return undefined;
+  }
+
+  if (!discovery || typeof discovery !== "object" || Array.isArray(discovery)) {
+    throw new Error(`Service '${definition.name}' discovery config must be an object`);
+  }
+
+  const singletonRole = Reflect.get(discovery, "singletonRole");
+  if (typeof singletonRole !== "string" || singletonRole.trim().length === 0) {
+    throw new Error(`Service '${definition.name}' discovery.singletonRole must be a non-empty string`);
+  }
+
+  return {
+    singletonRole,
+  };
+}
+
+function cleanupDefinitionRecord(definition: DefinitionRecord): DefinitionRecord {
+  const next = { ...definition };
+
+  if (!next.mailbox) {
+    delete next.mailbox;
+  }
+
+  if (!next.discovery) {
+    delete next.discovery;
+  }
+
+  return next;
 }

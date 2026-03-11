@@ -9,7 +9,8 @@ defmodule VilanoKernel.ProjectContract do
     with {:ok, name} <- validate_project_name(Map.get(project, "name")),
          {:ok, path} <- validate_directory(Map.get(project, "path"), "path"),
          {:ok, snapshot_path} <- validate_snapshot_path(Map.get(project, "snapshotPath"), path),
-         {:ok, definitions} <- validate_definitions(Map.get(project, "definitions", %{}), snapshot_path) do
+         {:ok, definitions} <-
+           validate_definitions(Map.get(project, "definitions", %{}), snapshot_path) do
       {:ok,
        %{
          "name" => name,
@@ -36,7 +37,9 @@ defmodule VilanoKernel.ProjectContract do
 
   defp validate_snapshot_path(nil, project_path), do: {:ok, project_path}
   defp validate_snapshot_path("", project_path), do: {:ok, project_path}
-  defp validate_snapshot_path(snapshot_path, _project_path), do: validate_directory(snapshot_path, "snapshotPath")
+
+  defp validate_snapshot_path(snapshot_path, _project_path),
+    do: validate_directory(snapshot_path, "snapshotPath")
 
   defp validate_directory(value, field_name) when is_binary(value) and value != "" do
     expanded = Path.expand(value)
@@ -69,8 +72,19 @@ defmodule VilanoKernel.ProjectContract do
     do: {:error, "#{field_name} must be a non-empty string"}
 
   defp validate_definitions(definitions, snapshot_path) when is_map(definitions) do
-    with {:ok, workflows} <- validate_definition_bucket("workflow", Map.get(definitions, "workflows", []), snapshot_path),
-         {:ok, services} <- validate_definition_bucket("service", Map.get(definitions, "services", []), snapshot_path) do
+    with {:ok, workflows} <-
+           validate_definition_bucket(
+             "workflow",
+             Map.get(definitions, "workflows", []),
+             snapshot_path
+           ),
+         {:ok, services} <-
+           validate_definition_bucket(
+             "service",
+             Map.get(definitions, "services", []),
+             snapshot_path
+           ),
+         :ok <- validate_unique_singleton_roles(services) do
       {:ok, %{"workflows" => workflows, "services" => services}}
     end
   end
@@ -101,18 +115,19 @@ defmodule VilanoKernel.ProjectContract do
          {:ok, name} <- validate_required_string(record, "name"),
          {:ok, export_name} <- validate_required_string(record, "exportName"),
          {:ok, runtime_kind} <- validate_supported_string(record, "runtimeKind", @runtime_kinds),
-         {:ok, source_language} <- validate_supported_string(record, "sourceLanguage", @source_languages),
+         {:ok, source_language} <-
+           validate_supported_string(record, "sourceLanguage", @source_languages),
          {:ok, file} <- validate_definition_file(record, snapshot_path, name) do
       {:ok,
        %{
          "kind" => kind,
          "name" => name,
          "exportName" => export_name,
-          "file" => file,
+         "file" => file,
          "runtimeKind" => runtime_kind,
          "sourceLanguage" => source_language
        }}
-      |> maybe_put_mailbox(record, expected_kind)
+      |> maybe_put_service_metadata(record, expected_kind)
     end
   end
 
@@ -175,7 +190,8 @@ defmodule VilanoKernel.ProjectContract do
 
       case File.lstat(next_path) do
         {:ok, %{type: :symlink}} ->
-          {:halt, {:error, "Definition '#{definition_name}' file must not traverse symbolic links"}}
+          {:halt,
+           {:error, "Definition '#{definition_name}' file must not traverse symbolic links"}}
 
         {:ok, _stat} ->
           {:cont, next_path}
@@ -217,16 +233,18 @@ defmodule VilanoKernel.ProjectContract do
     end
   end
 
-  defp maybe_put_mailbox({:ok, record}, source_record, "service") do
-    case validate_mailbox(Map.get(source_record, "mailbox")) do
-      {:ok, nil} -> {:ok, record}
-      {:ok, mailbox} -> {:ok, Map.put(record, "mailbox", mailbox)}
-      {:error, _reason} = error -> error
+  defp maybe_put_service_metadata({:ok, record}, source_record, "service") do
+    with {:ok, mailbox} <- validate_mailbox(Map.get(source_record, "mailbox")),
+         {:ok, discovery} <- validate_discovery(Map.get(source_record, "discovery")) do
+      {:ok,
+       record
+       |> maybe_put_optional("mailbox", mailbox)
+       |> maybe_put_optional("discovery", discovery)}
     end
   end
 
-  defp maybe_put_mailbox({:ok, record}, _source_record, _kind), do: {:ok, record}
-  defp maybe_put_mailbox(error, _source_record, _kind), do: error
+  defp maybe_put_service_metadata({:ok, record}, _source_record, _kind), do: {:ok, record}
+  defp maybe_put_service_metadata(error, _source_record, _kind), do: error
 
   defp validate_mailbox(nil), do: {:ok, nil}
 
@@ -257,4 +275,38 @@ defmodule VilanoKernel.ProjectContract do
       _ -> {:error, "mailbox overload must be 'reject_new'"}
     end
   end
+
+  defp validate_discovery(nil), do: {:ok, nil}
+
+  defp validate_discovery(discovery) when is_map(discovery) do
+    with {:ok, singleton_role} <- validate_required_string(discovery, "singletonRole") do
+      {:ok, %{"singletonRole" => singleton_role}}
+    end
+  end
+
+  defp validate_discovery(_discovery), do: {:error, "discovery must be an object"}
+
+  defp validate_unique_singleton_roles(services) do
+    services
+    |> Enum.reduce_while(MapSet.new(), fn service, seen ->
+      case get_in(service, ["discovery", "singletonRole"]) do
+        role when is_binary(role) ->
+          if MapSet.member?(seen, role) do
+            {:halt, {:error, "singleton discovery role '#{role}' must be unique per project"}}
+          else
+            {:cont, MapSet.put(seen, role)}
+          end
+
+        _ ->
+          {:cont, seen}
+      end
+    end)
+    |> case do
+      {:error, _reason} = error -> error
+      _ -> :ok
+    end
+  end
+
+  defp maybe_put_optional(record, _key, nil), do: record
+  defp maybe_put_optional(record, key, value), do: Map.put(record, key, value)
 end

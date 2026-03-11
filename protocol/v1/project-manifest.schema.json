@@ -85,6 +85,17 @@
               "enum": ["reject_new"]
             }
           }
+        },
+        "discovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["singletonRole"],
+          "properties": {
+            "singletonRole": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
       }
     }

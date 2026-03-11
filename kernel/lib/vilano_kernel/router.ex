@@ -680,6 +680,21 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  get "/v1/leases/:lease_id/supervision/groups/:group_id/members" do
+    case Storage.list_supervision_members(lease_id, group_id) do
+      nil ->
+        send_error(
+          conn,
+          404,
+          "not_found",
+          "Unknown active lease or supervision group: #{group_id}"
+        )
+
+      members ->
+        send_json(conn, 200, %{ok: true, members: members})
+    end
+  end
+
   post "/v1/leases/:lease_id/supervision/groups/:group_id/members/:member_key/result" do
     key = fetch_required_string(conn.body_params, "key")
 
@@ -753,6 +768,27 @@ defmodule VilanoKernel.Router do
          ) do
       nil -> send_error(conn, 404, "not_found", "Unknown active lease or service: #{lease_id}")
       result -> send_json(conn, 200, %{ok: true, result: result})
+    end
+  end
+
+  post "/v1/leases/:lease_id/services/lookup-singleton" do
+    role = fetch_required_string(conn.body_params, "role")
+
+    case Storage.lookup_singleton_service(
+           lease_id,
+           role,
+           Map.get(conn.body_params, "keyInput", %{})
+         ) do
+      nil ->
+        send_error(
+          conn,
+          404,
+          "not_found",
+          "Unknown active lease or singleton service role: #{role}"
+        )
+
+      run ->
+        send_json(conn, 200, %{ok: true, run: run})
     end
   end
 

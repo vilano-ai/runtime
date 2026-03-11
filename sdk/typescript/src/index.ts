@@ -154,11 +154,21 @@ export interface WorkflowSupervisionGroup {
   readonly maxRestarts: number;
   readonly windowMs: number;
   readonly onExhausted: SupervisionOnExhausted;
+  members(): Promise<SupervisionMemberInfo[]>;
   spawn<TInput, TOutput>(
     definition: WorkflowDefinition<TInput, TOutput>,
     input: TInput,
     options?: SupervisedSpawnOptions
   ): Promise<SupervisedWorkflowHandle<TOutput>>;
+}
+
+export interface SupervisionMemberInfo {
+  key: string;
+  definitionName: string;
+  status: SupervisionMemberStatus;
+  currentRunId: string | null;
+  generation: number;
+  input: unknown;
 }
 
 export interface SupervisedWorkflowHandle<TOutput> {
@@ -232,6 +242,17 @@ export interface TurnContext {
     input: TKeyInput,
     options?: ConnectOptions
   ): Promise<ServiceRef<TSend, TAsk, TSignal>>;
+  lookup<
+    TKeyInput,
+    TState,
+    TSend extends SendHandlerMap<TState>,
+    TAsk extends AskHandlerMap<TState>,
+    TSignal extends SignalHandlerMap<TState>
+  >(
+    definition: ServiceDefinition<TKeyInput, TState, TSend, TAsk, TSignal>,
+    input: TKeyInput
+  ): Promise<ServiceRef<TSend, TAsk, TSignal>>;
+  lookupSingleton(role: string, keyInput?: unknown): Promise<DiscoveredServiceRef>;
 }
 
 export interface ServiceTurnContext extends TurnContext {
@@ -315,6 +336,7 @@ export interface ServiceDefinition<
   readonly name: string;
   readonly retry?: RetryOptions;
   readonly mailbox?: ServiceMailboxPolicy;
+  readonly discovery?: ServiceDiscoveryPolicy;
   readonly key: (input: TKeyInput) => string;
   readonly init?: (input: TKeyInput, ctx: ServiceTurnContext) => Promise<TState> | TState;
   readonly onSend?: TSend;
@@ -325,6 +347,10 @@ export interface ServiceDefinition<
 export interface ServiceMailboxPolicy {
   maxQueued: number;
   overload?: "reject_new";
+}
+
+export interface ServiceDiscoveryPolicy {
+  singletonRole: string;
 }
 
 type FirstArg<THandler extends (...args: any[]) => any> = THandler extends (
@@ -365,6 +391,20 @@ export interface ServiceRef<
   signal: {
     [K in keyof TSignal]: (...args: SignalMethodArgs<FirstArg<TSignal[K]>>) => Promise<void>;
   };
+  status(): Promise<RunStatus>;
+  monitor(options?: MonitorOptions): Promise<RelationshipRef>;
+  link(options?: LinkOptions): Promise<RelationshipRef>;
+}
+
+export interface DiscoveredServiceRef {
+  readonly id: string;
+  readonly project: string;
+  readonly definitionName: string;
+  readonly serviceKey: string;
+  readonly keyInput: unknown;
+  send(name: string, payload?: unknown, options?: MessageOptions): Promise<void>;
+  ask(name: string, payload?: unknown, options?: AskOptions): Promise<unknown>;
+  signal(name: string, payload?: unknown, options?: SignalOptions): Promise<void>;
   status(): Promise<RunStatus>;
   monitor(options?: MonitorOptions): Promise<RelationshipRef>;
   link(options?: LinkOptions): Promise<RelationshipRef>;

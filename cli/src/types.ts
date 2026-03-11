@@ -9,6 +9,9 @@ export interface DefinitionRecord {
     maxQueued: number;
     overload?: "reject_new";
   };
+  discovery?: {
+    singletonRole: string;
+  };
 }
 
 export type DefinitionKind = DefinitionRecord["kind"];

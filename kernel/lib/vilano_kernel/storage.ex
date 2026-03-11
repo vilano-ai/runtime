@@ -3326,6 +3326,64 @@ defmodule VilanoKernel.Storage do
     |> unwrap_transaction_result()
   end
 
+  def list_supervision_members(lease_id, group_id) do
+    now = Infrastructure.now_iso8601()
+
+    Repo.transaction(fn ->
+      case get_fenced_run_by_lease(lease_id, now) do
+        nil ->
+          nil
+
+        owner_run ->
+          case get_run_supervision_group_for_owner(owner_run["id"], group_id) do
+            nil ->
+              nil
+
+            _group ->
+              group_id
+              |> list_run_supervision_members()
+              |> Enum.map(&supervision_member_runtime_state/1)
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def lookup_singleton_service(lease_id, role, key_input) do
+    now = Infrastructure.now_iso8601()
+
+    Infrastructure.transaction_with_busy_retry(fn ->
+      case get_fenced_run_by_lease(lease_id, now) do
+        nil ->
+          nil
+
+        owner_run ->
+          case find_singleton_service_definition(project_definitions_for_run(owner_run), role) do
+            nil ->
+              nil
+
+            definition ->
+              service_run =
+                owner_run["project"]
+                |> list_service_runs_by_definition(Map.fetch!(definition, "name"))
+                |> Enum.find(&(&1["keyInput"] == (key_input || %{})))
+
+              case service_run do
+                nil ->
+                  nil
+
+                resolved ->
+                  ensure_fenced_run_ownership!(owner_run["id"], lease_id, now)
+                  record_service_ref!(owner_run["id"], resolved["id"], now)
+                  ensure_fenced_run_ownership!(owner_run["id"], lease_id, now)
+                  resolved
+              end
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
   def send_run_signal(run_id, signal_name, payload) do
     now = Infrastructure.now_iso8601()
     signal_id = "sig_" <> Ecto.UUID.generate()
@@ -3628,6 +3686,12 @@ defmodule VilanoKernel.Storage do
     run["projectDefinitions"] || %{"workflows" => [], "services" => []}
   end
 
+  defp find_singleton_service_definition(project_definitions, role) do
+    project_definitions
+    |> Map.get("services", [])
+    |> Enum.find(&(get_in(&1, ["discovery", "singletonRole"]) == role))
+  end
+
   defp decorate_service_passivation(nil), do: nil
 
   defp decorate_service_passivation(%{"definitionKind" => "service"} = run) do
@@ -3678,7 +3742,8 @@ defmodule VilanoKernel.Storage do
         _ ->
           %{
             "state" => "passivated",
-            "reason" => if((queued["total"] || 0) > 0, do: "mailbox_deferred", else: "mailbox_empty"),
+            "reason" =>
+              if((queued["total"] || 0) > 0, do: "mailbox_deferred", else: "mailbox_empty"),
             "wakeOn" => ["mailbox"],
             "queuedMessages" => queued["total"] || 0,
             "nextWakeAt" => earliest_wake_at([queued["nextWakeAt"], next_wait_wake_at])
@@ -4684,6 +4749,50 @@ defmodule VilanoKernel.Storage do
       """,
       [project_name, definition_name, service_key]
     )
+  end
+
+  defp list_service_runs_by_definition(project_name, definition_name) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        r.id,
+        r.project_name,
+        r.definition_kind,
+        r.definition_name,
+        r.project_snapshot_path,
+        r.project_definitions_json,
+        r.definition_file,
+        r.definition_export_name,
+        r.definition_runtime_kind,
+        r.definition_source_language,
+        r.status,
+        r.lease_id,
+        r.lease_worker_id,
+        r.lease_expires_at,
+        r.input_json,
+        r.output_json,
+        r.error_json,
+        r.created_at,
+        r.updated_at,
+        s.service_key,
+        s.key_input_json,
+        s.state_json,
+        s.created_at as service_created_at,
+        s.updated_at as service_updated_at
+      from runs r
+      join service_runs s on s.run_id = r.id
+      where
+        r.project_name = ?
+        and r.definition_kind = 'service'
+        and r.definition_name = ?
+        and r.status != 'stopped'
+      order by s.updated_at desc, r.updated_at desc, r.id desc
+      """,
+      [project_name, definition_name]
+    )
+    |> rows_to_maps()
+    |> Enum.map(&service_run_from_row(&1, &1))
   end
 
   defp deterministic_service_run_id(project_name, definition_name, service_key) do
@@ -6604,7 +6713,7 @@ defmodule VilanoKernel.Storage do
          now
        ) do
     if service_run["status"] == "stopped" do
-       {:error,
+      {:error,
        %{
          "message" => "Service is stopped",
          "reason" => "service_stopped",

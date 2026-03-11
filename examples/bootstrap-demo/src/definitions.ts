@@ -584,6 +584,28 @@ export const supervisionOneForAllCoordinator = workflow({
   },
 });
 
+export const supervisionMembersCoordinator = workflow({
+  name: "supervisionMembersCoordinator",
+  run: async (input: { topic: string }, ctx) => {
+    const group = await ctx.supervise({
+      key: "supervision-members",
+      strategy: "one_for_one",
+      maxRestarts: 1,
+      window: "1m",
+    });
+
+    const first = await group.spawn(childTask, { topic: input.topic }, { key: "first" });
+    const second = await group.spawn(childTask, { topic: `${input.topic}-second` }, { key: "second" });
+
+    await first.result();
+    await second.result();
+
+    return {
+      members: await group.members(),
+    };
+  },
+});
+
 export const slowDelegator = workflow({
   name: "slowDelegator",
   run: async (input: { topic: string; duration?: string }, ctx) => {
@@ -830,6 +852,9 @@ export const reviewer = service({
 
 export const operator = service({
   name: "operator",
+  discovery: {
+    singletonRole: "operator",
+  },
   key: (input: { sessionId: string }) => input.sessionId,
   init: async (input: { sessionId: string }) => ({
     sessionId: input.sessionId,
@@ -1413,6 +1438,28 @@ export const serviceTurnCoordinator = workflow({
     return {
       operatorRunId: operatorRef.id,
       pipeline,
+    };
+  },
+});
+
+export const singletonLookupCoordinator = workflow({
+  name: "singletonLookupCoordinator",
+  run: async (input: { sessionId: string; topic: string }, ctx) => {
+    const connected = await ctx.connect(operator, { sessionId: input.sessionId });
+    const typed = await ctx.lookup(operator, { sessionId: input.sessionId });
+    const discovered = await ctx.lookupSingleton("operator", {
+      sessionId: input.sessionId,
+    });
+
+    return {
+      connectedRunId: connected.id,
+      typedRunId: typed.id,
+      discoveredRunId: discovered.id,
+      discoveredDefinition: discovered.definitionName,
+      discoveredKey: discovered.serviceKey,
+      discoveredStatus: await discovered.status(),
+      typedResult: await typed.ask.pipeline({ topic: `${input.topic}-typed` }),
+      discoveredResult: await discovered.ask("pipeline", { topic: input.topic }),
     };
   },
 });

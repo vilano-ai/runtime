@@ -343,6 +343,84 @@ test("supervision exhaustion fails the owner when restart budget is exceeded", a
   }
 });
 
+test("supervision groups can list logical members and their current runtime state", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/supervisionMembersCoordinator", {
+      topic: "group-members",
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+    const output = completed.run.output as
+      | {
+          members?: Array<{
+            key?: string;
+            definitionName?: string;
+            status?: string;
+            generation?: number;
+            currentRunId?: string | null;
+            input?: { topic?: string };
+          }>;
+        }
+      | undefined;
+
+    expect(output?.members).toHaveLength(2);
+    expect(output?.members?.map((member) => member.key)).toEqual(["first", "second"]);
+    expect(output?.members?.map((member) => member.definitionName)).toEqual([
+      "childTask",
+      "childTask",
+    ]);
+    expect(output?.members?.map((member) => member.status)).toEqual(["completed", "completed"]);
+    expect(output?.members?.every((member) => member.generation === 1)).toBe(true);
+    expect(output?.members?.every((member) => Boolean(member.currentRunId))).toBe(true);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("singleton discovery resolves existing services by role and preserves related-run semantics", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/singletonLookupCoordinator", {
+      sessionId: "singleton-lookup",
+      topic: "singleton-discovery",
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+    const output = completed.run.output as
+      | {
+          connectedRunId?: string;
+          typedRunId?: string;
+          discoveredRunId?: string;
+          discoveredDefinition?: string;
+          discoveredKey?: string;
+          discoveredStatus?: string;
+          typedResult?: { child?: { summary?: string } };
+          discoveredResult?: { child?: { summary?: string } };
+        }
+      | undefined;
+
+    expect(output?.connectedRunId).toBeTruthy();
+    expect(output?.typedRunId).toBe(output?.connectedRunId);
+    expect(output?.discoveredRunId).toBe(output?.connectedRunId);
+    expect(output?.discoveredDefinition).toBe("operator");
+    expect(output?.discoveredKey).toBe("singleton-lookup");
+    expect(output?.discoveredStatus).toBe("idle");
+    expect(output?.typedResult?.child?.summary).toBe("child planned: singleton-discovery-typed");
+    expect(output?.discoveredResult?.child?.summary).toBe("child planned: singleton-discovery");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("run cancel propagates through outbound service asks", async () => {
   const harness = await RuntimeHarness.create();
   const keyInput = { sessionId: "cancel-session" };

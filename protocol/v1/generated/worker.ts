@@ -980,7 +980,30 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List logical supervised workflow members for a durable supervision group. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    groupId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Supervision members */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SupervisionMemberListResponse"];
+                    };
+                };
+            };
+        };
         put?: never;
         /** Resolve or create a logical supervised workflow member. */
         post: {
@@ -1235,6 +1258,51 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["ServiceCallResolveResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/services/lookup-singleton": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve an existing singleton-discoverable service from the active lease context. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        role: string;
+                        keyInput?: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Existing singleton service run */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ServiceRunResponse"];
                     };
                 };
             };
@@ -1882,6 +1950,19 @@ export interface components {
             /** @constant */
             ok: true;
             member: components["schemas"]["SupervisionMemberRef"];
+        };
+        SupervisionMemberListResponse: {
+            /** @constant */
+            ok: true;
+            members: {
+                groupId: string;
+                key: string;
+                definitionName: string;
+                input: unknown;
+                currentChildRunId?: string | null;
+                generation: number;
+                status: string;
+            }[];
         };
         SupervisionMemberCompleted: {
             /** @constant */

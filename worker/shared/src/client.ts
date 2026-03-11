@@ -74,6 +74,19 @@ interface SupervisionMemberResolveResponse {
   };
 }
 
+interface SupervisionMemberListResponse {
+  ok: true;
+  members: Array<{
+    groupId: string;
+    key: string;
+    definitionName: string;
+    input: unknown;
+    currentChildRunId: string | null;
+    generation: number;
+    status: string;
+  }>;
+}
+
 interface SupervisionMemberResultResponse {
   ok: true;
   member:
@@ -97,6 +110,18 @@ interface TrapExitsResponse {
   ok: true;
   run: {
     id: string;
+    status: string;
+  };
+}
+
+interface SingletonLookupResponse {
+  ok: true;
+  run: {
+    id: string;
+    project: string;
+    definitionName: string;
+    serviceKey: string;
+    keyInput: unknown;
     status: string;
   };
 }
@@ -485,6 +510,20 @@ export class WorkerClient {
     return response.member;
   }
 
+  async listSupervisionMembers(
+    leaseId: string,
+    groupId: string
+  ): Promise<SupervisionMemberListResponse["members"]> {
+    const response = await this.request<SupervisionMemberListResponse>(
+      "GET",
+      `/v1/leases/${encodeURIComponent(leaseId)}/supervision/groups/${encodeURIComponent(groupId)}/members`,
+      undefined,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.members;
+  }
+
   async resolveChildResult(
     leaseId: string,
     spec: { childRunId: string; key: string }
@@ -578,6 +617,24 @@ export class WorkerClient {
     }, leaseId ? this.requireLeaseAuthToken(leaseId) : this.bootstrapAuthToken);
 
     return response.run.id;
+  }
+
+  async lookupSingletonService(
+    leaseId: string,
+    role: string,
+    keyInput: unknown
+  ): Promise<SingletonLookupResponse["run"]> {
+    const response = await this.request<SingletonLookupResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/services/lookup-singleton`,
+      {
+        role,
+        keyInput,
+      },
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.run;
   }
 
   async resolveServiceSend(
