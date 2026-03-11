@@ -1536,6 +1536,7 @@ defmodule VilanoKernel.Storage do
 
           append_event!(run["id"], "RunCompleted", %{"result" => result}, now)
           wake_waiting_parents_for_child!(run["id"], "completed", result, now)
+          maybe_apply_supervision_for_terminal_run!(run["id"], now)
           maybe_trigger_relationships_for_terminal_run!(run["id"], now)
           get_run(run["id"])
       end
@@ -1573,6 +1574,7 @@ defmodule VilanoKernel.Storage do
 
           append_event!(run["id"], "RunFailed", %{"error" => error_body}, now)
           wake_waiting_parents_for_child!(run["id"], "failed", error_body, now)
+          maybe_apply_supervision_for_terminal_run!(run["id"], now)
           maybe_trigger_relationships_for_terminal_run!(run["id"], now)
           get_run(run["id"])
       end
@@ -2801,6 +2803,336 @@ defmodule VilanoKernel.Storage do
     |> unwrap_transaction_result()
   end
 
+  def resolve_supervision_group(
+        lease_id,
+        op_key,
+        strategy,
+        max_restarts,
+        window_ms,
+        on_exhausted
+      ) do
+    now = Infrastructure.now_iso8601()
+
+    Infrastructure.transaction_with_busy_retry(fn ->
+      case get_fenced_run_by_lease(lease_id, now) do
+        nil ->
+          nil
+
+        owner_run ->
+          case get_run_supervision_group(owner_run["id"], op_key) do
+            nil ->
+              ensure_fenced_run_ownership!(owner_run["id"], lease_id, now)
+              group_id = "supg_" <> Ecto.UUID.generate()
+
+              SQL.query!(
+                Repo,
+                """
+                insert into run_supervision_groups (
+                  id,
+                  owner_run_id,
+                  op_key,
+                  strategy,
+                  max_restarts,
+                  window_ms,
+                  on_exhausted,
+                  status,
+                  created_at,
+                  updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                """,
+                [
+                  group_id,
+                  owner_run["id"],
+                  op_key,
+                  strategy,
+                  max_restarts,
+                  window_ms,
+                  on_exhausted,
+                  now,
+                  now
+                ]
+              )
+
+              append_event!(
+                owner_run["id"],
+                "SupervisionGroupRegistered",
+                %{
+                  "groupId" => group_id,
+                  "key" => op_key,
+                  "strategy" => strategy,
+                  "maxRestarts" => max_restarts,
+                  "windowMs" => window_ms,
+                  "onExhausted" => on_exhausted
+                },
+                now
+              )
+
+              supervision_group_from_row(get_run_supervision_group_by_id(group_id))
+
+            group ->
+              supervision_group_from_row(group)
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def resolve_supervised_spawn(lease_id, group_id, definition_name, member_key, input) do
+    now = Infrastructure.now_iso8601()
+
+    Infrastructure.transaction_with_busy_retry(fn ->
+      case get_fenced_run_by_lease(lease_id, now) do
+        nil ->
+          nil
+
+        owner_run ->
+          case get_run_supervision_group_for_owner(owner_run["id"], group_id) do
+            nil ->
+              nil
+
+            group ->
+              if group["status"] != "active" do
+                nil
+              else
+                case get_run_supervision_member(group_id, member_key) do
+                  nil ->
+                    ensure_fenced_run_ownership!(owner_run["id"], lease_id, now)
+
+                    definition =
+                      owner_run
+                      |> project_definitions_for_run()
+                      |> definition_from_project_definitions!("workflow", definition_name)
+
+                    member =
+                      create_supervision_member_generation!(
+                        owner_run,
+                        group,
+                        member_key,
+                        definition,
+                        input || %{},
+                        1,
+                        now,
+                        "SupervisionMemberSpawned"
+                      )
+
+                    supervision_member_runtime_state(member)
+
+                  member ->
+                    supervision_member_runtime_state(member)
+                end
+              end
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def resolve_supervision_member_result_wait(lease_id, group_id, member_key, op_key) do
+    now = Infrastructure.now_iso8601()
+    wait_name = supervision_member_wait_name(group_id, member_key)
+
+    Infrastructure.transaction_with_busy_retry(fn ->
+      case get_fenced_run_by_lease(lease_id, now) do
+        nil ->
+          nil
+
+        owner_run ->
+          case supervision_member_result_state(owner_run["id"], group_id, member_key) do
+            nil ->
+              nil
+
+            {:completed, output} ->
+              %{"status" => "completed", "output" => output}
+
+            {:failed, error} ->
+              %{"status" => "failed", "error" => error}
+
+            :waiting ->
+              existing = get_run_wait(owner_run["id"], op_key)
+
+              if existing && existing["status"] == "waiting" do
+                %{
+                  "status" => "suspended",
+                  "wait" => %{
+                    "runId" => owner_run["id"],
+                    "key" => op_key,
+                    "kind" => "supervision_member_result",
+                    "name" => wait_name,
+                    "status" => "waiting",
+                    "wakeAt" => nil,
+                    "output" => nil
+                  }
+                }
+              else
+                SQL.query!(
+                  Repo,
+                  """
+                  insert into run_waits (
+                    run_id,
+                    op_key,
+                    wait_kind,
+                    wait_name,
+                    status,
+                    wake_at,
+                    output_json,
+                    created_at,
+                    updated_at
+                  ) values (?, ?, 'supervision_member_result', ?, 'waiting', null, null, ?, ?)
+                  on conflict(run_id, op_key) do update set
+                    wait_kind = excluded.wait_kind,
+                    wait_name = excluded.wait_name,
+                    status = 'waiting',
+                    wake_at = null,
+                    output_json = null,
+                    updated_at = excluded.updated_at
+                  """,
+                  [owner_run["id"], op_key, wait_name, now, now]
+                )
+
+                maybe_run_storage_test_hook(:supervision_member_wait_registered, %{
+                  "runId" => owner_run["id"],
+                  "groupId" => group_id,
+                  "memberKey" => member_key,
+                  "waitKey" => op_key,
+                  "leaseId" => lease_id
+                })
+
+                case supervision_member_result_state(owner_run["id"], group_id, member_key) do
+                  {:completed, output} ->
+                    SQL.query!(
+                      Repo,
+                      """
+                      update run_waits
+                      set
+                        status = 'completed',
+                        output_json = ?,
+                        updated_at = ?
+                      where run_id = ? and op_key = ?
+                      """,
+                      [Jason.encode!(output), now, owner_run["id"], op_key]
+                    )
+
+                    %{
+                      "status" => "completed",
+                      "wait" => wait_from_row(get_run_wait(owner_run["id"], op_key)),
+                      "output" => output
+                    }
+
+                  {:failed, error} ->
+                    SQL.query!(
+                      Repo,
+                      """
+                      update run_waits
+                      set
+                        status = 'failed',
+                        output_json = ?,
+                        updated_at = ?
+                      where run_id = ? and op_key = ?
+                      """,
+                      [Jason.encode!(error), now, owner_run["id"], op_key]
+                    )
+
+                    %{
+                      "status" => "failed",
+                      "wait" => wait_from_row(get_run_wait(owner_run["id"], op_key)),
+                      "error" => error
+                    }
+
+                  :waiting ->
+                    ensure_fenced_run_write!(
+                      owner_run["id"],
+                      lease_id,
+                      now,
+                      """
+                      update runs
+                      set
+                        status = 'waiting',
+                        lease_id = null,
+                        lease_auth_token = null,
+                        lease_worker_id = null,
+                        lease_expires_at = null,
+                        updated_at = ?
+                      where id = ?
+                      """,
+                      [now, owner_run["id"]]
+                    )
+
+                    append_event!(
+                      owner_run["id"],
+                      "WaitRegistered",
+                      %{
+                        "kind" => "supervision_member_result",
+                        "key" => op_key,
+                        "groupId" => group_id,
+                        "memberKey" => member_key
+                      },
+                      now
+                    )
+
+                    append_event!(
+                      owner_run["id"],
+                      "RunSuspended",
+                      %{
+                        "reason" => "supervision_member_result",
+                        "key" => op_key,
+                        "groupId" => group_id,
+                        "memberKey" => member_key
+                      },
+                      now
+                    )
+
+                    maybe_append_service_turn_waiting!(
+                      owner_run,
+                      %{
+                        "waitKind" => "supervision_member_result",
+                        "key" => op_key,
+                        "name" => wait_name
+                      },
+                      now
+                    )
+
+                    %{
+                      "status" => "suspended",
+                      "wait" => %{
+                        "runId" => owner_run["id"],
+                        "key" => op_key,
+                        "kind" => "supervision_member_result",
+                        "name" => wait_name,
+                        "status" => "waiting",
+                        "wakeAt" => nil,
+                        "output" => nil
+                      }
+                    }
+                end
+              end
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
+  def get_supervision_member_status(lease_id, group_id, member_key) do
+    now = Infrastructure.now_iso8601()
+
+    Repo.transaction(fn ->
+      case get_fenced_run_by_lease(lease_id, now) do
+        nil ->
+          nil
+
+        owner_run ->
+          case get_run_supervision_group_for_owner(owner_run["id"], group_id) do
+            nil ->
+              nil
+
+            _group ->
+              get_run_supervision_member(group_id, member_key)
+              |> supervision_member_runtime_state()
+          end
+      end
+    end)
+    |> unwrap_transaction_result()
+  end
+
   def send_run_signal(run_id, signal_name, payload) do
     now = Infrastructure.now_iso8601()
     signal_id = "sig_" <> Ecto.UUID.generate()
@@ -3043,6 +3375,35 @@ defmodule VilanoKernel.Storage do
       "kind" => row["kind"],
       "propagate" => row["propagate"],
       "status" => row["status"],
+      "createdAt" => row["created_at"],
+      "updatedAt" => row["updated_at"]
+    }
+  end
+
+  defp supervision_group_from_row(row) do
+    %{
+      "id" => row["id"],
+      "ownerRunId" => row["owner_run_id"],
+      "key" => row["op_key"],
+      "strategy" => row["strategy"],
+      "maxRestarts" => row["max_restarts"],
+      "windowMs" => row["window_ms"],
+      "onExhausted" => row["on_exhausted"],
+      "status" => row["status"],
+      "createdAt" => row["created_at"],
+      "updatedAt" => row["updated_at"]
+    }
+  end
+
+  defp supervision_member_from_row(row, status_override) do
+    %{
+      "groupId" => row["group_id"],
+      "key" => row["member_key"],
+      "definitionName" => row["definition_name"],
+      "input" => decode_json_value(row["input_json"], %{}),
+      "currentChildRunId" => row["current_child_run_id"],
+      "generation" => row["generation"],
+      "status" => status_override || row["status"],
       "createdAt" => row["created_at"],
       "updatedAt" => row["updated_at"]
     }
@@ -3351,6 +3712,7 @@ defmodule VilanoKernel.Storage do
 
     append_event!(run["id"], "RunFailed", %{"error" => legacy_run_error()}, now)
     wake_waiting_parents_for_child!(run["id"], "failed", legacy_run_error(), now)
+    maybe_apply_supervision_for_terminal_run!(run["id"], now)
     maybe_trigger_relationships_for_terminal_run!(run["id"], now)
     :ok
   end
@@ -3544,6 +3906,160 @@ defmodule VilanoKernel.Storage do
     |> List.first()
   end
 
+  defp get_run_supervision_group(owner_run_id, op_key) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        id,
+        owner_run_id,
+        op_key,
+        strategy,
+        max_restarts,
+        window_ms,
+        on_exhausted,
+        status,
+        created_at,
+        updated_at
+      from run_supervision_groups
+      where owner_run_id = ? and op_key = ?
+      """,
+      [owner_run_id, op_key]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
+  defp get_run_supervision_group_by_id(group_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        id,
+        owner_run_id,
+        op_key,
+        strategy,
+        max_restarts,
+        window_ms,
+        on_exhausted,
+        status,
+        created_at,
+        updated_at
+      from run_supervision_groups
+      where id = ?
+      """,
+      [group_id]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
+  defp get_run_supervision_group_for_owner(owner_run_id, group_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        id,
+        owner_run_id,
+        op_key,
+        strategy,
+        max_restarts,
+        window_ms,
+        on_exhausted,
+        status,
+        created_at,
+        updated_at
+      from run_supervision_groups
+      where owner_run_id = ? and id = ?
+      """,
+      [owner_run_id, group_id]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
+  defp get_run_supervision_member(group_id, member_key) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        group_id,
+        member_key,
+        definition_name,
+        input_json,
+        current_child_run_id,
+        generation,
+        status,
+        created_at,
+        updated_at
+      from run_supervision_members
+      where group_id = ? and member_key = ?
+      """,
+      [group_id, member_key]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
+  defp get_run_supervision_member_by_child(child_run_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        group_id,
+        member_key,
+        definition_name,
+        input_json,
+        current_child_run_id,
+        generation,
+        status,
+        created_at,
+        updated_at
+      from run_supervision_members
+      where current_child_run_id = ?
+      """,
+      [child_run_id]
+    )
+    |> rows_to_maps()
+    |> List.first()
+  end
+
+  defp list_run_supervision_members(group_id) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        group_id,
+        member_key,
+        definition_name,
+        input_json,
+        current_child_run_id,
+        generation,
+        status,
+        created_at,
+        updated_at
+      from run_supervision_members
+      where group_id = ?
+      order by created_at asc, member_key asc
+      """,
+      [group_id]
+    )
+    |> rows_to_maps()
+  end
+
+  defp count_recent_supervision_restarts(group_id, since_at) do
+    Repo
+    |> SQL.query!(
+      """
+      select count(*)
+      from run_supervision_restarts
+      where group_id = ? and created_at >= ?
+      """,
+      [group_id, since_at]
+    )
+    |> first_integer()
+  end
+
   defp get_run_relationship_by_id(relationship_id) do
     Repo
     |> SQL.query!(
@@ -3653,6 +4169,9 @@ defmodule VilanoKernel.Storage do
     not is_nil(get_run_child_by_child(owner_run_id, target_run_id)) or
       not is_nil(get_run_service_ref(owner_run_id, target_run_id))
   end
+
+  defp supervision_member_wait_name(group_id, member_key),
+    do: group_id <> ":" <> member_key
 
   defp run_trap_exits_value(run_id) do
     Repo
@@ -4154,6 +4673,200 @@ defmodule VilanoKernel.Storage do
     )
   end
 
+  defp create_supervision_member_generation!(
+         owner_run,
+         group,
+         member_key,
+         definition,
+         input,
+         generation,
+         now,
+         event_type
+       ) do
+    child_run_id = "run_" <> Ecto.UUID.generate()
+
+    insert_workflow_run!(
+      child_run_id,
+      project_record_for_run(owner_run),
+      definition,
+      input || %{},
+      now
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      insert into run_children (
+        parent_run_id,
+        op_key,
+        child_run_id,
+        definition_name,
+        status,
+        created_at,
+        updated_at
+      ) values (?, ?, ?, ?, 'pending', ?, ?)
+      """,
+      [
+        owner_run["id"],
+        supervised_child_op_key(group["id"], member_key, generation),
+        child_run_id,
+        Map.fetch!(definition, "name"),
+        now,
+        now
+      ]
+    )
+
+    encoded_input = Jason.encode!(input || %{})
+
+    case get_run_supervision_member(group["id"], member_key) do
+      nil ->
+        SQL.query!(
+          Repo,
+          """
+          insert into run_supervision_members (
+            group_id,
+            member_key,
+            definition_name,
+            input_json,
+            current_child_run_id,
+            generation,
+            status,
+            created_at,
+            updated_at
+          ) values (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+          """,
+          [
+            group["id"],
+            member_key,
+            Map.fetch!(definition, "name"),
+            encoded_input,
+            child_run_id,
+            generation,
+            now,
+            now
+          ]
+        )
+
+      _member ->
+        SQL.query!(
+          Repo,
+          """
+          update run_supervision_members
+          set
+            definition_name = ?,
+            input_json = ?,
+            current_child_run_id = ?,
+            generation = ?,
+            status = 'active',
+            updated_at = ?
+          where group_id = ? and member_key = ?
+          """,
+          [
+            Map.fetch!(definition, "name"),
+            encoded_input,
+            child_run_id,
+            generation,
+            now,
+            group["id"],
+            member_key
+          ]
+        )
+    end
+
+    append_event!(
+      owner_run["id"],
+      event_type,
+      %{
+        "groupId" => group["id"],
+        "memberKey" => member_key,
+        "generation" => generation,
+        "childRunId" => child_run_id,
+        "definitionName" => Map.fetch!(definition, "name"),
+        "input" => input || %{}
+      },
+      now
+    )
+
+    get_run_supervision_member(group["id"], member_key)
+  end
+
+  defp supervised_child_op_key(group_id, member_key, generation) do
+    "supervision:" <> group_id <> ":" <> member_key <> ":" <> Integer.to_string(generation)
+  end
+
+  defp supervision_member_runtime_state(nil), do: nil
+
+  defp supervision_member_runtime_state(member) do
+    status =
+      case member["status"] do
+        "restarting" ->
+          "restarting"
+
+        "completed" ->
+          "completed"
+
+        "failed" ->
+          "failed"
+
+        "exhausted" ->
+          "failed"
+
+        _ ->
+          case member["current_child_run_id"] && get_run(member["current_child_run_id"]) do
+            %{"status" => child_status} -> child_status
+            _ -> member["status"]
+          end
+      end
+
+    supervision_member_from_row(member, status)
+  end
+
+  defp supervision_member_result_state(owner_run_id, group_id, member_key) do
+    case get_run_supervision_group_for_owner(owner_run_id, group_id) do
+      nil ->
+        nil
+
+      _group ->
+        case get_run_supervision_member(group_id, member_key) do
+          nil ->
+            nil
+
+          member ->
+            child_run =
+              if is_binary(member["current_child_run_id"]) do
+                get_run(member["current_child_run_id"])
+              else
+                nil
+              end
+
+            cond do
+              is_map(child_run) and child_run["status"] == "completed" ->
+                {:completed, child_run["output"]}
+
+              is_map(child_run) and child_run["status"] in ["failed", "cancelled"] and
+                  member["status"] in ["failed", "exhausted"] ->
+                {:failed, child_run["error"]}
+
+              member["status"] == "completed" ->
+                {:completed, nil}
+
+              member["status"] in ["failed", "exhausted"] ->
+                {:failed,
+                 %{
+                   "name" => "SupervisionMemberFailed",
+                   "message" => "Supervised member '#{member_key}' failed",
+                   "reason" => "supervision_member_failed",
+                   "groupId" => group_id,
+                   "memberKey" => member_key
+                 }}
+
+              true ->
+                :waiting
+            end
+        end
+    end
+  end
+
   defp fail_workflow_run_instance!(run, error_body, now, lease_id \\ nil) do
     if terminal_run_status?(run["status"]) do
       %{
@@ -4204,6 +4917,7 @@ defmodule VilanoKernel.Storage do
 
       append_event!(run["id"], "RunFailed", %{"error" => error_body}, now)
       wake_waiting_parents_for_child!(run["id"], "failed", error_body, now)
+      maybe_apply_supervision_for_terminal_run!(run["id"], now)
       maybe_trigger_relationships_for_terminal_run!(run["id"], now)
 
       %{
@@ -4267,6 +4981,7 @@ defmodule VilanoKernel.Storage do
       )
 
       wake_waiting_parents_for_child!(run["id"], "cancelled", error_body, now)
+      maybe_apply_supervision_for_terminal_run!(run["id"], now)
       maybe_trigger_relationships_for_terminal_run!(run["id"], now)
 
       %{
@@ -6038,6 +6753,345 @@ defmodule VilanoKernel.Storage do
     |> unwrap_transaction_result()
   end
 
+  defp maybe_apply_supervision_for_terminal_run!(run_id, now) do
+    case get_run_supervision_member_by_child(run_id) do
+      nil ->
+        :ok
+
+      member ->
+        case {get_run_supervision_group_by_id(member["group_id"]), get_run(run_id)} do
+          {nil, _} ->
+            :ok
+
+          {_, nil} ->
+            :ok
+
+          {group, child_run} ->
+            case get_run_for_inspect(group["owner_run_id"]) do
+              nil ->
+                :ok
+
+              owner_run ->
+                if group["status"] != "active" or terminal_run_status?(owner_run["status"]) or
+                     member["current_child_run_id"] != run_id or
+                     not terminal_run_status?(child_run["status"]) do
+                  :ok
+                else
+                  apply_supervision_policy!(owner_run, group, member, child_run, now)
+                end
+            end
+        end
+    end
+  end
+
+  defp apply_supervision_policy!(owner_run, group, member, child_run, now) do
+    cond do
+      child_run["status"] == "completed" ->
+        SQL.query!(
+          Repo,
+          """
+          update run_supervision_members
+          set
+            status = 'completed',
+            updated_at = ?
+          where group_id = ? and member_key = ?
+          """,
+          [now, group["id"], member["member_key"]]
+        )
+
+        append_event!(
+          owner_run["id"],
+          "SupervisionMemberCompleted",
+          %{
+            "groupId" => group["id"],
+            "memberKey" => member["member_key"],
+            "childRunId" => child_run["id"],
+            "generation" => member["generation"],
+            "output" => child_run["output"]
+          },
+          now
+        )
+
+        wake_waiting_supervision_member_results!(
+          group["id"],
+          member["member_key"],
+          "completed",
+          child_run["output"],
+          now
+        )
+
+      abnormal_terminal_status?(child_run["status"]) and supervision_restart_allowed?(group, now) ->
+        record_supervision_restart!(group["id"], member["member_key"], child_run["id"], now)
+
+        case group["strategy"] do
+          "one_for_all" ->
+            restart_supervision_group_members!(owner_run, group, member, child_run, now)
+
+          _ ->
+            restart_supervision_member!(owner_run, group, member, now)
+        end
+
+      abnormal_terminal_status?(child_run["status"]) ->
+        exhaust_supervision_group!(owner_run, group, member, child_run, now)
+
+      true ->
+        :ok
+    end
+  end
+
+  defp supervision_restart_allowed?(group, now) do
+    count_recent_supervision_restarts(group["id"], shift_milliseconds(now, -group["window_ms"])) <
+      group["max_restarts"]
+  end
+
+  defp record_supervision_restart!(group_id, member_key, child_run_id, now) do
+    SQL.query!(
+      Repo,
+      """
+      insert into run_supervision_restarts (
+        id,
+        group_id,
+        member_key,
+        child_run_id,
+        created_at
+      ) values (?, ?, ?, ?, ?)
+      on conflict(child_run_id) do nothing
+      """,
+      ["supr_" <> Ecto.UUID.generate(), group_id, member_key, child_run_id, now]
+    )
+
+    :ok
+  end
+
+  defp restart_supervision_member!(owner_run, group, member, now) do
+    SQL.query!(
+      Repo,
+      """
+      update run_supervision_members
+      set
+        current_child_run_id = null,
+        status = 'restarting',
+        updated_at = ?
+      where group_id = ? and member_key = ?
+      """,
+      [now, group["id"], member["member_key"]]
+    )
+
+    definition =
+      owner_run
+      |> project_definitions_for_run()
+      |> definition_from_project_definitions!("workflow", member["definition_name"])
+
+    _ =
+      create_supervision_member_generation!(
+        owner_run,
+        group,
+        member["member_key"],
+        definition,
+        decode_json_value(member["input_json"], %{}),
+        member["generation"] + 1,
+        now,
+        "SupervisionMemberRestarted"
+      )
+
+    :ok
+  end
+
+  defp restart_supervision_group_members!(owner_run, group, triggering_member, child_run, now) do
+    members =
+      group["id"]
+      |> list_run_supervision_members()
+      |> Enum.filter(&member_selected_for_one_for_all_restart?(&1, triggering_member))
+
+    Enum.each(members, fn member ->
+      SQL.query!(
+        Repo,
+        """
+        update run_supervision_members
+        set
+          current_child_run_id = null,
+          status = 'restarting',
+          updated_at = ?
+        where group_id = ? and member_key = ?
+        """,
+        [now, group["id"], member["member_key"]]
+      )
+    end)
+
+    append_event!(
+      owner_run["id"],
+      "SupervisionGroupRestarting",
+      %{
+        "groupId" => group["id"],
+        "strategy" => group["strategy"],
+        "triggeringMemberKey" => triggering_member["member_key"],
+        "triggeringChildRunId" => child_run["id"],
+        "memberKeys" => Enum.map(members, & &1["member_key"])
+      },
+      now
+    )
+
+    Enum.each(members, fn member ->
+      if member["current_child_run_id"] != child_run["id"] and
+           is_binary(member["current_child_run_id"]) do
+        case get_run(member["current_child_run_id"]) do
+          nil ->
+            :ok
+
+          sibling_run ->
+            unless terminal_run_status?(sibling_run["status"]) do
+              _ =
+                cancel_workflow_run_instance!(
+                  sibling_run,
+                  supervision_restart_error(group, triggering_member, child_run),
+                  "supervision_restart",
+                  now
+                )
+
+              :ok
+            end
+        end
+      end
+    end)
+
+    Enum.each(members, fn member ->
+      definition =
+        owner_run
+        |> project_definitions_for_run()
+        |> definition_from_project_definitions!("workflow", member["definition_name"])
+
+      _ =
+        create_supervision_member_generation!(
+          owner_run,
+          group,
+          member["member_key"],
+          definition,
+          decode_json_value(member["input_json"], %{}),
+          member["generation"] + 1,
+          now,
+          "SupervisionMemberRestarted"
+        )
+
+      :ok
+    end)
+
+    :ok
+  end
+
+  defp member_selected_for_one_for_all_restart?(member, triggering_member) do
+    member["member_key"] == triggering_member["member_key"] or
+      (is_binary(member["current_child_run_id"]) and
+         case get_run(member["current_child_run_id"]) do
+           nil -> false
+           child_run -> not terminal_run_status?(child_run["status"])
+         end)
+  end
+
+  defp exhaust_supervision_group!(owner_run, group, member, child_run, now) do
+    error_body = supervision_exhausted_error(group, member, child_run)
+
+    SQL.query!(
+      Repo,
+      """
+      update run_supervision_groups
+      set
+        status = 'exhausted',
+        updated_at = ?
+      where id = ?
+      """,
+      [now, group["id"]]
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      update run_supervision_members
+      set
+        status = 'exhausted',
+        updated_at = ?
+      where group_id = ?
+      """,
+      [now, group["id"]]
+    )
+
+    append_event!(
+      owner_run["id"],
+      "SupervisionGroupExhausted",
+      %{
+        "groupId" => group["id"],
+        "strategy" => group["strategy"],
+        "memberKey" => member["member_key"],
+        "childRunId" => child_run["id"],
+        "error" => error_body
+      },
+      now
+    )
+
+    Enum.each(list_run_supervision_members(group["id"]), fn current_member ->
+      if current_member["member_key"] != member["member_key"] and
+           is_binary(current_member["current_child_run_id"]) do
+        case get_run(current_member["current_child_run_id"]) do
+          nil ->
+            :ok
+
+          open_child ->
+            unless terminal_run_status?(open_child["status"]) do
+              _ =
+                cancel_workflow_run_instance!(
+                  open_child,
+                  error_body,
+                  "supervision_exhausted",
+                  now
+                )
+            end
+        end
+      end
+    end)
+
+    case group["on_exhausted"] do
+      "fail_self" ->
+        case owner_run["definitionKind"] do
+          "service" ->
+            stop_service_run_instance!(owner_run, error_body, "supervision_exhausted", now)
+
+          _ ->
+            fail_workflow_run_instance!(owner_run, error_body, now)
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp supervision_restart_error(group, member, child_run) do
+    %{
+      "name" => "SupervisionRestartError",
+      "message" =>
+        "Supervision group '#{group["id"]}' restarted after member '#{member["member_key"]}' exited with status #{child_run["status"]}",
+      "reason" => "supervision_restart",
+      "groupId" => group["id"],
+      "memberKey" => member["member_key"],
+      "childRunId" => child_run["id"],
+      "childStatus" => child_run["status"]
+    }
+  end
+
+  defp supervision_exhausted_error(group, member, child_run) do
+    %{
+      "name" => "SupervisionExhaustedError",
+      "message" =>
+        "Supervision group '#{group["id"]}' exhausted its restart budget after member '#{member["member_key"]}' exited with status #{child_run["status"]}",
+      "reason" => "supervision_exhausted",
+      "groupId" => group["id"],
+      "strategy" => group["strategy"],
+      "memberKey" => member["member_key"],
+      "childRunId" => child_run["id"],
+      "childStatus" => child_run["status"],
+      "maxRestarts" => group["max_restarts"],
+      "windowMs" => group["window_ms"]
+    }
+  end
+
   defp maybe_trigger_relationships_for_terminal_run!(run_id, now) do
     case get_run_for_inspect(run_id) do
       nil ->
@@ -6326,6 +7380,74 @@ defmodule VilanoKernel.Storage do
           "key" => wait["op_key"],
           "childRunId" => child_run_id,
           "childStatus" => child_status,
+          "payload" => payload
+        },
+        now
+      )
+    end)
+  end
+
+  defp wake_waiting_supervision_member_results!(group_id, member_key, result_status, payload, now) do
+    wait_name = supervision_member_wait_name(group_id, member_key)
+
+    waiting_rows =
+      Repo
+      |> SQL.query!(
+        """
+        select
+          run_id,
+          op_key,
+          wait_kind,
+          wait_name,
+          status,
+          wake_at,
+          output_json,
+          created_at,
+          updated_at
+        from run_waits
+        where wait_kind = 'supervision_member_result' and wait_name = ? and status = 'waiting'
+        """,
+        [wait_name]
+      )
+      |> rows_to_maps()
+
+    Enum.each(waiting_rows, fn wait ->
+      wait_row_status = if result_status == "completed", do: "completed", else: "failed"
+
+      SQL.query!(
+        Repo,
+        """
+        update run_waits
+        set
+          status = ?,
+          output_json = ?,
+          updated_at = ?
+        where run_id = ? and op_key = ?
+        """,
+        [wait_row_status, Jason.encode!(payload), now, wait["run_id"], wait["op_key"]]
+      )
+
+      SQL.query!(
+        Repo,
+        """
+        update runs
+        set
+          status = 'pending',
+          updated_at = ?
+        where id = ? and status = 'waiting'
+        """,
+        [now, wait["run_id"]]
+      )
+
+      append_event!(
+        wait["run_id"],
+        "WaitSatisfied",
+        %{
+          "kind" => "supervision_member_result",
+          "key" => wait["op_key"],
+          "groupId" => group_id,
+          "memberKey" => member_key,
+          "status" => result_status,
           "payload" => payload
         },
         now

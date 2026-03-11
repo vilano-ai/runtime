@@ -923,6 +923,189 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/leases/{leaseId}/supervision/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve or create a durable supervision group for the active run. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        key: string;
+                        /** @enum {string} */
+                        strategy: "one_for_one" | "one_for_all";
+                        maxRestarts: number;
+                        windowMs: number;
+                        /** @enum {string} */
+                        onExhausted?: "fail_self";
+                    };
+                };
+            };
+            responses: {
+                /** @description Supervision group state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SupervisionGroupResolveResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/supervision/groups/{groupId}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve or create a logical supervised workflow member. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    groupId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        key: string;
+                        input: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Supervision member state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SupervisionMemberResolveResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/supervision/groups/{groupId}/members/{memberKey}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve or suspend on a logical supervised member result. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    groupId: string;
+                    memberKey: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        key: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Supervision member result state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SupervisionMemberResultResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/supervision/groups/{groupId}/members/{memberKey}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect a logical supervised member from the active lease context. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    groupId: string;
+                    memberKey: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Supervision member state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SupervisionMemberResolveResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/leases/{leaseId}/spawns/resolve": {
         parameters: {
             query?: never;
@@ -1542,6 +1725,50 @@ export interface components {
             /** @constant */
             ok: true;
             relationship: components["schemas"]["RelationshipRef"];
+        };
+        SupervisionGroupRef: {
+            id: string;
+            /** @enum {unknown} */
+            strategy: "one_for_one" | "one_for_all";
+            maxRestarts: number;
+            windowMs: number;
+            /** @enum {unknown} */
+            onExhausted: "fail_self";
+            status: string;
+        };
+        SupervisionGroupResolveResponse: {
+            /** @constant */
+            ok: true;
+            group: components["schemas"]["SupervisionGroupRef"];
+        };
+        SupervisionMemberRef: {
+            groupId: string;
+            key: string;
+            currentChildRunId?: string | null;
+            generation: number;
+            status: string;
+        };
+        SupervisionMemberResolveResponse: {
+            /** @constant */
+            ok: true;
+            member: components["schemas"]["SupervisionMemberRef"];
+        };
+        SupervisionMemberCompleted: {
+            /** @constant */
+            status: "completed";
+            output: unknown;
+            wait?: components["schemas"]["WaitRef"];
+        };
+        SupervisionMemberFailed: {
+            /** @constant */
+            status: "failed";
+            error: unknown;
+            wait?: components["schemas"]["WaitRef"];
+        };
+        SupervisionMemberResultResponse: {
+            /** @constant */
+            ok: true;
+            member: components["schemas"]["SupervisionMemberCompleted"] | components["schemas"]["SupervisionMemberFailed"] | components["schemas"]["WaitSuspended"];
         };
         ServiceRunResponse: {
             /** @constant */

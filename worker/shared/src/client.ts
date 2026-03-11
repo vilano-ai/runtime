@@ -51,6 +51,48 @@ type ServiceRunResponse = WorkerComponents["schemas"]["ServiceRunResponse"];
 type ServiceCallResolveResponse = WorkerComponents["schemas"]["ServiceCallResolveResponse"];
 type ServiceTurnFailResponse = WorkerComponents["schemas"]["ServiceTurnFailResponse"];
 
+interface SupervisionGroupResolveResponse {
+  ok: true;
+  group: {
+    id: string;
+    strategy: "one_for_one" | "one_for_all";
+    maxRestarts: number;
+    windowMs: number;
+    onExhausted: "fail_self";
+    status: string;
+  };
+}
+
+interface SupervisionMemberResolveResponse {
+  ok: true;
+  member: {
+    groupId: string;
+    key: string;
+    currentChildRunId: string | null;
+    generation: number;
+    status: string;
+  };
+}
+
+interface SupervisionMemberResultResponse {
+  ok: true;
+  member:
+    | {
+        status: "completed";
+        output: unknown;
+        wait?: WaitResolveResponse["wait"];
+      }
+    | {
+        status: "failed";
+        error: unknown;
+        wait?: WaitResolveResponse["wait"];
+      }
+    | {
+        status: "suspended";
+        wait: WaitResolveResponse["wait"];
+      };
+}
+
 interface TrapExitsResponse {
   ok: true;
   run: {
@@ -331,6 +373,72 @@ export class WorkerClient {
     );
 
     return response.spawn;
+  }
+
+  async resolveSupervisionGroup(
+    leaseId: string,
+    spec: {
+      key: string;
+      strategy: "one_for_one" | "one_for_all";
+      maxRestarts: number;
+      windowMs: number;
+      onExhausted?: "fail_self";
+    }
+  ): Promise<SupervisionGroupResolveResponse["group"]> {
+    const response = await this.request<SupervisionGroupResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/supervision/groups`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.group;
+  }
+
+  async resolveSupervisionMember(
+    leaseId: string,
+    groupId: string,
+    spec: { name: string; key: string; input: unknown }
+  ): Promise<SupervisionMemberResolveResponse["member"]> {
+    const response = await this.request<SupervisionMemberResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/supervision/groups/${encodeURIComponent(groupId)}/members`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.member;
+  }
+
+  async resolveSupervisionMemberResult(
+    leaseId: string,
+    groupId: string,
+    memberKey: string,
+    spec: { key: string }
+  ): Promise<SupervisionMemberResultResponse["member"]> {
+    const response = await this.request<SupervisionMemberResultResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/supervision/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(memberKey)}/result`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.member;
+  }
+
+  async getSupervisionMemberStatus(
+    leaseId: string,
+    groupId: string,
+    memberKey: string
+  ): Promise<SupervisionMemberResolveResponse["member"]> {
+    const response = await this.request<SupervisionMemberResolveResponse>(
+      "GET",
+      `/v1/leases/${encodeURIComponent(leaseId)}/supervision/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(memberKey)}/status`,
+      undefined,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.member;
   }
 
   async resolveChildResult(

@@ -551,6 +551,7 @@ export class RunSuspendedError extends Error {
     | "signal"
     | "exit"
     | "child_result"
+    | "supervision_member_result"
     | "ask_reply"
     | "retry_backoff";
   readonly key: string;
@@ -561,6 +562,7 @@ export class RunSuspendedError extends Error {
       | "signal"
       | "exit"
       | "child_result"
+      | "supervision_member_result"
       | "ask_reply"
       | "retry_backoff",
     key: string

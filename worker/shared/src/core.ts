@@ -14,6 +14,10 @@ import type {
   MonitorOptions,
   RelationshipRef,
   RunStatus,
+  SupervisedSpawnOptions,
+  SupervisedWorkflowHandle,
+  SupervisionMemberStatus,
+  SuperviseOptions,
   ServiceDefinition,
   ServiceRef,
   SignalOptions,
@@ -21,6 +25,7 @@ import type {
   SpawnOptions,
   StepContext,
   StepOptions,
+  WorkflowSupervisionGroup,
   WorkflowHandle,
   WorkflowContext,
   WorkflowDefinition,
@@ -609,6 +614,129 @@ function createTurnContext(
 
       throw new RunSuspendedError("signal", key);
     },
+    async supervise(options: SuperviseOptions): Promise<WorkflowSupervisionGroup> {
+      const key = scopeActivationOpKey(
+        activation,
+        nextImplicitActivationOpKey(
+          implicitActivationOpCounters,
+          "supervise",
+          options.strategy,
+          options.key
+        )
+      );
+      const windowMs = parseDurationToMs(options.window);
+      if (windowMs === undefined || windowMs <= 0) {
+        throw new Error("ctx.supervise() requires a positive window duration");
+      }
+
+      const group = await client.resolveSupervisionGroup(activation.leaseId, {
+        key,
+        strategy: options.strategy,
+        maxRestarts: options.maxRestarts,
+        windowMs,
+        onExhausted: options.onExhausted,
+      });
+      const implicitGroupMemberCounters = new Map<string, number>();
+
+      return {
+        id: group.id,
+        strategy: group.strategy,
+        maxRestarts: group.maxRestarts,
+        windowMs: group.windowMs,
+        onExhausted: group.onExhausted,
+        async spawn<TInput, TOutput>(
+          definition: WorkflowDefinition<TInput, TOutput>,
+          input: TInput,
+          spawnOptions: SupervisedSpawnOptions = {}
+        ): Promise<SupervisedWorkflowHandle<TOutput>> {
+          const memberKey = nextImplicitSupervisionMemberKey(
+            implicitGroupMemberCounters,
+            definition.name,
+            spawnOptions.key
+          );
+          const member = await client.resolveSupervisionMember(activation.leaseId, group.id, {
+            name: definition.name,
+            key: memberKey,
+            input,
+          });
+          const resultKey = scopeActivationOpKey(
+            activation,
+            nextImplicitActivationOpKey(
+              implicitActivationOpCounters,
+              "supervision_member_result",
+              `${group.id}:${member.key}`
+            )
+          );
+
+          return {
+            groupId: group.id,
+            key: member.key,
+            async result() {
+              const resolved = await client.resolveSupervisionMemberResult(
+                activation.leaseId,
+                group.id,
+                member.key,
+                { key: resultKey }
+              );
+
+              if (resolved.status === "completed") {
+                return resolved.output as TOutput;
+              }
+
+              if (resolved.status === "failed") {
+                throw toChildRunError(
+                  `${group.id}:${member.key}`,
+                  "error" in resolved ? resolved.error : null
+                );
+              }
+
+              throw new RunSuspendedError(
+                "supervision_member_result",
+                `supervision_member_result:${group.id}:${member.key}`
+              );
+            },
+            async status() {
+              const current = await client.getSupervisionMemberStatus(
+                activation.leaseId,
+                group.id,
+                member.key
+              );
+
+              return current.status as SupervisionMemberStatus;
+            },
+            async currentRunId() {
+              const current = await client.getSupervisionMemberStatus(
+                activation.leaseId,
+                group.id,
+                member.key
+              );
+
+              return current.currentChildRunId ?? null;
+            },
+            async signal(name: string, payload?: unknown) {
+              const current = await client.getSupervisionMemberStatus(
+                activation.leaseId,
+                group.id,
+                member.key
+              );
+
+              if (!current.currentChildRunId) {
+                throw new Error(
+                  `Supervised member '${member.key}' has no active child run to signal`
+                );
+              }
+
+              await client.sendChildRunSignal(
+                activation.leaseId,
+                current.currentChildRunId,
+                name,
+                payload ?? null
+              );
+            },
+          };
+        },
+      };
+    },
     async trapExit(enabled = true) {
       await client.setTrapExits(activation.leaseId, enabled);
     },
@@ -917,7 +1045,9 @@ function nextImplicitActivationOpKey(
     | "wait_for_signal"
     | "monitor"
     | "link"
-    | "next_exit",
+    | "next_exit"
+    | "supervise"
+    | "supervision_member_result",
   name: string,
   explicitKey?: string
 ): string {
@@ -929,6 +1059,20 @@ function nextImplicitActivationOpKey(
   const nextCount = (counters.get(counterKey) ?? 0) + 1;
   counters.set(counterKey, nextCount);
   return `${opKind}:${name}:${nextCount}`;
+}
+
+function nextImplicitSupervisionMemberKey(
+  counters: Map<string, number>,
+  definitionName: string,
+  explicitKey?: string
+): string {
+  if (explicitKey) {
+    return explicitKey;
+  }
+
+  const nextCount = (counters.get(definitionName) ?? 0) + 1;
+  counters.set(definitionName, nextCount);
+  return `member:${definitionName}:${nextCount}`;
 }
 
 function createStepController(

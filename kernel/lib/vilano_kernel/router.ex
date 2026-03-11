@@ -616,6 +616,102 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  post "/v1/leases/:lease_id/supervision/groups" do
+    key = fetch_required_string(conn.body_params, "key")
+    strategy = fetch_required_string(conn.body_params, "strategy")
+    max_restarts = fetch_required_integer(conn.body_params, "maxRestarts")
+    window_ms = fetch_required_integer(conn.body_params, "windowMs")
+    on_exhausted = Map.get(conn.body_params, "onExhausted", "fail_self")
+
+    cond do
+      strategy not in ["one_for_one", "one_for_all"] ->
+        send_error(conn, 400, "invalid_argument", "Unsupported supervision strategy: #{strategy}")
+
+      on_exhausted not in ["fail_self"] ->
+        send_error(
+          conn,
+          400,
+          "invalid_argument",
+          "Unsupported supervision exhaustion policy: #{on_exhausted}"
+        )
+
+      max_restarts < 0 ->
+        send_error(conn, 400, "invalid_argument", "maxRestarts must be >= 0")
+
+      window_ms <= 0 ->
+        send_error(conn, 400, "invalid_argument", "windowMs must be > 0")
+
+      true ->
+        case Storage.resolve_supervision_group(
+               lease_id,
+               key,
+               strategy,
+               max_restarts,
+               window_ms,
+               on_exhausted
+             ) do
+          nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+          group -> send_json(conn, 200, %{ok: true, group: group})
+        end
+    end
+  end
+
+  post "/v1/leases/:lease_id/supervision/groups/:group_id/members" do
+    name = fetch_required_string(conn.body_params, "name")
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.resolve_supervised_spawn(
+           lease_id,
+           group_id,
+           name,
+           key,
+           Map.get(conn.body_params, "input", %{})
+         ) do
+      nil ->
+        send_error(
+          conn,
+          404,
+          "not_found",
+          "Unknown active lease or supervision group: #{group_id}"
+        )
+
+      member ->
+        send_json(conn, 200, %{ok: true, member: member})
+    end
+  end
+
+  post "/v1/leases/:lease_id/supervision/groups/:group_id/members/:member_key/result" do
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.resolve_supervision_member_result_wait(lease_id, group_id, member_key, key) do
+      nil ->
+        send_error(
+          conn,
+          404,
+          "not_found",
+          "Unknown active lease or supervision member: #{group_id}/#{member_key}"
+        )
+
+      member ->
+        send_json(conn, 200, %{ok: true, member: member})
+    end
+  end
+
+  get "/v1/leases/:lease_id/supervision/groups/:group_id/members/:member_key/status" do
+    case Storage.get_supervision_member_status(lease_id, group_id, member_key) do
+      nil ->
+        send_error(
+          conn,
+          404,
+          "not_found",
+          "Unknown active lease or supervision member: #{group_id}/#{member_key}"
+        )
+
+      member ->
+        send_json(conn, 200, %{ok: true, member: member})
+    end
+  end
+
   post "/v1/leases/:lease_id/spawns/resolve" do
     name = fetch_required_string(conn.body_params, "name")
     key = fetch_required_string(conn.body_params, "key")

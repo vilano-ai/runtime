@@ -7,6 +7,7 @@ defmodule VilanoKernel.Storage.Migrations do
   alias VilanoKernel.Storage.Migrations.{
     AddRunLeaseAuthToken,
     AddRunRelationshipsAndExitEvents,
+    AddRunSupervisionGroups,
     AddRunStepRetryColumns,
     AddRunSnapshotsAndProjectSnapshots,
     AddServiceEnvelopeAttemptColumn,
@@ -27,7 +28,8 @@ defmodule VilanoKernel.Storage.Migrations do
     AddRunLeaseAuthToken,
     FailUnpinnedRuns,
     AddRunEventsUniqueIndex,
-    AddRunRelationshipsAndExitEvents
+    AddRunRelationshipsAndExitEvents,
+    AddRunSupervisionGroups
   ]
 
   def ensure_tracking_table! do

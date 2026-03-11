@@ -414,6 +414,81 @@ components:
           const: true
         relationship:
           $ref: '#/components/schemas/RelationshipRef'
+    SupervisionGroupRef:
+      type: object
+      required: [id, strategy, maxRestarts, windowMs, onExhausted, status]
+      properties:
+        id:
+          type: string
+        strategy:
+          enum: [one_for_one, one_for_all]
+        maxRestarts:
+          type: integer
+        windowMs:
+          type: integer
+        onExhausted:
+          enum: [fail_self]
+        status:
+          type: string
+    SupervisionGroupResolveResponse:
+      type: object
+      required: [ok, group]
+      properties:
+        ok:
+          const: true
+        group:
+          $ref: '#/components/schemas/SupervisionGroupRef'
+    SupervisionMemberRef:
+      type: object
+      required: [groupId, key, generation, status]
+      properties:
+        groupId:
+          type: string
+        key:
+          type: string
+        currentChildRunId:
+          type: [string, 'null']
+        generation:
+          type: integer
+        status:
+          type: string
+    SupervisionMemberResolveResponse:
+      type: object
+      required: [ok, member]
+      properties:
+        ok:
+          const: true
+        member:
+          $ref: '#/components/schemas/SupervisionMemberRef'
+    SupervisionMemberCompleted:
+      type: object
+      required: [status, output]
+      properties:
+        status:
+          const: completed
+        output: {}
+        wait:
+          $ref: '#/components/schemas/WaitRef'
+    SupervisionMemberFailed:
+      type: object
+      required: [status, error]
+      properties:
+        status:
+          const: failed
+        error: {}
+        wait:
+          $ref: '#/components/schemas/WaitRef'
+    SupervisionMemberResultResponse:
+      type: object
+      required: [ok, member]
+      properties:
+        ok:
+          const: true
+        member:
+          oneOf:
+            - $ref: '#/components/schemas/SupervisionMemberCompleted'
+            - $ref: '#/components/schemas/SupervisionMemberFailed'
+            - $ref: '#/components/schemas/WaitSuspended'
     ServiceRunResponse:
       type: object
       required: [ok, run]
@@ -1100,6 +1175,138 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/WaitResolveResponse'
+  /v1/leases/{leaseId}/supervision/groups:
+    post:
+      summary: Resolve or create a durable supervision group for the active run.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, strategy, maxRestarts, windowMs]
+              properties:
+                key:
+                  type: string
+                strategy:
+                  type: string
+                  enum: [one_for_one, one_for_all]
+                maxRestarts:
+                  type: integer
+                windowMs:
+                  type: integer
+                onExhausted:
+                  type: string
+                  enum: [fail_self]
+      responses:
+        '200':
+          description: Supervision group state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupervisionGroupResolveResponse'
+  /v1/leases/{leaseId}/supervision/groups/{groupId}/members:
+    post:
+      summary: Resolve or create a logical supervised workflow member.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: groupId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, key, input]
+              properties:
+                name:
+                  type: string
+                key:
+                  type: string
+                input: {}
+      responses:
+        '200':
+          description: Supervision member state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupervisionMemberResolveResponse'
+  /v1/leases/{leaseId}/supervision/groups/{groupId}/members/{memberKey}/result:
+    post:
+      summary: Resolve or suspend on a logical supervised member result.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: groupId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: memberKey
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key:
+                  type: string
+      responses:
+        '200':
+          description: Supervision member result state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupervisionMemberResultResponse'
+  /v1/leases/{leaseId}/supervision/groups/{groupId}/members/{memberKey}/status:
+    get:
+      summary: Inspect a logical supervised member from the active lease context.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: groupId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: memberKey
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Supervision member state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupervisionMemberResolveResponse'
   /v1/leases/{leaseId}/spawns/resolve:
     post:
       summary: Resolve or create a child workflow run.

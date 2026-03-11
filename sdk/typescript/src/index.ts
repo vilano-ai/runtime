@@ -105,7 +105,23 @@ export interface LinkOptions {
   propagate?: "abnormal" | "all";
 }
 
+export type SupervisionStrategy = "one_for_one" | "one_for_all";
+export type SupervisionOnExhausted = "fail_self";
+
+export interface SuperviseOptions {
+  key?: string;
+  strategy: SupervisionStrategy;
+  maxRestarts: number;
+  window: string;
+  onExhausted?: SupervisionOnExhausted;
+}
+
+export interface SupervisedSpawnOptions {
+  key?: string;
+}
+
 export type ExitStatus = "completed" | "failed" | "cancelled" | "stopped";
+export type SupervisionMemberStatus = RunStatus | "restarting";
 
 export interface ExitEvent {
   targetId: string;
@@ -132,6 +148,28 @@ export interface WorkflowHandle<TOutput> {
   link(options?: LinkOptions): Promise<RelationshipRef>;
 }
 
+export interface WorkflowSupervisionGroup {
+  readonly id: string;
+  readonly strategy: SupervisionStrategy;
+  readonly maxRestarts: number;
+  readonly windowMs: number;
+  readonly onExhausted: SupervisionOnExhausted;
+  spawn<TInput, TOutput>(
+    definition: WorkflowDefinition<TInput, TOutput>,
+    input: TInput,
+    options?: SupervisedSpawnOptions
+  ): Promise<SupervisedWorkflowHandle<TOutput>>;
+}
+
+export interface SupervisedWorkflowHandle<TOutput> {
+  readonly groupId: string;
+  readonly key: string;
+  result(): Promise<TOutput>;
+  status(): Promise<SupervisionMemberStatus>;
+  currentRunId(): Promise<string | null>;
+  signal(name: string, payload?: unknown, options?: SignalOptions): Promise<void>;
+}
+
 export type SendResult<TState> = void | { state?: TState; stop?: true };
 export type AskResult<TState, TReply> = { reply: TReply; state?: TState; stop?: true };
 export type SignalResult<TState> = void | { state?: TState; stop?: true };
@@ -147,6 +185,7 @@ export interface ServiceTurnContext {
   exec<TOutput = ExecResult>(spec: ExecSpec<TOutput>): Promise<TOutput>;
   sleep(duration: string, options?: { key?: string }): Promise<void>;
   waitForSignal(name: string, options?: { key?: string }): Promise<unknown>;
+  supervise(options: SuperviseOptions): Promise<WorkflowSupervisionGroup>;
   trapExit(enabled?: boolean): Promise<void>;
   nextExit(options?: { key?: string }): Promise<ExitEvent>;
   log(message: string, fields?: Record<string, unknown>): Promise<void>;

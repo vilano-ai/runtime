@@ -188,6 +188,38 @@
       },
       {
         "kind": "workflow",
+        "name": "supervisedFlakyChild",
+        "exportName": "supervisedFlakyChild",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "supervisionExhaustionCoordinator",
+        "exportName": "supervisionExhaustionCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "supervisionOneForAllCoordinator",
+        "exportName": "supervisionOneForAllCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "supervisionOneForOneCoordinator",
+        "exportName": "supervisionOneForOneCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "reviewCoordinator",
         "exportName": "reviewCoordinator",
         "file": "src/definitions.ts",
