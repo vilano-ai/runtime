@@ -32,6 +32,21 @@ export function renderRun(run: RunRecord): string {
     lines.push(`state: ${JSON.stringify(run.state)}`);
   }
 
+  if (run.passivation) {
+    lines.push(`passivation_state: ${run.passivation.state}`);
+
+    if (run.passivation.reason) {
+      lines.push(`passivation_reason: ${run.passivation.reason}`);
+    }
+
+    lines.push(`wake_on: ${run.passivation.wakeOn.join(",") || "none"}`);
+    lines.push(`queued_messages: ${run.passivation.queuedMessages}`);
+
+    if (run.passivation.nextWakeAt) {
+      lines.push(`next_wake_at: ${run.passivation.nextWakeAt}`);
+    }
+  }
+
   return lines.join("\n");
 }
 
@@ -77,7 +92,7 @@ export function renderServiceRunList(
     header,
     ...runs.map(
       (run) =>
-        `${run.id}\t${run.project}/${run.definitionName}\tservice_key=${run.serviceKey ?? "unknown"}\tstatus=${run.status}\tupdated_at=${run.updatedAt}`
+        `${run.id}\t${run.project}/${run.definitionName}\tservice_key=${run.serviceKey ?? "unknown"}\tstatus=${run.status}${run.passivation ? `\tpassivation=${run.passivation.state}` : ""}\tupdated_at=${run.updatedAt}`
     ),
   ].join("\n");
 }

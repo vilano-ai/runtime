@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { expect, test } from "bun:test";
 
+import { validateProjectDefinitionsIdentity } from "../cli/src/project-definition-validation.ts";
 import { buildProjectManifest } from "../cli/src/registry.ts";
 import { writeExplicitProjectManifest } from "../cli/src/project-manifest.ts";
 
@@ -241,7 +242,158 @@ test("explicit manifests must reference files that exist", async () => {
   }
 });
 
-test("project init-manifest writes an explicit vilano.manifest.json contract", async () => {
+test("registration identity validation imports project definitions", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-manifest-registration-import-"));
+  const markerPath = path.join(projectDir, "registration-imported.txt");
+
+  try {
+    await fs.mkdir(path.join(projectDir, "src"), { recursive: true });
+    await fs.writeFile(
+      path.join(projectDir, "src", "definitions.ts"),
+      [
+        "import fs from 'node:fs';",
+        `fs.writeFileSync(${JSON.stringify(markerPath)}, 'imported');`,
+        "",
+        "export const importVerifiedWorkflow = {",
+        "  kind: 'workflow',",
+        "  name: 'importVerifiedWorkflow',",
+        "};",
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(projectDir, "vilano.manifest.json"),
+      `${JSON.stringify(
+        {
+          manifestVersion: 1,
+          definitions: {
+            workflows: [
+              {
+                kind: "workflow",
+                name: "importVerifiedWorkflow",
+                exportName: "importVerifiedWorkflow",
+                file: "src/definitions.ts",
+                runtimeKind: "javascript",
+                sourceLanguage: "typescript",
+              },
+            ],
+            services: [],
+          },
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    const manifest = await buildProjectManifest("demo", projectDir, { regenerate: true });
+    await validateProjectDefinitionsIdentity(projectDir, manifest.definitions.workflows);
+
+    expect(await fs.readFile(markerPath, "utf8")).toBe("imported");
+  } finally {
+    await fs.rm(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("registration identity validation rejects missing exports", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-manifest-registration-missing-export-"));
+
+  try {
+    await fs.mkdir(path.join(projectDir, "src"), { recursive: true });
+    await fs.writeFile(
+      path.join(projectDir, "src", "definitions.ts"),
+      [
+        "export const actualWorkflow = {",
+        "  kind: 'workflow',",
+        "  name: 'actualWorkflow',",
+        "};",
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(projectDir, "vilano.manifest.json"),
+      `${JSON.stringify(
+        {
+          manifestVersion: 1,
+          definitions: {
+            workflows: [
+              {
+                kind: "workflow",
+                name: "missingWorkflow",
+                exportName: "missingWorkflow",
+                file: "src/definitions.ts",
+                runtimeKind: "javascript",
+                sourceLanguage: "typescript",
+              },
+            ],
+            services: [],
+          },
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    const manifest = await buildProjectManifest("demo", projectDir, { regenerate: true });
+    await expect(
+      validateProjectDefinitionsIdentity(projectDir, manifest.definitions.workflows)
+    ).rejects.toThrow("does not export 'missingWorkflow'");
+  } finally {
+    await fs.rm(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("registration identity validation rejects kind and name mismatches", async () => {
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-manifest-registration-kind-mismatch-"));
+
+  try {
+    await fs.mkdir(path.join(projectDir, "src"), { recursive: true });
+    await fs.writeFile(
+      path.join(projectDir, "src", "definitions.ts"),
+      [
+        "export const wrongDefinition = {",
+        "  kind: 'service',",
+        "  name: 'wrongDefinition',",
+        "};",
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(projectDir, "vilano.manifest.json"),
+      `${JSON.stringify(
+        {
+          manifestVersion: 1,
+          definitions: {
+            workflows: [
+              {
+                kind: "workflow",
+                name: "expectedWorkflow",
+                exportName: "wrongDefinition",
+                file: "src/definitions.ts",
+                runtimeKind: "javascript",
+                sourceLanguage: "typescript",
+              },
+            ],
+            services: [],
+          },
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    const manifest = await buildProjectManifest("demo", projectDir, { regenerate: true });
+    await expect(
+      validateProjectDefinitionsIdentity(projectDir, manifest.definitions.workflows)
+    ).rejects.toThrow("does not match declared workflow 'expectedWorkflow'");
+  } finally {
+    await fs.rm(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("writeExplicitProjectManifest writes an explicit vilano.manifest.json contract", async () => {
   const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-manifest-init-"));
 
   try {

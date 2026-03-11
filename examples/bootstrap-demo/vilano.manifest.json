@@ -44,8 +44,72 @@
       },
       {
         "kind": "workflow",
+        "name": "childMonitorCoordinator",
+        "exportName": "childMonitorCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "childSignalCoordinator",
         "exportName": "childSignalCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "boundedMailboxDelayWorkflow",
+        "exportName": "boundedMailboxDelayWorkflow",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "boundedMailboxOverflowWorkflow",
+        "exportName": "boundedMailboxOverflowWorkflow",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "topicPublisher",
+        "exportName": "topicPublisher",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "pubsubDeliveryCoordinator",
+        "exportName": "pubsubDeliveryCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "pubsubDedupeCoordinator",
+        "exportName": "pubsubDedupeCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "pubsubUnsubscribeCoordinator",
+        "exportName": "pubsubUnsubscribeCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "pubsubInvalidSubscriptionCoordinator",
+        "exportName": "pubsubInvalidSubscriptionCoordinator",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"
@@ -100,6 +164,14 @@
       },
       {
         "kind": "workflow",
+        "name": "linkedChildCancellationCoordinator",
+        "exportName": "linkedChildCancellationCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "longExec",
         "exportName": "longExec",
         "file": "src/definitions.ts",
@@ -110,6 +182,38 @@
         "kind": "workflow",
         "name": "mailboxAskWorkflow",
         "exportName": "mailboxAskWorkflow",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "mailboxDeferWorkflow",
+        "exportName": "mailboxDeferWorkflow",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "mailboxDeferredFollowup",
+        "exportName": "mailboxDeferredFollowup",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "mailboxRejectWorkflow",
+        "exportName": "mailboxRejectWorkflow",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "mailboxSnapshotWorkflow",
+        "exportName": "mailboxSnapshotWorkflow",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"
@@ -158,6 +262,54 @@
         "kind": "workflow",
         "name": "retryingStep",
         "exportName": "retryingStep",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "relationshipChild",
+        "exportName": "relationshipChild",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "supervisedFlakyChild",
+        "exportName": "supervisedFlakyChild",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "supervisionExhaustionCoordinator",
+        "exportName": "supervisionExhaustionCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "supervisionOneForAllCoordinator",
+        "exportName": "supervisionOneForAllCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "supervisionOneForOneCoordinator",
+        "exportName": "supervisionOneForOneCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "supervisionMembersCoordinator",
+        "exportName": "supervisionMembersCoordinator",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"
@@ -260,6 +412,14 @@
       },
       {
         "kind": "workflow",
+        "name": "trappedChildLinkCoordinator",
+        "exportName": "trappedChildLinkCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "waitingChild",
         "exportName": "waitingChild",
         "file": "src/definitions.ts",
@@ -276,14 +436,38 @@
       },
       {
         "kind": "workflow",
+        "name": "workerPidProbe",
+        "exportName": "workerPidProbe",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "execEnvSecretProbe",
         "exportName": "execEnvSecretProbe",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "singletonLookupCoordinator",
+        "exportName": "singletonLookupCoordinator",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"
       }
     ],
     "services": [
+      {
+        "kind": "service",
+        "name": "boundedMailboxProbe",
+        "exportName": "boundedMailboxProbe",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
       {
         "kind": "service",
         "name": "mailboxProbe",
@@ -304,6 +488,14 @@
         "kind": "service",
         "name": "optionsPayloadProbe",
         "exportName": "optionsPayloadProbe",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "service",
+        "name": "pubsubProbe",
+        "exportName": "pubsubProbe",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"

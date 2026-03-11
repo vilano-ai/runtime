@@ -10,15 +10,16 @@ defmodule VilanoKernel.Router do
   alias VilanoKernel.WaitManager
   import VilanoKernel.Router.Support
 
-  plug :match
+  plug(:match)
 
-  plug Plug.Parsers,
+  plug(Plug.Parsers,
     parsers: [:json],
     pass: ["application/json"],
     json_decoder: Jason
+  )
 
-  plug :authenticate_request
-  plug :dispatch
+  plug(:authenticate_request)
+  plug(:dispatch)
 
   get "/v1/status" do
     runtime = Application.fetch_env!(:vilano_kernel, :runtime)
@@ -46,6 +47,7 @@ defmodule VilanoKernel.Router do
 
   defp authenticate_request(conn, _opts) do
     runtime = Application.fetch_env!(:vilano_kernel, :runtime)
+
     provided =
       conn
       |> Conn.get_req_header("x-vilano-token")
@@ -129,7 +131,8 @@ defmodule VilanoKernel.Router do
   end
 
   defp valid_auth_token?(provided, expected)
-       when is_binary(provided) and is_binary(expected) and byte_size(provided) == byte_size(expected) do
+       when is_binary(provided) and is_binary(expected) and
+              byte_size(provided) == byte_size(expected) do
     Plug.Crypto.secure_compare(provided, expected)
   end
 
@@ -137,6 +140,7 @@ defmodule VilanoKernel.Router do
 
   post "/v1/admin/shutdown" do
     send_json(conn, 200, %{ok: true, shuttingDown: true})
+
     Task.start(fn ->
       Process.sleep(50)
       System.stop(0)
@@ -245,7 +249,12 @@ defmodule VilanoKernel.Router do
 
     case project_name do
       nil ->
-        send_json(conn, 200, %{ok: true, project: nil, activeOnly: active_only, runs: Storage.list_service_runs(nil, active_only)})
+        send_json(conn, 200, %{
+          ok: true,
+          project: nil,
+          activeOnly: active_only,
+          runs: Storage.list_service_runs(nil, active_only)
+        })
 
       name ->
         case Storage.get_project(name) do
@@ -253,27 +262,42 @@ defmodule VilanoKernel.Router do
             send_error(conn, 404, "not_found", "Unknown project: #{name}")
 
           _project ->
-            send_json(conn, 200, %{ok: true, project: name, activeOnly: active_only, runs: Storage.list_service_runs(name, active_only)})
+            send_json(conn, 200, %{
+              ok: true,
+              project: name,
+              activeOnly: active_only,
+              runs: Storage.list_service_runs(name, active_only)
+            })
         end
     end
   end
 
   get "/v1/workflows/:project/:name" do
     case Storage.get_definition(project, "workflow", name) do
-      nil -> send_error(conn, 404, "not_found", "Unknown workflow '#{name}' in project '#{project}'")
-      definition -> send_json(conn, 200, %{ok: true, project: project, definition: definition})
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown workflow '#{name}' in project '#{project}'")
+
+      definition ->
+        send_json(conn, 200, %{ok: true, project: project, definition: definition})
     end
   end
 
   get "/v1/services/:project/:name/runs/:service_key" do
     with project_record when not is_nil(project_record) <- Storage.get_project(project),
-         definition when not is_nil(definition) <- Storage.get_definition(project, "service", name),
-         service_run when not is_nil(service_run) <- Storage.find_service_run(project, definition["name"], service_key) do
+         definition when not is_nil(definition) <-
+           Storage.get_definition(project, "service", name),
+         service_run when not is_nil(service_run) <-
+           Storage.find_service_run(project, definition["name"], service_key) do
       _ = project_record
       send_run_inspect(conn, service_run["id"])
     else
       nil ->
-        send_error(conn, 404, "not_found", "Unknown service instance '#{name}/#{service_key}' in project '#{project}'")
+        send_error(
+          conn,
+          404,
+          "not_found",
+          "Unknown service instance '#{name}/#{service_key}' in project '#{project}'"
+        )
     end
   end
 
@@ -380,6 +404,34 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  post "/v1/leases/:lease_id/runs/:id/monitor" do
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.resolve_run_monitor(lease_id, id, key) do
+      nil -> send_error(conn, 404, "not_found", "Unknown related run for active lease: #{id}")
+      relationship -> send_json(conn, 200, %{ok: true, relationship: relationship})
+    end
+  end
+
+  post "/v1/leases/:lease_id/runs/:id/link" do
+    key = fetch_required_string(conn.body_params, "key")
+    propagate = Map.get(conn.body_params, "propagate", "abnormal")
+
+    case Storage.resolve_run_link(lease_id, id, key, propagate) do
+      nil -> send_error(conn, 404, "not_found", "Unknown related run for active lease: #{id}")
+      relationship -> send_json(conn, 200, %{ok: true, relationship: relationship})
+    end
+  end
+
+  post "/v1/leases/:lease_id/trap-exits" do
+    enabled = Map.get(conn.body_params, "enabled", true)
+
+    case Storage.set_trap_exits(lease_id, enabled in [true, "true", 1, "1", "yes"]) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+      run -> send_json(conn, 200, %{ok: true, run: run})
+    end
+  end
+
   post "/v1/leases/:lease_id/runs/:id/signals" do
     name = fetch_required_string(conn.body_params, "name")
     payload = Map.get(conn.body_params, "payload")
@@ -410,6 +462,7 @@ defmodule VilanoKernel.Router do
     name = fetch_required_string(conn.body_params, "name")
     key = fetch_required_string(conn.body_params, "key")
     timeout_ms = Map.get(conn.body_params, "timeoutMs")
+
     retry_policy = %{
       "maxAttempts" => Map.get(conn.body_params, "maxAttempts"),
       "backoffKind" => Map.get(conn.body_params, "backoffKind"),
@@ -443,7 +496,9 @@ defmodule VilanoKernel.Router do
     key = fetch_required_string(conn.body_params, "key")
 
     case Storage.fail_step(lease_id, name, key, Map.get(conn.body_params, "error", %{})) do
-      nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+
       %{"status" => "retry_waiting", "wait" => wait} = step ->
         WaitManager.schedule_timed_wait(wait)
         send_json(conn, 200, %{ok: true, step: step})
@@ -513,7 +568,9 @@ defmodule VilanoKernel.Router do
     }
 
     case Storage.fail_exec(lease_id, name, key, body) do
-      nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+
       %{"status" => "retry_waiting", "wait" => wait} = exec ->
         WaitManager.schedule_timed_wait(wait)
         send_json(conn, 200, %{ok: true, exec: exec})
@@ -550,12 +607,138 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  post "/v1/leases/:lease_id/waits/exit" do
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.resolve_exit_wait(lease_id, key) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+      wait -> send_json(conn, 200, %{ok: true, wait: wait})
+    end
+  end
+
+  post "/v1/leases/:lease_id/supervision/groups" do
+    key = fetch_required_string(conn.body_params, "key")
+    strategy = fetch_required_string(conn.body_params, "strategy")
+    max_restarts = fetch_required_integer(conn.body_params, "maxRestarts")
+    window_ms = fetch_required_integer(conn.body_params, "windowMs")
+    on_exhausted = Map.get(conn.body_params, "onExhausted", "fail_self")
+
+    cond do
+      strategy not in ["one_for_one", "one_for_all"] ->
+        send_error(conn, 400, "invalid_argument", "Unsupported supervision strategy: #{strategy}")
+
+      on_exhausted not in ["fail_self"] ->
+        send_error(
+          conn,
+          400,
+          "invalid_argument",
+          "Unsupported supervision exhaustion policy: #{on_exhausted}"
+        )
+
+      max_restarts < 0 ->
+        send_error(conn, 400, "invalid_argument", "maxRestarts must be >= 0")
+
+      window_ms <= 0 ->
+        send_error(conn, 400, "invalid_argument", "windowMs must be > 0")
+
+      true ->
+        case Storage.resolve_supervision_group(
+               lease_id,
+               key,
+               strategy,
+               max_restarts,
+               window_ms,
+               on_exhausted
+             ) do
+          nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+          group -> send_json(conn, 200, %{ok: true, group: group})
+        end
+    end
+  end
+
+  post "/v1/leases/:lease_id/supervision/groups/:group_id/members" do
+    name = fetch_required_string(conn.body_params, "name")
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.resolve_supervised_spawn(
+           lease_id,
+           group_id,
+           name,
+           key,
+           Map.get(conn.body_params, "input", %{})
+         ) do
+      nil ->
+        send_error(
+          conn,
+          404,
+          "not_found",
+          "Unknown active lease or supervision group: #{group_id}"
+        )
+
+      member ->
+        send_json(conn, 200, %{ok: true, member: member})
+    end
+  end
+
+  get "/v1/leases/:lease_id/supervision/groups/:group_id/members" do
+    case Storage.list_supervision_members(lease_id, group_id) do
+      nil ->
+        send_error(
+          conn,
+          404,
+          "not_found",
+          "Unknown active lease or supervision group: #{group_id}"
+        )
+
+      members ->
+        send_json(conn, 200, %{ok: true, members: members})
+    end
+  end
+
+  post "/v1/leases/:lease_id/supervision/groups/:group_id/members/:member_key/result" do
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.resolve_supervision_member_result_wait(lease_id, group_id, member_key, key) do
+      nil ->
+        send_error(
+          conn,
+          404,
+          "not_found",
+          "Unknown active lease or supervision member: #{group_id}/#{member_key}"
+        )
+
+      member ->
+        send_json(conn, 200, %{ok: true, member: member})
+    end
+  end
+
+  get "/v1/leases/:lease_id/supervision/groups/:group_id/members/:member_key/status" do
+    case Storage.get_supervision_member_status(lease_id, group_id, member_key) do
+      nil ->
+        send_error(
+          conn,
+          404,
+          "not_found",
+          "Unknown active lease or supervision member: #{group_id}/#{member_key}"
+        )
+
+      member ->
+        send_json(conn, 200, %{ok: true, member: member})
+    end
+  end
+
   post "/v1/leases/:lease_id/spawns/resolve" do
     name = fetch_required_string(conn.body_params, "name")
     key = fetch_required_string(conn.body_params, "key")
     child_run_id = fetch_required_string(conn.body_params, "childRunId")
 
-    case Storage.resolve_spawn(lease_id, name, key, child_run_id, Map.get(conn.body_params, "input", %{})) do
+    case Storage.resolve_spawn(
+           lease_id,
+           name,
+           key,
+           child_run_id,
+           Map.get(conn.body_params, "input", %{})
+         ) do
       nil -> send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
       spawn -> send_json(conn, 200, %{ok: true, spawn: spawn})
     end
@@ -576,9 +759,75 @@ defmodule VilanoKernel.Router do
     name = fetch_required_string(conn.body_params, "name")
     key = fetch_required_string(conn.body_params, "key")
 
-    case Storage.resolve_service_send(lease_id, service_run_id, name, key, Map.get(conn.body_params, "payload")) do
+    case Storage.resolve_service_send(
+           lease_id,
+           service_run_id,
+           name,
+           key,
+           Map.get(conn.body_params, "payload")
+         ) do
       nil -> send_error(conn, 404, "not_found", "Unknown active lease or service: #{lease_id}")
       result -> send_json(conn, 200, %{ok: true, result: result})
+    end
+  end
+
+  post "/v1/leases/:lease_id/services/lookup-singleton" do
+    role = fetch_required_string(conn.body_params, "role")
+
+    case Storage.lookup_singleton_service(
+           lease_id,
+           role,
+           Map.get(conn.body_params, "keyInput", %{})
+         ) do
+      nil ->
+        send_error(
+          conn,
+          404,
+          "not_found",
+          "Unknown active lease or singleton service role: #{role}"
+        )
+
+      run ->
+        send_json(conn, 200, %{ok: true, run: run})
+    end
+  end
+
+  post "/v1/leases/:lease_id/pubsub/publish" do
+    topic = fetch_required_string(conn.body_params, "topic")
+    key = fetch_required_string(conn.body_params, "key")
+
+    case Storage.resolve_topic_publish(lease_id, topic, key, Map.get(conn.body_params, "payload")) do
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown active lease: #{lease_id}")
+
+      publish ->
+        send_json(conn, 200, %{ok: true, publish: publish})
+    end
+  end
+
+  post "/v1/leases/:lease_id/pubsub/subscriptions" do
+    topic = fetch_required_string(conn.body_params, "topic")
+    signal_name = fetch_required_string(conn.body_params, "signal")
+
+    case Storage.subscribe_service_topic(lease_id, topic, signal_name) do
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown active service lease: #{lease_id}")
+
+      subscription ->
+        send_json(conn, 200, %{ok: true, subscription: subscription})
+    end
+  end
+
+  post "/v1/leases/:lease_id/pubsub/subscriptions/delete" do
+    topic = fetch_required_string(conn.body_params, "topic")
+    signal_name = fetch_required_string(conn.body_params, "signal")
+
+    case Storage.unsubscribe_service_topic(lease_id, topic, signal_name) do
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown active service lease: #{lease_id}")
+
+      _result ->
+        send_json(conn, 200, %{ok: true})
     end
   end
 
@@ -596,8 +845,11 @@ defmodule VilanoKernel.Router do
            Map.get(conn.body_params, "payload"),
            timeout_ms
          ) do
-      nil -> send_error(conn, 404, "not_found", "Unknown active lease or service: #{lease_id}")
-      %{"status" => "suspended", "wait" => %{"wakeAt" => wake_at} = wait} = result when not is_nil(wake_at) ->
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown active lease or service: #{lease_id}")
+
+      %{"status" => "suspended", "wait" => %{"wakeAt" => wake_at} = wait} = result
+      when not is_nil(wake_at) ->
         WaitManager.schedule_timed_wait(wait)
         send_json(conn, 200, %{ok: true, result: result})
 
@@ -611,7 +863,13 @@ defmodule VilanoKernel.Router do
     name = fetch_required_string(conn.body_params, "name")
     key = fetch_required_string(conn.body_params, "key")
 
-    case Storage.resolve_service_signal(lease_id, service_run_id, name, key, Map.get(conn.body_params, "payload")) do
+    case Storage.resolve_service_signal(
+           lease_id,
+           service_run_id,
+           name,
+           key,
+           Map.get(conn.body_params, "payload")
+         ) do
       nil -> send_error(conn, 404, "not_found", "Unknown active lease or service: #{lease_id}")
       result -> send_json(conn, 200, %{ok: true, result: result})
     end
@@ -630,8 +888,38 @@ defmodule VilanoKernel.Router do
     end
   end
 
+  get "/v1/leases/:lease_id/service-turns/:envelope_id/mailbox" do
+    case Storage.get_service_turn_mailbox(lease_id, envelope_id) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active service turn: #{lease_id}")
+      mailbox -> send_json(conn, 200, %{ok: true, mailbox: mailbox})
+    end
+  end
+
+  post "/v1/leases/:lease_id/service-turns/:envelope_id/defer" do
+    delay_ms = fetch_required_integer(conn.body_params, "delayMs")
+    reason = Map.get(conn.body_params, "reason")
+
+    case Storage.defer_service_turn(lease_id, envelope_id, delay_ms, reason) do
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown active service turn: #{lease_id}")
+
+      %{"run" => run} = result ->
+        send_json(conn, 200, %{ok: true, run: run, wait: Map.get(result, "wait")})
+    end
+  end
+
+  post "/v1/leases/:lease_id/service-turns/:envelope_id/reject" do
+    error_body = Map.get(conn.body_params, "error", %{})
+
+    case Storage.reject_service_turn(lease_id, envelope_id, error_body) do
+      nil -> send_error(conn, 404, "not_found", "Unknown active service turn: #{lease_id}")
+      run -> send_json(conn, 200, %{ok: true, run: run})
+    end
+  end
+
   post "/v1/leases/:lease_id/service-turns/:envelope_id/fail" do
     error_body = Map.get(conn.body_params, "error", %{})
+
     retry_options = %{
       "maxAttempts" => Map.get(conn.body_params, "maxAttempts"),
       "backoffKind" => Map.get(conn.body_params, "backoffKind"),
@@ -645,7 +933,9 @@ defmodule VilanoKernel.Router do
     }
 
     case Storage.fail_service_turn(lease_id, envelope_id, error_body, retry_options) do
-      nil -> send_error(conn, 404, "not_found", "Unknown active service turn: #{lease_id}")
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown active service turn: #{lease_id}")
+
       %{"status" => "retry_waiting", "run" => run, "wait" => wait} ->
         WaitManager.schedule_timed_wait(wait)
         send_json(conn, 200, %{ok: true, run: run, wait: wait, status: "retry_waiting"})
@@ -659,11 +949,13 @@ defmodule VilanoKernel.Router do
     service = fetch_required_string(conn.body_params, "service")
     service_key = fetch_required_string(conn.body_params, "serviceKey")
     must_exist = Map.get(conn.body_params, "mustExist", false) == true
+
     requested_lease_id =
       case Map.get(conn.body_params, "leaseId") do
         value when is_binary(value) and value != "" -> value
         _ -> nil
       end
+
     effective_lease_id =
       case conn.assigns[:auth_scope] do
         :lease -> conn.assigns[:lease_id]
@@ -671,17 +963,24 @@ defmodule VilanoKernel.Router do
       end
 
     if conn.assigns[:auth_scope] == :lease and conn.assigns[:lease_id] != requested_lease_id do
-      send_error(conn, 401, "unauthorized", "Lease token can only resolve services for its active lease")
+      send_error(
+        conn,
+        401,
+        "unauthorized",
+        "Lease token can only resolve services for its active lease"
+      )
     else
-      with {project_record, definition} when not is_nil(project_record) <- resolve_service_definition(conn.body_params, service),
-           run <- Storage.ensure_service_run!(
-             project_record,
-             definition,
-             service_key,
-             Map.get(conn.body_params, "keyInput", %{}),
-             effective_lease_id,
-             must_exist
-           ) do
+      with {project_record, definition} when not is_nil(project_record) <-
+             resolve_service_definition(conn.body_params, service),
+           run <-
+             Storage.ensure_service_run!(
+               project_record,
+               definition,
+               service_key,
+               Map.get(conn.body_params, "keyInput", %{}),
+               effective_lease_id,
+               must_exist
+             ) do
         send_json(conn, 200, %{ok: true, run: run})
       else
         nil ->
@@ -700,7 +999,8 @@ defmodule VilanoKernel.Router do
 
   post "/v1/services/:project/:name/runs/:service_key/send" do
     with project_record when not is_nil(project_record) <- Storage.get_project(project),
-         definition when not is_nil(definition) <- Storage.get_definition(project, "service", name),
+         definition when not is_nil(definition) <-
+           Storage.get_definition(project, "service", name),
          result <-
            Storage.enqueue_service_envelope!(
              project_record,
@@ -718,7 +1018,7 @@ defmodule VilanoKernel.Router do
           send_json(conn, 200, %{ok: true, run: run, envelope: envelope})
 
         {:error, error} ->
-          send_error(conn, 409, "service_stopped", Map.fetch!(error, "message"))
+          send_service_enqueue_error(conn, error)
       end
     else
       nil ->
@@ -728,7 +1028,8 @@ defmodule VilanoKernel.Router do
 
   post "/v1/services/:project/:name/runs/:service_key/ask" do
     with project_record when not is_nil(project_record) <- Storage.get_project(project),
-         definition when not is_nil(definition) <- Storage.get_definition(project, "service", name),
+         definition when not is_nil(definition) <-
+           Storage.get_definition(project, "service", name),
          result <-
            Storage.enqueue_service_envelope!(
              project_record,
@@ -746,7 +1047,7 @@ defmodule VilanoKernel.Router do
           send_json(conn, 200, %{ok: true, run: run, envelope: envelope})
 
         {:error, error} ->
-          send_error(conn, 409, "service_stopped", Map.fetch!(error, "message"))
+          send_service_enqueue_error(conn, error)
       end
     else
       nil ->
@@ -756,7 +1057,8 @@ defmodule VilanoKernel.Router do
 
   post "/v1/services/:project/:name/runs/:service_key/signal" do
     with project_record when not is_nil(project_record) <- Storage.get_project(project),
-         definition when not is_nil(definition) <- Storage.get_definition(project, "service", name),
+         definition when not is_nil(definition) <-
+           Storage.get_definition(project, "service", name),
          result <-
            Storage.enqueue_service_envelope!(
              project_record,
@@ -774,7 +1076,7 @@ defmodule VilanoKernel.Router do
           send_json(conn, 200, %{ok: true, run: run, envelope: envelope})
 
         {:error, error} ->
-          send_error(conn, 409, "service_stopped", Map.fetch!(error, "message"))
+          send_service_enqueue_error(conn, error)
       end
     else
       nil ->
@@ -785,6 +1087,7 @@ defmodule VilanoKernel.Router do
   post "/v1/services/:project/:name/runs/:service_key/stop" do
     with result when not is_nil(result) <- Storage.stop_service_run(project, name, service_key) do
       maybe_kill_managed_worker(result)
+
       send_json(conn, 200, %{
         ok: true,
         run: result["run"],
@@ -796,7 +1099,12 @@ defmodule VilanoKernel.Router do
       })
     else
       nil ->
-        send_error(conn, 404, "not_found", "Unknown service instance '#{name}/#{service_key}' in project '#{project}'")
+        send_error(
+          conn,
+          404,
+          "not_found",
+          "Unknown service instance '#{name}/#{service_key}' in project '#{project}'"
+        )
     end
   end
 
@@ -805,12 +1113,23 @@ defmodule VilanoKernel.Router do
     workflow = fetch_required_string(conn.body_params, "workflow")
 
     with project_record when not is_nil(project_record) <- Storage.get_project(project),
-         definition when not is_nil(definition) <- Storage.get_definition(project, "workflow", workflow),
-         run <- Storage.create_workflow_run!(project_record, definition, Map.get(conn.body_params, "input", %{})) do
+         definition when not is_nil(definition) <-
+           Storage.get_definition(project, "workflow", workflow),
+         run <-
+           Storage.create_workflow_run!(
+             project_record,
+             definition,
+             Map.get(conn.body_params, "input", %{})
+           ) do
       send_json(conn, 200, %{ok: true, run: run})
     else
       nil ->
-        send_error(conn, 404, "not_found", "Unknown workflow '#{workflow}' in project '#{project}'")
+        send_error(
+          conn,
+          404,
+          "not_found",
+          "Unknown workflow '#{workflow}' in project '#{project}'"
+        )
     end
   end
 
@@ -826,8 +1145,11 @@ defmodule VilanoKernel.Router do
 
       name ->
         case Storage.get_project(name) do
-          nil -> send_error(conn, 404, "not_found", "Unknown project: #{name}")
-          _project -> send_json(conn, 200, %{ok: true, project: name, runs: Storage.list_runs(name)})
+          nil ->
+            send_error(conn, 404, "not_found", "Unknown project: #{name}")
+
+          _project ->
+            send_json(conn, 200, %{ok: true, project: name, runs: Storage.list_runs(name)})
         end
     end
   end
@@ -847,6 +1169,7 @@ defmodule VilanoKernel.Router do
 
       result ->
         maybe_kill_managed_worker(result)
+
         send_json(conn, 200, %{
           ok: true,
           run: result["run"],
@@ -874,7 +1197,8 @@ defmodule VilanoKernel.Router do
     case Map.get(body_params, "leaseId") do
       lease_id when is_binary(lease_id) and lease_id != "" ->
         with run when not is_nil(run) <- Storage.get_active_run_by_lease(lease_id),
-             definition when not is_nil(definition) <- find_definition_in_run(run, "service", service_name) do
+             definition when not is_nil(definition) <-
+               find_definition_in_run(run, "service", service_name) do
           {
             %{
               "name" => run["project"],
@@ -890,7 +1214,8 @@ defmodule VilanoKernel.Router do
         project = fetch_required_string(body_params, "project")
 
         with project_record when not is_nil(project_record) <- Storage.get_project(project),
-             definition when not is_nil(definition) <- Storage.get_definition(project, "service", service_name) do
+             definition when not is_nil(definition) <-
+               Storage.get_definition(project, "service", service_name) do
           {project_record, definition}
         end
     end
@@ -914,6 +1239,16 @@ defmodule VilanoKernel.Router do
     run["definition"]
   end
 
+  defp send_service_enqueue_error(conn, error) do
+    case Map.get(error, "reason") do
+      "service_overloaded" ->
+        send_error(conn, 429, "service_overloaded", Map.fetch!(error, "message"))
+
+      _ ->
+        send_error(conn, 409, "service_stopped", Map.fetch!(error, "message"))
+    end
+  end
+
   match _ do
     send_error(conn, 404, "not_found", "Unknown endpoint: #{conn.method} #{conn.request_path}")
   end
@@ -926,6 +1261,9 @@ defmodule VilanoKernel.Router do
         true -> inspect(reason)
       end
 
-    Support.send_json(conn, conn.status || 500, %{ok: false, error: %{code: "internal_error", message: message}})
+    Support.send_json(conn, conn.status || 500, %{
+      ok: false,
+      error: %{code: "internal_error", message: message}
+    })
   end
 end

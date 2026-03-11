@@ -345,6 +345,267 @@ export const cancelledChildParent = workflow({
   },
 });
 
+export const relationshipChild = workflow({
+  name: "relationshipChild",
+  run: async (
+    input: { mode: "complete" | "fail"; duration?: string; value?: string },
+    ctx
+  ) => {
+    if (input.duration) {
+      await ctx.sleep(input.duration, { key: "relationship-child-delay" });
+    }
+
+    if (input.mode === "fail") {
+      throw new Error(input.value ?? "relationship child failed");
+    }
+
+    return {
+      value: input.value ?? "relationship-child-ok",
+    };
+  },
+});
+
+export const childMonitorCoordinator = workflow({
+  name: "childMonitorCoordinator",
+  run: async (
+    input: { mode: "complete" | "fail"; duration?: string; value?: string },
+    ctx
+  ) => {
+    const child = ctx.spawn(relationshipChild, input, { key: "child" });
+    await child.monitor({ key: "monitor" });
+    const exit = await ctx.nextExit({ key: "exit" });
+
+    return {
+      childRunId: child.id,
+      exit,
+    };
+  },
+});
+
+export const trappedChildLinkCoordinator = workflow({
+  name: "trappedChildLinkCoordinator",
+  run: async (input: { duration?: string; value?: string }, ctx) => {
+    await ctx.trapExit();
+
+    const child = ctx.spawn(
+      relationshipChild,
+      {
+        mode: "fail",
+        duration: input.duration ?? "50ms",
+        value: input.value ?? "linked child failed",
+      },
+      { key: "child" }
+    );
+
+    await child.link({ key: "link" });
+    const exit = await ctx.nextExit({ key: "exit" });
+
+    return {
+      childRunId: child.id,
+      exit,
+    };
+  },
+});
+
+export const linkedChildCancellationCoordinator = workflow({
+  name: "linkedChildCancellationCoordinator",
+  run: async (input: { duration?: string; value?: string }, ctx) => {
+    const child = ctx.spawn(
+      relationshipChild,
+      {
+        mode: "fail",
+        duration: input.duration ?? "50ms",
+        value: input.value ?? "linked child failed",
+      },
+      { key: "child" }
+    );
+
+    await child.link({ key: "link" });
+    await ctx.sleep("30s", { key: "linked-child-cancel-wait" });
+
+    return {
+      childRunId: child.id,
+    };
+  },
+});
+
+export const supervisedFlakyChild = workflow({
+  name: "supervisedFlakyChild",
+  run: async (
+    input: {
+      markerPath: string;
+      failCount?: number;
+      sleep?: string;
+      value?: string;
+    },
+    ctx
+  ) => {
+    const attempt = await bumpMarkerAttempt(input.markerPath);
+
+    if (input.sleep) {
+      await ctx.sleep(input.sleep, { key: "supervised-flaky-child-sleep" });
+    }
+
+    if (attempt <= (input.failCount ?? 0)) {
+      throw new Error(input.value ?? `supervised child failed on attempt ${attempt}`);
+    }
+
+    return {
+      attempt,
+      value: input.value ?? "supervised-child-ok",
+    };
+  },
+});
+
+export const supervisionOneForOneCoordinator = workflow({
+  name: "supervisionOneForOneCoordinator",
+  run: async (
+    input: {
+      markerPath: string;
+      failCount?: number;
+      maxRestarts?: number;
+      window?: string;
+      value?: string;
+    },
+    ctx
+  ) => {
+    const group = await ctx.supervise({
+      key: "one-for-one-group",
+      strategy: "one_for_one",
+      maxRestarts: input.maxRestarts ?? 1,
+      window: input.window ?? "1m",
+      onExhausted: "fail_self",
+    });
+    const member = await group.spawn(
+      supervisedFlakyChild,
+      {
+        markerPath: input.markerPath,
+        failCount: input.failCount ?? 1,
+        value: input.value ?? "supervised-one-for-one",
+      },
+      { key: "worker" }
+    );
+    const initialRunId = await member.currentRunId();
+    const output = await member.result();
+    const finalRunId = await member.currentRunId();
+
+    return {
+      initialRunId,
+      finalRunId,
+      output,
+    };
+  },
+});
+
+export const supervisionExhaustionCoordinator = workflow({
+  name: "supervisionExhaustionCoordinator",
+  run: async (
+    input: {
+      markerPath: string;
+      failCount?: number;
+      maxRestarts?: number;
+      window?: string;
+      value?: string;
+    },
+    ctx
+  ) => {
+    const group = await ctx.supervise({
+      key: "exhaustion-group",
+      strategy: "one_for_one",
+      maxRestarts: input.maxRestarts ?? 1,
+      window: input.window ?? "1m",
+      onExhausted: "fail_self",
+    });
+    const member = await group.spawn(
+      supervisedFlakyChild,
+      {
+        markerPath: input.markerPath,
+        failCount: input.failCount ?? 3,
+        value: input.value ?? "supervision exhausted",
+      },
+      { key: "worker" }
+    );
+
+    return await member.result();
+  },
+});
+
+export const supervisionOneForAllCoordinator = workflow({
+  name: "supervisionOneForAllCoordinator",
+  run: async (
+    input: {
+      flakyMarkerPath: string;
+      siblingMarkerPath: string;
+      maxRestarts?: number;
+      window?: string;
+    },
+    ctx
+  ) => {
+    const group = await ctx.supervise({
+      key: "one-for-all-group",
+      strategy: "one_for_all",
+      maxRestarts: input.maxRestarts ?? 1,
+      window: input.window ?? "1m",
+      onExhausted: "fail_self",
+    });
+    const flaky = await group.spawn(
+      supervisedFlakyChild,
+      {
+        markerPath: input.flakyMarkerPath,
+        failCount: 1,
+        value: "supervised-flaky",
+      },
+      { key: "flaky" }
+    );
+    const sibling = await group.spawn(
+      supervisedFlakyChild,
+      {
+        markerPath: input.siblingMarkerPath,
+        failCount: 0,
+        sleep: "2s",
+        value: "supervised-sibling",
+      },
+      { key: "sibling" }
+    );
+    const initialFlakyRunId = await flaky.currentRunId();
+    const initialSiblingRunId = await sibling.currentRunId();
+    const [flakyOutput, siblingOutput] = await Promise.all([flaky.result(), sibling.result()]);
+    const finalFlakyRunId = await flaky.currentRunId();
+    const finalSiblingRunId = await sibling.currentRunId();
+
+    return {
+      initialFlakyRunId,
+      initialSiblingRunId,
+      finalFlakyRunId,
+      finalSiblingRunId,
+      flakyOutput,
+      siblingOutput,
+    };
+  },
+});
+
+export const supervisionMembersCoordinator = workflow({
+  name: "supervisionMembersCoordinator",
+  run: async (input: { topic: string }, ctx) => {
+    const group = await ctx.supervise({
+      key: "supervision-members",
+      strategy: "one_for_one",
+      maxRestarts: 1,
+      window: "1m",
+    });
+
+    const first = await group.spawn(childTask, { topic: input.topic }, { key: "first" });
+    const second = await group.spawn(childTask, { topic: `${input.topic}-second` }, { key: "second" });
+
+    await first.result();
+    await second.result();
+
+    return {
+      members: await group.members(),
+    };
+  },
+});
+
 export const slowDelegator = workflow({
   name: "slowDelegator",
   run: async (input: { topic: string; duration?: string }, ctx) => {
@@ -432,6 +693,233 @@ export const mailboxAskWorkflow = workflow({
   },
 });
 
+export const mailboxSnapshotWorkflow = workflow({
+  name: "mailboxSnapshotWorkflow",
+  run: async (input: { sessionId: string }, ctx) => {
+    const ref = await ctx.connect(mailboxProbe, { sessionId: input.sessionId });
+
+    await ref.send.recordMailbox({ id: "record-mailbox" }, { key: "record-mailbox" });
+    await ref.send.appendLog({ value: "queued-send" }, { key: "queued-send" });
+
+    return await ref.ask.recordedMailbox(undefined, { key: "recorded-mailbox" });
+  },
+});
+
+export const mailboxDeferredFollowup = workflow({
+  name: "mailboxDeferredFollowup",
+  run: async (input: { sessionId: string; delay?: string; value: string }, ctx) => {
+    await ctx.sleep(input.delay ?? "50ms", { key: "mailbox-deferred-followup-delay" });
+
+    const ref = await ctx.connect(mailboxProbe, { sessionId: input.sessionId });
+    await ref.send.appendLog({ value: input.value }, { key: `append-log:${input.value}` });
+
+    return {
+      value: input.value,
+    };
+  },
+});
+
+export const mailboxDeferWorkflow = workflow({
+  name: "mailboxDeferWorkflow",
+  run: async (
+    input: { sessionId: string; delay?: string; followupDelay?: string; followupValue?: string },
+    ctx
+  ) => {
+    const ref = await ctx.connect(mailboxProbe, { sessionId: input.sessionId });
+    const followup = ctx.spawn(
+      mailboxDeferredFollowup,
+      {
+        sessionId: input.sessionId,
+        delay: input.followupDelay ?? "50ms",
+        value: input.followupValue ?? "after-defer",
+      },
+      { key: "followup" }
+    );
+
+    const reply = await ref.ask.deferOnce(
+      { delay: input.delay ?? "200ms" },
+      { key: "defer-once" }
+    );
+
+    await followup.result();
+
+    return reply;
+  },
+});
+
+export const mailboxRejectWorkflow = workflow({
+  name: "mailboxRejectWorkflow",
+  run: async (input: { sessionId: string; message?: string }, ctx) => {
+    const ref = await ctx.connect(mailboxProbe, { sessionId: input.sessionId });
+
+    try {
+      await ref.ask.rejectTurn(
+        { message: input.message ?? "mailbox turn rejected" },
+        { key: "reject-turn" }
+      );
+
+      return {
+        rejected: false,
+      };
+    } catch (error) {
+      const cause =
+        error instanceof Error && "cause" in error ? (error as Error & { cause?: unknown }).cause : null;
+
+      return {
+        rejected: true,
+        message: error instanceof Error ? error.message : String(error),
+        reason:
+          cause && typeof cause === "object" && "reason" in cause
+            ? String((cause as { reason?: unknown }).reason)
+            : null,
+      };
+    }
+  },
+});
+
+export const boundedMailboxDelayWorkflow = workflow({
+  name: "boundedMailboxDelayWorkflow",
+  run: async (input: { sessionId: string; id: string; delayMs?: number }, ctx) => {
+    const ref = await ctx.connect(boundedMailboxProbe, { sessionId: input.sessionId });
+    return await ref.ask.delay({ id: input.id, delayMs: input.delayMs ?? 0 });
+  },
+});
+
+export const boundedMailboxOverflowWorkflow = workflow({
+  name: "boundedMailboxOverflowWorkflow",
+  run: async (input: { sessionId: string }, ctx) => {
+    const ref = await ctx.connect(boundedMailboxProbe, { sessionId: input.sessionId });
+
+    try {
+      await ref.ask.history(undefined, { key: "overflow-history" });
+      return {
+        overloaded: false,
+      };
+    } catch (error) {
+      const cause =
+        error instanceof Error && "cause" in error ? (error as Error & { cause?: unknown }).cause : null;
+
+      return {
+        overloaded: true,
+        message: error instanceof Error ? error.message : String(error),
+        reason:
+          cause && typeof cause === "object" && "reason" in cause
+            ? String((cause as { reason?: unknown }).reason)
+            : null,
+      };
+    }
+  },
+});
+
+export const topicPublisher = workflow({
+  name: "topicPublisher",
+  run: async (
+    input: { topic: string; value?: string; key?: string },
+    ctx
+  ) => {
+    return await ctx.publish(
+      input.topic,
+      { value: input.value ?? input.topic },
+      { key: input.key }
+    );
+  },
+});
+
+export const pubsubDeliveryCoordinator = workflow({
+  name: "pubsubDeliveryCoordinator",
+  run: async (
+    input: { sessionId: string; topic: string; value?: string },
+    ctx
+  ) => {
+    const ref = await ctx.connect(pubsubProbe, { sessionId: input.sessionId });
+    const subscription = await ref.ask.subscribeTopic({
+      topic: input.topic,
+      signal: "topicEvent",
+    });
+    const publish = await ctx.publish(input.topic, {
+      value: input.value ?? input.topic,
+    });
+    const events = await ref.ask.events();
+
+    return {
+      subscription,
+      publish,
+      events,
+    };
+  },
+});
+
+export const pubsubDedupeCoordinator = workflow({
+  name: "pubsubDedupeCoordinator",
+  run: async (
+    input: { sessionId: string; topic: string; value?: string },
+    ctx
+  ) => {
+    const ref = await ctx.connect(pubsubProbe, { sessionId: input.sessionId });
+    await ref.ask.subscribeTopic({
+      topic: input.topic,
+      signal: "topicEvent",
+    });
+
+    const first = await ctx.publish(
+      input.topic,
+      { value: input.value ?? input.topic },
+      { key: "deduped-publish" }
+    );
+    const second = await ctx.publish(
+      input.topic,
+      { value: input.value ?? input.topic },
+      { key: "deduped-publish" }
+    );
+    const events = await ref.ask.events();
+
+    return {
+      first,
+      second,
+      events,
+    };
+  },
+});
+
+export const pubsubUnsubscribeCoordinator = workflow({
+  name: "pubsubUnsubscribeCoordinator",
+  run: async (
+    input: { sessionId: string; topic: string; value?: string },
+    ctx
+  ) => {
+    const ref = await ctx.connect(pubsubProbe, { sessionId: input.sessionId });
+    await ref.ask.subscribeTopic({
+      topic: input.topic,
+      signal: "topicEvent",
+    });
+    await ref.ask.unsubscribeTopic({
+      topic: input.topic,
+      signal: "topicEvent",
+    });
+
+    const publish = await ctx.publish(input.topic, {
+      value: input.value ?? input.topic,
+    });
+    const events = await ref.ask.events();
+
+    return {
+      publish,
+      events,
+    };
+  },
+});
+
+export const pubsubInvalidSubscriptionCoordinator = workflow({
+  name: "pubsubInvalidSubscriptionCoordinator",
+  run: async (input: { sessionId: string; topic: string; signal: string }, ctx) => {
+    const ref = await ctx.connect(pubsubProbe, { sessionId: input.sessionId });
+    return await ref.ask.subscribeInvalidTopic({
+      topic: input.topic,
+      signal: input.signal,
+    });
+  },
+});
+
 export const reviewer = service({
   name: "reviewer",
   key: (input: { repoId: string }) => input.repoId,
@@ -473,6 +961,9 @@ export const reviewer = service({
 
 export const operator = service({
   name: "operator",
+  discovery: {
+    singletonRole: "operator",
+  },
   key: (input: { sessionId: string }) => input.sessionId,
   init: async (input: { sessionId: string }) => ({
     sessionId: input.sessionId,
@@ -597,12 +1088,27 @@ export const mailboxProbe = service({
   init: async (input: { sessionId: string }) => ({
     sessionId: input.sessionId,
     history: [] as string[],
+    log: [] as string[],
+    recordedMailbox: null as unknown,
   }),
   onSend: {
     record: async (payload: { id: string }, state) => ({
       state: {
         ...state,
         history: [...state.history, `send:${payload.id}`],
+      },
+    }),
+    recordMailbox: async (payload: { id: string }, state, ctx) => ({
+      state: {
+        ...state,
+        history: [...state.history, `send:${payload.id}`],
+        recordedMailbox: await ctx.mailbox(),
+      },
+    }),
+    appendLog: async (payload: { value: string }, state) => ({
+      state: {
+        ...state,
+        log: [...state.log, payload.value],
       },
     }),
   },
@@ -670,6 +1176,89 @@ export const mailboxProbe = service({
         history: state.history,
       },
     }),
+    recordedMailbox: async (_payload: void, state) => ({
+      reply: state.recordedMailbox,
+    }),
+    deferOnce: async (payload: { delay?: string }, state, ctx) => {
+      if (ctx.turnAttempt === 1) {
+        await ctx.defer({
+          delay: payload.delay ?? "200ms",
+          reason: "mailbox_not_ready",
+        });
+      }
+
+      return {
+        reply: {
+          attempt: ctx.turnAttempt,
+          log: state.log,
+          mailbox: await ctx.mailbox(),
+        },
+      };
+    },
+    rejectTurn: async (payload: { message?: string }, _state, ctx) => {
+      await ctx.reject({
+        message: payload.message ?? "mailbox turn rejected",
+        reason: "mailbox_rejected",
+      });
+    },
+  },
+});
+
+export const boundedMailboxProbe = service({
+  name: "boundedMailboxProbe",
+  mailbox: {
+    maxQueued: 1,
+    overload: "reject_new",
+  },
+  key: (input: { sessionId: string }) => input.sessionId,
+  init: async (input: { sessionId: string }) => ({
+    sessionId: input.sessionId,
+    history: [] as string[],
+  }),
+  onSend: {
+    record: async (payload: { id: string }, state) => ({
+      state: {
+        ...state,
+        history: [...state.history, `send:${payload.id}`],
+      },
+    }),
+  },
+  onAsk: {
+    delay: async (payload: { id: string; delayMs?: number }, state, ctx) => {
+      if ((payload.delayMs ?? 0) > 0) {
+        await ctx.step(
+          "bounded-mailbox-delay",
+          async () => {
+            await new Promise((resolve) => {
+              setTimeout(resolve, payload.delayMs ?? 0);
+            });
+
+            return null;
+          },
+          {
+            key: `bounded-mailbox-delay:${payload.id}:${payload.delayMs ?? 0}`,
+          }
+        );
+      }
+
+      const history = [...state.history, `ask:${payload.id}`];
+
+      return {
+        state: {
+          ...state,
+          history,
+        },
+        reply: {
+          id: payload.id,
+          history,
+        },
+      };
+    },
+    history: async (_payload: void, state) => ({
+      reply: {
+        history: state.history,
+      },
+    }),
   },
 });
 
@@ -679,6 +1268,118 @@ export const optionsPayloadProbe = service({
   onAsk: {
     echo: async (payload: { key: string; timeout: string }) => ({
       reply: payload,
+    }),
+  },
+});
+
+export const pubsubProbe = service({
+  name: "pubsubProbe",
+  key: (input: { sessionId: string }) => input.sessionId,
+  init: async (input: { sessionId: string }) => ({
+    sessionId: input.sessionId,
+    subscriptions: [] as Array<{ topic: string; signal: string }>,
+    events: [] as Array<{
+      topic: string;
+      value: string | null;
+      publishId: string;
+      publisherRunId: string;
+      signal: string;
+    }>,
+  }),
+  onAsk: {
+    subscribeTopic: async (
+      payload: { topic: string; signal?: string },
+      state,
+      ctx
+    ) => {
+      const subscription = await ctx.subscribe(payload.topic, {
+        signal: payload.signal ?? "topicEvent",
+      });
+
+      return {
+        state: {
+          ...state,
+          subscriptions: [
+            ...state.subscriptions.filter(
+              (entry) =>
+                !(entry.topic === subscription.topic && entry.signal === subscription.signal)
+            ),
+            {
+              topic: subscription.topic,
+              signal: subscription.signal,
+            },
+          ],
+        },
+        reply: subscription,
+      };
+    },
+    subscribeInvalidTopic: async (
+      payload: { topic: string; signal: string },
+      state,
+      ctx
+    ) => {
+      const subscription = await ctx.subscribe(payload.topic, {
+        signal: payload.signal,
+      });
+
+      return {
+        state,
+        reply: subscription,
+      };
+    },
+    unsubscribeTopic: async (
+      payload: { topic: string; signal?: string },
+      state,
+      ctx
+    ) => {
+      const signal = payload.signal ?? "topicEvent";
+      await ctx.unsubscribe(payload.topic, { signal });
+
+      return {
+        state: {
+          ...state,
+          subscriptions: state.subscriptions.filter(
+            (entry) => !(entry.topic === payload.topic && entry.signal === signal)
+          ),
+        },
+        reply: {
+          ok: true,
+        },
+      };
+    },
+    events: async (_payload: void, state) => ({
+      reply: {
+        subscriptions: state.subscriptions,
+        events: state.events,
+      },
+    }),
+  },
+  onSignal: {
+    topicEvent: async (
+      payload: {
+        topic: string;
+        payload?: { value?: string | null } | null;
+        publishId: string;
+        publisherRunId: string;
+      },
+      state
+    ) => ({
+      state: {
+        ...state,
+        events: [
+          ...state.events,
+          {
+            topic: payload.topic,
+            value:
+              payload.payload && typeof payload.payload === "object" && "value" in payload.payload
+                ? ((payload.payload as { value?: string | null }).value ?? null)
+                : null,
+            publishId: payload.publishId,
+            publisherRunId: payload.publisherRunId,
+            signal: "topicEvent",
+          },
+        ],
+      },
     }),
   },
 });
@@ -801,6 +1502,15 @@ export const workerEnvProbe = workflow({
       runtimeHomePresent: Boolean(process.env.VILANO_HOME),
       workerHomePresent: Boolean(process.env.VILANO_WORKER_HOME),
       internalRuntimeHomePresent: Boolean(process.env.VILANO_RUNTIME_HOME),
+    };
+  },
+});
+
+export const workerPidProbe = workflow({
+  name: "workerPidProbe",
+  run: async () => {
+    return {
+      pid: process.pid,
     };
   },
 });
@@ -949,6 +1659,28 @@ export const serviceTurnCoordinator = workflow({
     return {
       operatorRunId: operatorRef.id,
       pipeline,
+    };
+  },
+});
+
+export const singletonLookupCoordinator = workflow({
+  name: "singletonLookupCoordinator",
+  run: async (input: { sessionId: string; topic: string }, ctx) => {
+    const connected = await ctx.connect(operator, { sessionId: input.sessionId });
+    const typed = await ctx.lookup(operator, { sessionId: input.sessionId });
+    const discovered = await ctx.lookupSingleton("operator", {
+      sessionId: input.sessionId,
+    });
+
+    return {
+      connectedRunId: connected.id,
+      typedRunId: typed.id,
+      discoveredRunId: discovered.id,
+      discoveredDefinition: discovered.definitionName,
+      discoveredKey: discovered.serviceKey,
+      discoveredStatus: await discovered.status(),
+      typedResult: await typed.ask.pipeline({ topic: `${input.topic}-typed` }),
+      discoveredResult: await discovered.ask("pipeline", { topic: input.topic }),
     };
   },
 });

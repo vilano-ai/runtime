@@ -5,20 +5,25 @@ defmodule VilanoKernel.ManagedWorker do
 
   require Logger
 
+  alias VilanoKernel.Storage
+
+  @idle_poll_ms 100
+  @restart_backoff_ms 200
+
   def start_link(index) when is_integer(index) do
     GenServer.start_link(__MODULE__, index, name: via_name(index))
   end
 
   def kill_worker(worker_id, reason \\ :requested)
 
-  def kill_worker("managed-local-" <> index_text, reason) do
-    case parse_managed_worker_index(index_text) do
+  def kill_worker("managed-local-" <> _rest = worker_id, reason) do
+    case managed_worker_index(worker_id) do
       {:ok, index} ->
         via_name(index)
         |> GenServer.whereis()
         |> case do
           nil -> :not_found
-          pid -> GenServer.call(pid, {:kill_worker, reason}, 5_000)
+          pid -> GenServer.call(pid, {:kill_worker, worker_id, reason}, 5_000)
         end
 
       _ ->
@@ -44,6 +49,7 @@ defmodule VilanoKernel.ManagedWorker do
 
     runtime = Application.fetch_env!(:vilano_kernel, :runtime)
     worker_runtime = runtime.managed_worker_runtime || "bun"
+    worker_mode = normalize_managed_worker_mode(runtime.managed_worker_mode)
     worker_root_dir = Path.join([runtime.project_root, "worker"])
     worker_source_dir = Path.join([worker_root_dir, worker_runtime, "src"])
     worker_entry = Path.join(worker_source_dir, "cli.ts")
@@ -55,28 +61,48 @@ defmodule VilanoKernel.ManagedWorker do
         Logger.warning(
           "Managed worker #{index} not started because '#{worker_runtime}' is not available on PATH"
         )
+
         :ignore
 
       {_runtime_path, false, _} ->
-        Logger.warning("Managed worker #{index} not started because #{worker_entry} does not exist")
+        Logger.warning(
+          "Managed worker #{index} not started because #{worker_entry} does not exist"
+        )
+
         :ignore
 
       {_runtime_path, _, false} ->
-        Logger.warning("Managed worker #{index} not started because #{shared_source_dir} does not exist")
+        Logger.warning(
+          "Managed worker #{index} not started because #{shared_source_dir} does not exist"
+        )
+
         :ignore
 
       {runtime_path, true, true} ->
-        cached_worker_entry = materialize_worker_entry!(runtime.home_dir, worker_root_dir, worker_runtime)
-        port = start_port(runtime_path, cached_worker_entry, runtime, index)
+        cached_worker_entry =
+          materialize_worker_entry!(runtime.home_dir, worker_root_dir, worker_runtime)
 
         state = %{
           index: index,
-          port: port,
-          os_pid: port_os_pid(port),
-          runtime: worker_runtime
+          runtime: runtime,
+          worker_runtime: worker_runtime,
+          worker_mode: worker_mode,
+          runtime_path: runtime_path,
+          worker_entry: cached_worker_entry,
+          port: nil,
+          os_pid: nil,
+          worker_id: nil,
+          generation: 0,
+          poll_timer: nil
         }
 
-        {:ok, state}
+        next_state =
+          case worker_mode do
+            "pooled" -> spawn_worker(state)
+            _ -> schedule_poll(state, 0)
+          end
+
+        {:ok, next_state}
     end
   end
 
@@ -86,9 +112,45 @@ defmodule VilanoKernel.ManagedWorker do
   end
 
   @impl true
-  def handle_info({port, {:exit_status, status}}, %{port: port, index: index} = state) do
-    Logger.warning("Managed worker #{index} exited with status #{status}")
-    {:stop, {:worker_exit, status}, state}
+  def handle_info(:maybe_spawn, state) do
+    next_state = %{state | poll_timer: nil}
+    updated_state =
+      try do
+        cond do
+          is_port(next_state.port) ->
+            next_state
+
+          next_state.worker_mode == "pooled" ->
+            spawn_worker(next_state)
+
+          runnable_activation_available?() ->
+            spawn_worker(next_state)
+
+          true ->
+            schedule_poll(next_state, @idle_poll_ms)
+        end
+      rescue
+        _error ->
+          schedule_poll(next_state, @idle_poll_ms)
+      end
+
+    {:noreply, updated_state}
+  end
+
+  def handle_info({port, {:exit_status, status}}, %{port: current_port} = state)
+      when is_port(port) and port == current_port do
+    if status != 0 or state.worker_mode == "pooled" do
+      Logger.warning(
+        "Managed worker #{state.index} (#{state.worker_id || "unknown"}) exited with status #{status}"
+      )
+    end
+
+    next_state =
+      state
+      |> clear_worker()
+      |> schedule_poll(exit_poll_delay_ms(state.worker_mode, status))
+
+    {:noreply, next_state}
   end
 
   def handle_info(_message, state) do
@@ -96,31 +158,67 @@ defmodule VilanoKernel.ManagedWorker do
   end
 
   @impl true
-  def handle_call({:kill_worker, reason}, _from, state) do
-    Logger.warning("Managed worker #{state.index} terminating due to #{inspect(reason)}")
-    maybe_kill_os_process(state[:os_pid], "-KILL")
-    {:stop, {:killed, reason}, :ok, state}
+  def handle_call({:kill_worker, worker_id, reason}, _from, state) do
+    cond do
+      worker_id != state.worker_id ->
+        {:reply, :stale, state}
+
+      true ->
+        Logger.warning(
+          "Managed worker #{state.index} terminating #{worker_id} due to #{inspect(reason)}"
+        )
+
+        next_state =
+          state
+          |> clear_worker("-KILL")
+          |> schedule_poll(@restart_backoff_ms)
+
+        {:reply, :ok, next_state}
+    end
   end
 
   @impl true
   def terminate(_reason, state) do
-    if is_port(state[:port]) do
-      Port.close(state.port)
-    end
-
-    maybe_kill_os_process(state[:os_pid])
-
+    _ = cancel_poll(state)
+    _ = clear_worker(state)
     :ok
   end
 
   defp via_name(index), do: String.to_atom("vilano_managed_worker_#{index}")
 
-  defp start_port(executable_path, worker_entry, runtime, index) do
+  defp spawn_worker(%{port: port} = state) when is_port(port), do: state
+
+  defp spawn_worker(state) do
+    worker_id = next_worker_id(state)
+
+    port =
+      start_port(
+        state.runtime_path,
+        state.worker_entry,
+        state.runtime,
+        worker_id,
+        state.worker_mode == "per_activation"
+      )
+
+    state
+    |> cancel_poll()
+    |> Map.merge(%{
+      port: port,
+      os_pid: port_os_pid(port),
+      worker_id: worker_id,
+      generation: state.generation + 1
+    })
+  end
+
+  defp start_port(executable_path, worker_entry, runtime, worker_id, once?) do
     server_url = "http://127.0.0.1:#{runtime.port}"
-    worker_id = "managed-local-#{index}"
     worker_home = Path.join(runtime.execution_home_dir, "worker-home")
 
     File.mkdir_p!(worker_home)
+
+    args =
+      [worker_entry, "--server", server_url, "--worker-id", worker_id] ++
+        if(once?, do: ["--once"], else: [])
 
     Port.open(
       {:spawn_executable, String.to_charlist(executable_path)},
@@ -132,11 +230,7 @@ defmodule VilanoKernel.ManagedWorker do
         :hide,
         {:cd, String.to_charlist(worker_home)},
         {:env, worker_env(runtime)},
-        {:args,
-         Enum.map(
-           [worker_entry, "--server", server_url, "--worker-id", worker_id],
-           &String.to_charlist/1
-         )}
+        {:args, Enum.map(args, &String.to_charlist/1)}
       ]
     )
   end
@@ -144,7 +238,8 @@ defmodule VilanoKernel.ManagedWorker do
   defp worker_env(runtime) do
     base_env = [
       {~c"VILANO_WORKER_ARTIFACT_HOME", String.to_charlist(runtime.artifact_home_dir)},
-      {~c"VILANO_WORKER_HOME", String.to_charlist(Path.join(runtime.execution_home_dir, "worker-home"))},
+      {~c"VILANO_WORKER_HOME",
+       String.to_charlist(Path.join(runtime.execution_home_dir, "worker-home"))},
       {~c"VILANO_KERNEL_PORT", String.to_charlist(Integer.to_string(runtime.port))}
     ]
 
@@ -177,6 +272,7 @@ defmodule VilanoKernel.ManagedWorker do
       |> Enum.sort()
       |> Enum.reduce(:crypto.hash_init(:sha256), fn relative_path, hash ->
         path = Path.join(worker_root_dir, relative_path)
+
         contents =
           case File.read(path) do
             {:ok, binary} -> binary
@@ -196,6 +292,14 @@ defmodule VilanoKernel.ManagedWorker do
     |> binary_part(0, 16)
   end
 
+  defp list_worker_files!(worker_root_dir) do
+    worker_root_dir
+    |> Path.join("**/*")
+    |> Path.wildcard(match_dot: true)
+    |> Enum.filter(&File.regular?/1)
+    |> Enum.map(&Path.relative_to(&1, worker_root_dir))
+  end
+
   defp port_os_pid(port) do
     case Port.info(port, :os_pid) do
       {:os_pid, os_pid} when is_integer(os_pid) -> os_pid
@@ -203,7 +307,54 @@ defmodule VilanoKernel.ManagedWorker do
     end
   end
 
+  defp clear_worker(state, signal \\ "-TERM") do
+    maybe_kill_os_process(state[:os_pid], signal)
+
+    if is_port(state[:port]) do
+      safe_close_port(state.port)
+    end
+
+    %{state | port: nil, os_pid: nil, worker_id: nil}
+  end
+
+  defp schedule_poll(state, delay_ms) do
+    next_state = cancel_poll(state)
+    timer_ref = Process.send_after(self(), :maybe_spawn, delay_ms)
+    %{next_state | poll_timer: timer_ref}
+  end
+
+  defp cancel_poll(%{poll_timer: nil} = state), do: state
+
+  defp cancel_poll(%{poll_timer: timer_ref} = state) do
+    Process.cancel_timer(timer_ref)
+    %{state | poll_timer: nil}
+  end
+
+  defp safe_close_port(port) do
+    Port.close(port)
+  rescue
+    _ -> :ok
+  end
+
+  defp runnable_activation_available? do
+    Storage.runnable_activation_available?()
+  end
+
+  defp next_worker_id(%{worker_mode: "pooled", index: index}) do
+    slot_worker_id(index)
+  end
+
+  defp next_worker_id(%{index: index, generation: generation}) do
+    slot_worker_id(index) <> ":run-" <> Integer.to_string(generation + 1)
+  end
+
+  defp slot_worker_id(index), do: "managed-local-" <> Integer.to_string(index)
+
+  defp exit_poll_delay_ms("per_activation", 0), do: 0
+  defp exit_poll_delay_ms(_worker_mode, _status), do: @restart_backoff_ms
+
   defp maybe_kill_os_process(nil, _signal), do: :ok
+
   defp maybe_kill_os_process(os_pid, signal) when is_integer(os_pid) do
     os_pid
     |> process_tree_pids()
@@ -217,8 +368,6 @@ defmodule VilanoKernel.ManagedWorker do
   rescue
     _ -> :ok
   end
-
-  defp maybe_kill_os_process(os_pid), do: maybe_kill_os_process(os_pid, "-TERM")
 
   defp process_tree_pids(os_pid) when is_integer(os_pid) do
     case System.cmd("pgrep", ["-P", Integer.to_string(os_pid)], stderr_to_stdout: true) do
@@ -243,6 +392,14 @@ defmodule VilanoKernel.ManagedWorker do
   defp runtime_executable("node"), do: System.find_executable("node")
   defp runtime_executable(_runtime), do: nil
 
+  defp normalize_managed_worker_mode("pooled"), do: "pooled"
+  defp normalize_managed_worker_mode(_mode), do: "per_activation"
+
+  defp managed_worker_index("managed-local-" <> rest) do
+    [index_text | _suffix] = String.split(rest, ":", parts: 2)
+    parse_managed_worker_index(index_text)
+  end
+
   defp parse_managed_worker_index(index_text) do
     case Integer.parse(index_text) do
       {index, ""} when index > 0 ->
@@ -257,36 +414,5 @@ defmodule VilanoKernel.ManagedWorker do
       _ ->
         :error
     end
-  end
-
-  defp list_worker_files!(root_dir) do
-    root_dir
-    |> do_list_worker_files!("")
-    |> Enum.reject(&String.ends_with?(&1, "/"))
-  end
-
-  defp do_list_worker_files!(root_dir, relative_dir) do
-    current_dir =
-      case relative_dir do
-        "" -> root_dir
-        _ -> Path.join(root_dir, relative_dir)
-      end
-
-    current_dir
-    |> File.ls!()
-    |> Enum.flat_map(fn entry ->
-      relative_path =
-        case relative_dir do
-          "" -> entry
-          _ -> Path.join(relative_dir, entry)
-        end
-
-      full_path = Path.join(root_dir, relative_path)
-
-      case File.dir?(full_path) do
-        true -> do_list_worker_files!(root_dir, relative_path)
-        false -> [relative_path]
-      end
-    end)
   end
 end

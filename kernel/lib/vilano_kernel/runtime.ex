@@ -2,6 +2,7 @@ defmodule VilanoKernel.Runtime do
   @moduledoc false
 
   defstruct [
+    :install_root_dir,
     :home_dir,
     :execution_home_dir,
     :artifact_home_dir,
@@ -13,13 +14,18 @@ defmodule VilanoKernel.Runtime do
     :worker_auth_token,
     :managed_worker_count,
     :managed_worker_runtime,
+    :managed_worker_mode,
     :lease_duration_seconds
   ]
 
   def load! do
+    install_root_dir =
+      System.get_env("VILANO_INSTALL_ROOT") ||
+        default_install_root_dir(System.get_env("VILANO_HOME"))
+
     home_dir =
       System.get_env("VILANO_HOME") ||
-        Path.join(System.user_home!(), ".vilano")
+        Path.join(install_root_dir, "state")
 
     execution_home_dir =
       System.get_env("VILANO_EXECUTION_HOME") ||
@@ -44,6 +50,7 @@ defmodule VilanoKernel.Runtime do
       end
 
     managed_worker_runtime = System.get_env("VILANO_MANAGED_WORKER_RUNTIME", "bun")
+    managed_worker_mode = System.get_env("VILANO_MANAGED_WORKER_MODE", "per_activation")
 
     lease_duration_seconds =
       case System.get_env("VILANO_LEASE_DURATION_SECONDS", "30") do
@@ -52,6 +59,7 @@ defmodule VilanoKernel.Runtime do
       end
 
     %__MODULE__{
+      install_root_dir: install_root_dir,
       home_dir: home_dir,
       execution_home_dir: execution_home_dir,
       artifact_home_dir: Path.join(execution_home_dir, "artifacts"),
@@ -63,11 +71,23 @@ defmodule VilanoKernel.Runtime do
       worker_auth_token: System.get_env("VILANO_WORKER_TOKEN"),
       managed_worker_count: managed_worker_count,
       managed_worker_runtime: managed_worker_runtime,
+      managed_worker_mode: managed_worker_mode,
       lease_duration_seconds: lease_duration_seconds
     }
   end
 
   defp default_execution_home_dir(home_dir) do
     Path.join(Path.expand(home_dir), "execution")
+  end
+
+  defp default_install_root_dir(nil), do: Path.join(System.user_home!(), ".vilano")
+
+  defp default_install_root_dir(home_dir) do
+    expanded_home_dir = Path.expand(home_dir)
+
+    case Path.basename(expanded_home_dir) do
+      "state" -> Path.dirname(expanded_home_dir)
+      _ -> expanded_home_dir
+    end
   end
 end

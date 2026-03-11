@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -18,7 +19,7 @@ export async function ensureActivationWorkspace(
   const tempWorkspacePath = `${workspacePath}.tmp-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 
   try {
-    await fs.cp(activation.project.path, tempWorkspacePath, {
+    await fs.cp(activationImportRoot, tempWorkspacePath, {
       recursive: true,
       force: true,
       dereference: true,
@@ -31,16 +32,16 @@ export async function ensureActivationWorkspace(
     try {
       await fs.rename(tempWorkspacePath, workspacePath);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      if (!(await shouldReuseExistingPath(error, workspacePath))) {
         throw error;
       }
 
-      await fs.rm(tempWorkspacePath, { recursive: true, force: true });
+      await removeTree(tempWorkspacePath);
     }
 
     return workspacePath;
   } catch (error) {
-    await fs.rm(tempWorkspacePath, { recursive: true, force: true }).catch(() => undefined);
+    await removeTree(tempWorkspacePath);
     throw error;
   }
 }
@@ -49,8 +50,8 @@ export async function ensureActivationImportRoot(
   workerHome: string,
   activation: Activation
 ): Promise<string> {
-  const importsRoot = path.join(workerHome, "activation-imports");
-  const importRoot = path.join(importsRoot, activation.leaseId);
+  const importsRoot = path.join(workerHome, "import-cache");
+  const importRoot = path.join(importsRoot, await importCacheKey(activation.project.path));
 
   await fs.mkdir(importsRoot, { recursive: true });
   const tempImportRoot = `${importRoot}.tmp-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
@@ -63,18 +64,18 @@ export async function ensureActivationImportRoot(
     try {
       await fs.rename(tempImportRoot, importRoot);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      if (!(await shouldReuseExistingPath(error, importRoot))) {
         throw error;
       }
 
-      await fs.rm(tempImportRoot, { recursive: true, force: true });
+      await removeTree(tempImportRoot);
     }
 
     await fs.chmod(importRoot, importRootStat.mode);
 
     return importRoot;
   } catch (error) {
-    await fs.rm(tempImportRoot, { recursive: true, force: true }).catch(() => undefined);
+    await removeTree(tempImportRoot);
     throw error;
   }
 }
@@ -134,4 +135,54 @@ async function linkActivationNodeModules(importRoot: string, workspacePath: stri
 
   const workspaceNodeModules = path.join(workspacePath, "node_modules");
   await fs.symlink(importNodeModules, workspaceNodeModules, "dir");
+}
+
+async function importCacheKey(projectPath: string): Promise<string> {
+  const resolvedPath = await fs.realpath(projectPath);
+  return crypto.createHash("sha256").update(resolvedPath).digest("hex").slice(0, 16);
+}
+
+async function shouldReuseExistingPath(
+  error: unknown,
+  destinationPath: string
+): Promise<boolean> {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === "EEXIST" || code === "ENOTEMPTY") {
+    return true;
+  }
+
+  if (code !== "EACCES") {
+    return false;
+  }
+
+  try {
+    await fs.lstat(destinationPath);
+    return true;
+  } catch (lookupError) {
+    if ((lookupError as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+
+    throw lookupError;
+  }
+}
+
+async function removeTree(rootPath: string): Promise<void> {
+  await makeTreeWritableForRemoval(rootPath).catch(() => undefined);
+  await fs.rm(rootPath, { recursive: true, force: true }).catch(() => undefined);
+}
+
+async function makeTreeWritableForRemoval(rootPath: string): Promise<void> {
+  const stat = await fs.lstat(rootPath);
+
+  if (stat.isSymbolicLink()) {
+    return;
+  }
+
+  if (stat.isDirectory()) {
+    const entries = await fs.readdir(rootPath);
+    await Promise.all(entries.map((entry) => makeTreeWritableForRemoval(path.join(rootPath, entry))));
+  }
+
+  await fs.chmod(rootPath, stat.mode | 0o200);
 }

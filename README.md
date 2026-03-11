@@ -1,7 +1,12 @@
 # Vilano Runtime
 
+[![CI](https://github.com/vilano-ai/runtime/actions/workflows/ci.yml/badge.svg)](https://github.com/vilano-ai/runtime/actions/workflows/ci.yml)
+[![Launch Gate](https://github.com/vilano-ai/runtime/actions/workflows/launch-gate.yml/badge.svg)](https://github.com/vilano-ai/runtime/actions/workflows/launch-gate.yml)
+
 Vilano Runtime is a local-first durable execution runtime with a BEAM kernel and external
 JavaScript/TypeScript workers.
+
+Vilano Runtime is a product by Vilano AI.
 
 It is built for workflows and long-lived services that need:
 
@@ -10,12 +15,12 @@ It is built for workflows and long-lived services that need:
 - subprocess-heavy work with durable artifacts
 - inspectable execution timelines instead of opaque background jobs
 
-Vilano is currently a `0.x` runtime. The core execution model is real and tested, but the project
+Vilano Runtime is currently a `0.x` runtime. The core execution model is real and tested, but the project
 should still be treated as preview software.
 
 ## What It Is
 
-Vilano has three main pieces:
+Vilano Runtime has three main pieces:
 
 - **BEAM kernel**
   - durable state, leases, waits, retries, signals, service inboxes, and managed worker
@@ -34,8 +39,12 @@ The runtime is intentionally local-first today:
 - loopback-only control plane
 - per-runtime access token under `VILANO_HOME`
 
-Vilano does not currently claim strong filesystem isolation from code running as the same OS user.
+By default, installed runtime payloads are intended to live under `~/.vilano/installs`, while
+mutable runtime state lives under `~/.vilano/state`.
+
+Vilano Runtime does not currently claim strong filesystem isolation from code running as the same OS user.
 The OSS `0.x` trust model assumes a local, single-user machine.
+See [docs/trust-model.md](./docs/trust-model.md) for the canonical current posture.
 
 Vilano Runtime is released under the [Apache-2.0 License](./LICENSE).
 
@@ -48,7 +57,8 @@ Vilano Runtime is released under the [Apache-2.0 License](./LICENSE).
 - cancellation propagation across waits, child runs, service asks, and subprocesses
 - managed-worker hard-stop fallback for timed blocking steps
 - `run inspect` and `run replay` for durable operator visibility
-- packaged local install flow with runtime bundle materialization under `VILANO_HOME`
+- packaged local install flow with immutable runtime payloads under the managed install root
+  and mutable state under `VILANO_HOME`
 
 ## Status
 
@@ -71,9 +81,73 @@ workers currently rely on cooperative in-process step cancellation.
 
 The current support posture is documented in [docs/support-matrix.md](./docs/support-matrix.md).
 
+## Start Here
+
+- [First-Run Walkthrough](./docs/first-run.md)
+- [Support Matrix](./docs/support-matrix.md)
+- [Troubleshooting](./docs/troubleshooting.md)
+- [Trust Model](./docs/trust-model.md)
+
 ## Quick Start
 
-### From a Repo Checkout
+### Install The Runtime
+
+```bash
+curl -fsSL https://runtime.vilano.ai/install.sh | bash
+~/.vilano/bin/vilano version
+~/.vilano/bin/vilano doctor
+```
+
+The installer writes the managed launcher to `~/.vilano/bin/vilano`. Add `~/.vilano/bin` to your
+`PATH` if you want to use bare `vilano`. `install.sh` and `vilano update` both default to the
+stable channel. Preview installs are opt-in through `VILANO_RELEASE_CHANNEL=preview`.
+
+Then add the TypeScript SDK in your project:
+
+```bash
+bun add @vilano/runtime
+```
+
+For your own repo, prefer an explicit `vilano.manifest.json`:
+
+```bash
+vilano init /path/to/project
+```
+
+`vilano init` is a generated starting point for TS/JS projects. Review the generated
+manifest before relying on it, especially if your definitions use non-trivial export patterns.
+
+Register the project and inspect what Vilano Runtime found:
+
+```bash
+vilano project add /path/to/project --name my-project
+vilano workflow list --project my-project
+```
+
+Registration validates the manifest contract, paths, and declared export names, then imports the
+declared definitions from the pinned snapshot to prove definition identity before registration
+completes. Activation still re-validates the same identity when the worker imports the module.
+
+Because of that, treat `vilano project add` and `vilano project sync` as trusted local-code steps.
+
+Start a workflow:
+
+```bash
+vilano run start my-project/planner --input '{"topic":"BEAM"}'
+vilano run list
+vilano run inspect <run-id>
+vilano run replay <run-id>
+```
+
+Talk to a service:
+
+```bash
+vilano service ensure my-project/reviewer --service-key repo_123 --key-json '{"repoId":"repo_123"}'
+vilano service send my-project/reviewer hint --service-key repo_123 --input '{"note":"Focus on migrations"}'
+vilano service ask my-project/reviewer status --service-key repo_123 --wait-timeout 30s
+```
+
+### From A Repo Checkout
 
 ```bash
 direnv allow
@@ -84,31 +158,9 @@ bun install
 ./cli/bin/vilano.ts workflow list
 ```
 
-For your own repo, prefer an explicit `vilano.manifest.json`:
-
-```bash
-./cli/bin/vilano.ts project init-manifest /path/to/project
-```
-
-That generates the manifest from the current TS/JS definitions so registration does not depend on
-fallback source scanning.
-
-Start a workflow:
-
-```bash
-./cli/bin/vilano.ts run start demo/planner --input '{"topic":"BEAM"}'
-./cli/bin/vilano.ts run list
-./cli/bin/vilano.ts run inspect <run-id>
-./cli/bin/vilano.ts run replay <run-id>
-```
-
-Talk to a service:
-
-```bash
-./cli/bin/vilano.ts service ensure demo/reviewer --service-key repo_123 --key-json '{"repoId":"repo_123"}'
-./cli/bin/vilano.ts service send demo/reviewer hint --service-key repo_123 --input '{"note":"Focus on migrations"}'
-./cli/bin/vilano.ts service ask demo/reviewer status --service-key repo_123 --wait-timeout 30s
-```
+For smaller reference projects, see [`examples/multi-agent-demo`](./examples/multi-agent-demo),
+[`examples/approval-loop-demo`](./examples/approval-loop-demo), and
+[`examples/fanout-demo`](./examples/fanout-demo).
 
 ### Packaged Smoke Path
 
@@ -118,12 +170,44 @@ The repo includes a packaged install smoke check:
 bun run check
 bun run pack
 bun run smoke:install
+bun run build:release
+bun run smoke:release-install
+```
+
+For the heavier pre-release gate, run:
+
+```bash
+bun run check:launch
 ```
 
 That path packs `vilano`, installs it into a temporary directory, verifies that read-only commands
 do not mutate the vendored bundle, verifies `doctor --fix` does not rewrite packaged runtime
-contents when vendored kernel artifacts are already present, starts the daemon, and confirms that
-runtime state is written under `VILANO_HOME`.
+contents when a bundled kernel release is already present, checks release metadata through
+`vilano update --check`, applies an update into the managed install root, rolls back, starts the
+daemon through the managed launcher, and confirms that runtime state is written under `VILANO_HOME`.
+
+The release-distribution path goes one step further:
+
+- `bun run build:release`
+  - builds a versioned runtime tarball under `dist/release/`
+  - emits `dist/release/release.json`
+  - emits `dist/release/install.sh`
+- `bun run merge:release`
+  - combines per-platform `release.json` fragments into one assembled bundle
+- `bun run verify:release`
+  - verifies the assembled `release.json` / `install.sh` pair and required supported platforms
+- `bun run smoke:release-install`
+  - installs that artifact into a clean root using the generated installer
+  - verifies the managed launcher output and `PATH` guidance
+  - verifies bundled-worker startup, `doctor`, inspect, and replay from the installed runtime
+
+The public installer/update front door is intended to live at:
+
+- `https://runtime.vilano.ai/install.sh`
+- `https://runtime.vilano.ai/release.json`
+
+This repo includes the thin Cloudflare Worker used to serve those endpoints under
+[`deploy/cloudflare/runtime-installer`](./deploy/cloudflare/runtime-installer).
 
 ## Programming Model
 

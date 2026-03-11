@@ -4,7 +4,7 @@ This document describes the current OSS runtime support posture. It is intention
 
 ## Current Positioning
 
-Vilano is currently a local-first durable execution runtime for a single machine with a BEAM kernel
+Vilano Runtime is currently a local-first durable execution runtime for a single machine with a BEAM kernel
 and external JavaScript/TypeScript workers.
 
 ## Supported Today
@@ -45,15 +45,15 @@ part of the current OSS support matrix.
 
 - Bun-first CLI entrypoint
 - local project registry
-- packaged runtime bundle materialized under `VILANO_HOME` when the daemon starts
+- packaged runtime bundle materialized under the managed install root when the daemon starts
 - `run inspect`, `run replay`, `doctor`, `version`, and smoke-install flow
 
 ### Operating Systems
 
 Supported for the canonical OSS v1 path:
 
-- macOS
-- Linux
+- macOS Apple Silicon (`darwin-arm64`)
+- Linux x86_64 (`linux-x64`)
 
 Windows is not part of the supported matrix today.
 
@@ -64,6 +64,8 @@ The repo CI is expected to enforce this matrix directly:
 - supported path jobs run on `ubuntu-latest` and `macos-latest`
 - Bun CLI + TypeScript SDK + BEAM kernel + Bun worker is the required passing path
 - Node worker coverage runs as a separate preview job
+- the heavier pre-release gate is `bun run check:launch`
+- the heavier GitHub Actions pre-release gate is `Launch Gate`
 
 If the support matrix changes, the CI matrix should change with it.
 
@@ -94,6 +96,8 @@ If the support matrix changes, the CI matrix should change with it.
 - the daemon is not a network service
 - local token auth reduces blind localhost access, but does not claim strong isolation against fully
   trusted code running as the same user
+
+See [Trust Model](./trust-model.md) for the canonical description of these assumptions.
 
 ## Release Guidance
 

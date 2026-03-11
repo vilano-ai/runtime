@@ -2,9 +2,10 @@
 
 This directory holds Bun-driven integration coverage for the local runtime.
 
-There are two main test modes:
+There are several test modes:
 
 - `bun run test` for the normal integration suite
+- `bun run check:launch` for the heavier pre-release / launch-day gate
 - `bun run test:preview-node` for the preview Node worker lane
 - `bun run test:kernel` for kernel-level invariant tests
 - `bun run test:soak` for the longer mixed-traffic churn run
@@ -51,11 +52,13 @@ Current coverage:
 - `service stop` failing queued backlog behind an active turn
 - service ask correlation isolation across concurrent caller runs
 - handler-triggered service stop draining queued backlog
+- worker-core handling of activation setup failures and lease cleanup
 - Node worker parity for unmanaged and managed JS worker paths in the preview lane
 
 Run it from the dev shell:
 
 - `bun run test`
+- `bun run check:launch`
 - `bun run test:preview-node`
 - `bun run test:kernel`
 - `VILANO_KERNEL_NO_COMPILE=1 bun test tests/integration.test.ts --timeout 30000 --max-concurrency 1`

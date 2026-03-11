@@ -26,15 +26,23 @@ const CLI_ENTRY = path.join(ROOT, "cli", "bin", "vilano.ts");
 const WORKER_ROOT = path.join(ROOT, "worker");
 const BOOTSTRAP_DEMO_ROOT = path.join(ROOT, "examples", "bootstrap-demo");
 const SDK_ROOT = path.join(ROOT, "sdk", "typescript");
+const activeHarnesses = new Set<RuntimeHarness>();
+let cleanupHooksInstalled = false;
+let forcingGlobalCleanup = false;
 
 export class RuntimeHarness {
   private readonly serviceAddressCache = new Map<string, { project: string; name: string; key: string }>();
+  private readonly spawnedCommands = new Set<SpawnedCommand>();
+  private daemonPid: number | null = null;
+  private disposed = false;
 
   private constructor(
     private readonly runtimeHome: string,
     private readonly port: number,
     private readonly envOverrides: Record<string, string>
-  ) {}
+  ) {
+    registerActiveHarness(this);
+  }
 
   static async create(
     options: {
@@ -56,6 +64,7 @@ export class RuntimeHarness {
 
       try {
         await harness.runCli(["daemon", "start", "--port", String(port)]);
+        await harness.refreshDaemonPid();
         await harness.runCli(["project", "add", projectDir, "--name", "demo"]);
         return harness;
       } catch (error) {
@@ -70,18 +79,30 @@ export class RuntimeHarness {
   }
 
   async dispose(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
+    await this.refreshDaemonPid();
+
     try {
       await this.runCli(["daemon", "stop"], { allowFailure: true });
     } finally {
+      await this.terminateOutstandingCommands();
+      await terminateDetachedProcessGroup(this.daemonPid);
+      unregisterActiveHarness(this);
       await makeTreeWritable(deriveExecutionHomeDir(this.runtimeHome)).catch(() => undefined);
       await fs.rm(deriveExecutionHomeDir(this.runtimeHome), { recursive: true, force: true });
       await fs.rm(this.runtimeHome, { recursive: true, force: true });
+      this.daemonPid = null;
     }
   }
 
   async restartDaemon(): Promise<void> {
     await this.runCli(["daemon", "stop"], { allowFailure: true });
     await this.runCli(["daemon", "start", "--port", String(this.port)]);
+    await this.refreshDaemonPid();
   }
 
   async startWorkflow(reference: string, input: unknown): Promise<RunStartResponse> {
@@ -267,12 +288,24 @@ export class RuntimeHarness {
     return this.runtimeHome;
   }
 
+  get daemonProcessId(): number | null {
+    return this.daemonPid;
+  }
+
   get artifactHomeDir(): string {
     return path.join(deriveExecutionHomeDir(this.runtimeHome), "artifacts");
   }
 
   resolveArtifactRef(ref: string): string {
     return path.join(this.artifactHomeDir, ref);
+  }
+
+  forceCleanupSync(): void {
+    for (const command of this.spawnedCommands) {
+      command.forceKillSync();
+    }
+
+    forceKillProcessGroupSync(this.daemonPid);
   }
 
   private async runCli(
@@ -331,7 +364,12 @@ export class RuntimeHarness {
       stderr: "pipe",
     });
 
-    return new SpawnedCommand(proc);
+    let spawned!: SpawnedCommand;
+    spawned = new SpawnedCommand(proc, () => {
+      this.spawnedCommands.delete(spawned);
+    });
+    this.spawnedCommands.add(spawned);
+    return spawned;
   }
 
   private async readDaemonToken(): Promise<string> {
@@ -390,6 +428,15 @@ export class RuntimeHarness {
     this.serviceAddressCache.set(cacheKey, resolved);
     return resolved;
   }
+
+  private async refreshDaemonPid(): Promise<void> {
+    this.daemonPid = (await readDaemonState(this.runtimeHome))?.pid ?? this.daemonPid;
+  }
+
+  private async terminateOutstandingCommands(): Promise<void> {
+    const commands = [...this.spawnedCommands];
+    await Promise.all(commands.map((command) => command.terminate().catch(() => undefined)));
+  }
 }
 
 function deriveServiceKey(keyInput: unknown): string {
@@ -418,20 +465,55 @@ function deriveServiceKey(keyInput: unknown): string {
 }
 
 export class SpawnedCommand {
-  constructor(private readonly proc: Bun.Subprocess<any, "pipe", "pipe">) {}
+  private waitPromise: Promise<{ stdout: string; stderr: string; exitCode: number }> | null = null;
+
+  constructor(
+    private readonly proc: Bun.Subprocess<any, "pipe", "pipe">,
+    private readonly onSettled: () => void
+  ) {}
+
+  get pid(): number {
+    return this.proc.pid;
+  }
 
   kill(signal: NodeJS.Signals = "SIGKILL"): void {
-    process.kill(this.proc.pid, signal);
+    void killProcessTree(this.proc.pid, signal).catch(() => undefined);
   }
 
   async wait(): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    const [stdout, stderr, exitCode] = await Promise.all([
-      streamToText(this.proc.stdout),
-      streamToText(this.proc.stderr),
-      this.proc.exited,
-    ]);
+    return await this.ensureWaitPromise();
+  }
 
-    return { stdout, stderr, exitCode };
+  async terminate(): Promise<void> {
+    const waitPromise = this.ensureWaitPromise();
+
+    await killProcessTree(this.proc.pid, "SIGTERM").catch(() => undefined);
+    if (await waitForPromiseSettled(waitPromise, 1_500)) {
+      return;
+    }
+
+    await killProcessTree(this.proc.pid, "SIGKILL").catch(() => undefined);
+    await waitForPromiseSettled(waitPromise, 1_500);
+  }
+
+  forceKillSync(): void {
+    forceKillPidSync(this.proc.pid);
+  }
+
+  private ensureWaitPromise(): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    if (!this.waitPromise) {
+      this.waitPromise = Promise.all([
+        streamToText(this.proc.stdout),
+        streamToText(this.proc.stderr),
+        this.proc.exited,
+      ])
+        .then(([stdout, stderr, exitCode]) => ({ stdout, stderr, exitCode }))
+        .finally(() => {
+          this.onSettled();
+        });
+    }
+
+    return this.waitPromise;
   }
 }
 
@@ -517,6 +599,195 @@ async function streamToText(
   }
 
   return await new Response(stream).text();
+}
+
+function registerActiveHarness(harness: RuntimeHarness): void {
+  activeHarnesses.add(harness);
+  installCleanupHooks();
+}
+
+function unregisterActiveHarness(harness: RuntimeHarness): void {
+  activeHarnesses.delete(harness);
+}
+
+function installCleanupHooks(): void {
+  if (cleanupHooksInstalled) {
+    return;
+  }
+
+  cleanupHooksInstalled = true;
+
+  process.once("SIGINT", () => {
+    forceCleanupAllHarnessesSync();
+    process.exit(130);
+  });
+
+  process.once("SIGTERM", () => {
+    forceCleanupAllHarnessesSync();
+    process.exit(143);
+  });
+
+  process.once("exit", () => {
+    forceCleanupAllHarnessesSync();
+  });
+}
+
+function forceCleanupAllHarnessesSync(): void {
+  if (forcingGlobalCleanup) {
+    return;
+  }
+
+  forcingGlobalCleanup = true;
+  for (const harness of activeHarnesses) {
+    harness.forceCleanupSync();
+  }
+}
+
+async function terminateDetachedProcessGroup(pid: number | null): Promise<void> {
+  if (!Number.isInteger(pid) || (pid as number) <= 0) {
+    return;
+  }
+
+  signalProcessGroup(pid as number, "SIGTERM");
+  if (await waitForProcessExit(pid as number, 1_500)) {
+    return;
+  }
+
+  signalProcessGroup(pid as number, "SIGKILL");
+  if (await waitForProcessExit(pid as number, 1_500)) {
+    return;
+  }
+
+  await killProcessTree(pid as number, "SIGKILL").catch(() => undefined);
+}
+
+async function killProcessTree(pid: number, signal: NodeJS.Signals): Promise<void> {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return;
+  }
+
+  const childPids = await listChildPids(pid);
+  for (const childPid of childPids.reverse()) {
+    signalPid(childPid, signal);
+  }
+
+  signalPid(pid, signal);
+}
+
+async function listChildPids(rootPid: number): Promise<number[]> {
+  const proc = Bun.spawn(["ps", "-axo", "pid=,ppid="], {
+    cwd: ROOT,
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const output = await new Response(proc.stdout).text();
+  const childrenByParent = new Map<number, number[]>();
+
+  for (const line of output.split("\n")) {
+    const [pidText, parentText] = line.trim().split(/\s+/, 2);
+    const pid = Number.parseInt(pidText ?? "", 10);
+    const parentPid = Number.parseInt(parentText ?? "", 10);
+
+    if (!Number.isFinite(pid) || !Number.isFinite(parentPid)) {
+      continue;
+    }
+
+    const siblings = childrenByParent.get(parentPid) ?? [];
+    siblings.push(pid);
+    childrenByParent.set(parentPid, siblings);
+  }
+
+  const discovered: number[] = [];
+  const queue = [...(childrenByParent.get(rootPid) ?? [])];
+
+  while (queue.length > 0) {
+    const nextPid = queue.shift()!;
+    discovered.push(nextPid);
+    queue.push(...(childrenByParent.get(nextPid) ?? []));
+  }
+
+  return discovered;
+}
+
+function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH" && code !== "EPERM") {
+      throw error;
+    }
+  }
+}
+
+function forceKillProcessGroupSync(pid: number | null): void {
+  if (!Number.isInteger(pid) || (pid as number) <= 0) {
+    return;
+  }
+
+  try {
+    process.kill(-(pid as number), "SIGKILL");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH" && code !== "EPERM") {
+      throw error;
+    }
+  }
+
+  forceKillPidSync(pid);
+}
+
+function forceKillPidSync(pid: number | null): void {
+  if (!Number.isInteger(pid) || (pid as number) <= 0) {
+    return;
+  }
+
+  signalPid(pid as number, "SIGKILL");
+}
+
+function signalPid(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH" && code !== "EPERM") {
+      throw error;
+    }
+  }
+}
+
+async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (!(await isProcessAlive(pid))) {
+      return true;
+    }
+
+    await sleep(100);
+  }
+
+  return !(await isProcessAlive(pid));
+}
+
+async function waitForPromiseSettled<T>(promise: Promise<T>, timeoutMs: number): Promise<boolean> {
+  return await Promise.race([
+    promise.then(
+      () => true,
+      () => true
+    ),
+    sleep(timeoutMs).then(() => false),
+  ]);
+}
+
+async function isProcessAlive(pid: number): Promise<boolean> {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "EPERM";
+  }
 }
 
 async function readDaemonState(runtimeHome: string): Promise<DaemonState | null> {

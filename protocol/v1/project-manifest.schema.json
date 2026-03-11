@@ -70,6 +70,32 @@
           "type": "string",
           "enum": ["typescript", "javascript"],
           "description": "Current supported definition source languages for the OSS worker path."
+        },
+        "mailbox": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxQueued"],
+          "properties": {
+            "maxQueued": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "overload": {
+              "type": "string",
+              "enum": ["reject_new"]
+            }
+          }
+        },
+        "discovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["singletonRole"],
+          "properties": {
+            "singletonRole": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
       }
     }

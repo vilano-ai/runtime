@@ -1,0 +1,41 @@
+{
+  "manifestVersion": 1,
+  "definitions": {
+    "workflows": [
+      {
+        "kind": "workflow",
+        "name": "multiAgentCoordinator",
+        "exportName": "multiAgentCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      }
+    ],
+    "services": [
+      {
+        "kind": "service",
+        "name": "researchAgent",
+        "exportName": "researchAgent",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "service",
+        "name": "reviewerAgent",
+        "exportName": "reviewerAgent",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "service",
+        "name": "writerAgent",
+        "exportName": "writerAgent",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      }
+    ]
+  }
+}

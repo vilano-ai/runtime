@@ -1,6 +1,6 @@
 # Manifest Guide
 
-Vilano uses two manifest forms today:
+Vilano Runtime uses two manifest forms today:
 
 - **source manifest**
   - `vilano.manifest.json`
@@ -41,8 +41,11 @@ Each definition entry currently includes:
 That contract is validated by [cli/src/project-manifest-contract.ts](../cli/src/project-manifest-contract.ts)
 and checked in CI through `bun run check:manifest`.
 
-Vilano treats `exportName` as authoritative. The definition file must export that exact symbol, and
-the exported value must match the declared `kind` and `name`.
+Vilano Runtime treats `exportName` as authoritative. Registration validates schema, paths, and export-name
+syntax. During `project add` and `project sync`, the CLI then imports the declared definitions from
+the pinned project snapshot so the definition file must export that exact symbol and the exported
+value must match the declared `kind` and `name` before registration completes. Activation still
+re-validates the same identity when the worker imports the module again.
 
 ## Runtime Behavior
 
@@ -58,11 +61,15 @@ That means the runtime already prefers explicit manifests over discovery magic. 
 To bootstrap an explicit manifest for an existing TS/JS repo:
 
 ```bash
-vilano project init-manifest /path/to/project
+vilano init /path/to/project
 ```
 
 That command writes `vilano.manifest.json` from the current definition set so later registration and
-sync flows do not depend on fallback source scanning.
+sync flows do not depend on fallback source scanning. The generated manifest is a starting point,
+not a proof that every definition export is correct.
+
+For the current trust posture, registration should be treated as a trusted local-code step because
+the CLI imports the declared definitions from the pinned snapshot. See [Trust Model](./trust-model.md).
 
 ## Direction
 

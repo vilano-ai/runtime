@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
@@ -12,14 +13,27 @@ import {
   stopDaemon,
 } from "../daemon-client.ts";
 import {
+  renderRollbackResult,
   renderDaemonStatus,
   renderDoctorReport,
+  renderUpdateApply,
+  renderUpdateCheck,
   renderVersionInfo,
   writeOutput,
 } from "../output.ts";
+import {
+  compareRuntimeVersions,
+  getCurrentPlatformKey,
+  loadReleaseMetadata,
+  resolveReleaseChannel,
+  resolveReleaseMetadataSource,
+  selectReleaseVersion,
+} from "../release-metadata.ts";
 import { getRuntimePaths } from "../runtime-home.ts";
 import { prepareRuntimeBundle, prepareRuntimeBundleWithOptions } from "../runtime-materializer.ts";
 import { CLI_PROTOCOL_VERSION, getCliVersion } from "../runtime-version.ts";
+import { applyRuntimeUpdate, rollbackRuntimeInstall } from "../update-runtime.ts";
+import type { RuntimeBundleManifest } from "../runtime-bundle.ts";
 import type { DaemonState, DaemonStatusResponse } from "../types.ts";
 import { CliError } from "../cli-error.ts";
 
@@ -42,7 +56,7 @@ export async function handleDaemonCommand(
     case "status": {
       const status = await getRunningDaemonStatus();
       if (!status) {
-        writeOutput(flags, { ok: true, running: false }, () => "Vilano kernel is not running");
+        writeOutput(flags, { ok: true, running: false }, () => "Vilano Runtime kernel is not running");
         return 0;
       }
 
@@ -52,14 +66,14 @@ export async function handleDaemonCommand(
     case "stop": {
       const stopped = await stopDaemon();
       if (!stopped) {
-        writeOutput(flags, { ok: true, running: false }, () => "Vilano kernel is not running");
+        writeOutput(flags, { ok: true, running: false }, () => "Vilano Runtime kernel is not running");
         return 0;
       }
 
       writeOutput(
         flags,
         { ok: true, stopped: true, pid: stopped.pid, port: stopped.port },
-        (body) => `Vilano kernel stopped\npid: ${body.pid}\nport: ${body.port}`
+        (body) => `Vilano Runtime kernel stopped\npid: ${body.pid}\nport: ${body.port}`
       );
       return 0;
     }
@@ -79,6 +93,7 @@ export async function handleVersionCommand(flags: Record<string, string | boolea
   }
 
   const bundle = await prepareRuntimeBundleWithOptions({ materialize: false });
+  const installManifest = await readJsonFile<RuntimeBundleManifest | null>(bundle.installManifestFile, null);
 
   const body = {
     ok: true,
@@ -90,6 +105,8 @@ export async function handleVersionCommand(flags: Record<string, string | boolea
       bundled: bundle.source.bundled,
       materialized: bundle.materialized,
       bundleVersion: bundle.bundleVersion,
+      installManifestFile: bundle.installManifestFile,
+      installManifest,
     },
     kernel: daemonStatus,
     kernelError,
@@ -103,6 +120,84 @@ export async function handleDoctorCommand(flags: Record<string, string | boolean
   const report = await runDoctor({ fix: Boolean(flags.fix) });
   writeOutput(flags, report, renderDoctorReport);
   return report.ok ? 0 : 1;
+}
+
+export async function handleUpdateCommand(flags: Record<string, string | boolean>): Promise<number> {
+  if (!flags.check) {
+    const channel = resolveReleaseChannel(flags);
+    const source = resolveReleaseMetadataSource(flags);
+    const result = await applyRuntimeUpdate({
+      source,
+      channel,
+      platformKey: getCurrentPlatformKey(),
+      targetVersion: typeof flags.to === "string" ? flags.to : undefined,
+    });
+
+    writeOutput(flags, result, renderUpdateApply);
+    return 0;
+  }
+
+  const source = resolveReleaseMetadataSource(flags);
+  const channel = resolveReleaseChannel(flags);
+  const metadata = await loadReleaseMetadata(source);
+  let targetRelease;
+  if (typeof flags.to === "string") {
+    targetRelease = metadata.manifest.releases[flags.to];
+    if (!targetRelease) {
+      throw new CliError(`Release metadata does not contain version ${flags.to}.`);
+    }
+  } else {
+    targetRelease = selectReleaseVersion(metadata.manifest, channel);
+  }
+  const platformKey = getCurrentPlatformKey();
+  const platformArtifact = targetRelease.artifacts[platformKey] ?? null;
+  const bundle = await prepareRuntimeBundleWithOptions({ materialize: false });
+  const installManifest = await readJsonFile<RuntimeBundleManifest | null>(bundle.installManifestFile, null);
+  const currentVersion = installManifest?.runtimeVersion ?? getCliVersion();
+  const updateAvailable = compareRuntimeVersions(targetRelease.version, currentVersion) > 0;
+
+  const body = {
+    ok: true,
+    mode: "check" as const,
+    source: metadata.source,
+    channel,
+    current: {
+      version: currentVersion,
+      bundled: bundle.source.bundled,
+      materialized: bundle.materialized,
+      installManifestFile: bundle.installManifestFile,
+      installManifest,
+    },
+    latest: {
+      version: targetRelease.version,
+      channel: targetRelease.channel,
+      protocolVersion: targetRelease.protocolVersion,
+      schemaMin: targetRelease.schemaMin,
+      schemaMax: targetRelease.schemaMax,
+      supportedWorkerRuntimes: targetRelease.supportedWorkerRuntimes,
+      releasedAt: targetRelease.releasedAt,
+      notesUrl: targetRelease.notesUrl ?? null,
+      artifact: platformArtifact,
+    },
+    platform: {
+      key: platformKey,
+      supported: platformArtifact !== null,
+    },
+    updateAvailable,
+  };
+
+  writeOutput(flags, body, renderUpdateCheck);
+  return 0;
+}
+
+export async function handleRollbackCommand(
+  flags: Record<string, string | boolean>
+): Promise<number> {
+  const result = await rollbackRuntimeInstall(
+    typeof flags.to === "string" ? flags.to : undefined
+  );
+  writeOutput(flags, result, renderRollbackResult);
+  return 0;
 }
 
 export async function handleWorkerCommand(
@@ -123,8 +218,8 @@ export async function handleWorkerCommand(
       const serverUrl = resolveWorkerServerUrl(flags, daemonState);
       const bundle = await prepareRuntimeBundle();
       const workerEntry = path.join(bundle.workerDir, workerRuntime, "src", "cli.ts");
-      const executable = workerRuntime === "node" ? "node" : "bun";
-      const childArgs = [workerEntry, "--server", serverUrl];
+      const launch = await resolveWorkerLaunchCommand(bundle, workerRuntime, workerEntry);
+      const childArgs = [...launch.prefixArgs, "--server", serverUrl];
 
       if (typeof flags["worker-id"] === "string") {
         childArgs.push("--worker-id", flags["worker-id"]);
@@ -136,7 +231,7 @@ export async function handleWorkerCommand(
 
       const workerAuthEnv = await resolveWorkerAuthEnv(serverUrl);
       const exitCode = await new Promise<number>((resolve, reject) => {
-        const child = spawn(executable, childArgs, {
+        const child = spawn(launch.executable, childArgs, {
           stdio: "inherit",
           env: {
             ...process.env,
@@ -180,6 +275,57 @@ async function resolveWorkerAuthEnv(serverUrl: string): Promise<Record<string, s
   }
 
   return {};
+}
+
+async function resolveWorkerLaunchCommand(
+  bundle: Awaited<ReturnType<typeof prepareRuntimeBundle>>,
+  workerRuntime: "bun" | "node",
+  workerEntry: string
+): Promise<{ executable: string; prefixArgs: string[] }> {
+  if (!bundle.source.bundled) {
+    return {
+      executable: workerRuntime === "node" ? "node" : "bun",
+      prefixArgs: [workerEntry],
+    };
+  }
+
+  if (workerRuntime === "bun") {
+    const bundledBun = path.join(bundle.source.cliRoot, "bun", "bun");
+    if (!(await fileExists(bundledBun))) {
+      throw new CliError(`Packaged Vilano runtime is missing bundled bun at ${bundledBun}. Reinstall Vilano Runtime.`);
+    }
+
+    return {
+      executable: bundledBun,
+      prefixArgs: [workerEntry],
+    };
+  }
+
+  const installManifest = await readJsonFile<RuntimeBundleManifest | null>(bundle.installManifestFile, null);
+  if (!installManifest?.supportedWorkerRuntimes.includes("node")) {
+    throw new CliError(
+      "Packaged Vilano runtime does not bundle the preview Node worker. Use `vilano worker start --runtime bun` or run from a repo checkout with Node on PATH."
+    );
+  }
+
+  const bundledNode = path.join(bundle.source.cliRoot, "node", "node");
+  if (!(await fileExists(bundledNode))) {
+    throw new CliError(`Packaged Vilano runtime declares Node worker support but is missing bundled node at ${bundledNode}.`);
+  }
+
+  return {
+    executable: bundledNode,
+    prefixArgs: [workerEntry],
+  };
+}
+
+async function fileExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function resolveWorkerServerUrl(

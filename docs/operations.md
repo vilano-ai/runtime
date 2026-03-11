@@ -1,24 +1,26 @@
 # Operations Guide
 
-Vilano is currently designed as a local runtime on a single machine.
+Vilano Runtime is currently designed as a local runtime on a single machine.
 
 ## Runtime Home
 
-Vilano stores mutable runtime state under `VILANO_HOME`.
+Vilano Runtime stores mutable runtime state under `VILANO_HOME`.
 
-If `VILANO_HOME` is not set, the default is `~/.vilano`.
+If `VILANO_HOME` is not set, the default is `~/.vilano/state`.
+
+Vilano Runtime also has an install root for packaged/runtime assets. If `VILANO_INSTALL_ROOT` is not set,
+the default install root is `~/.vilano`.
 
 Important contents include:
 
 - runtime database
 - daemon pid and state
 - access token
-- materialized runtime bundle
-- managed worker cache
+- execution/workspace state
 - captured exec artifacts
 
-Packaged installs materialize runtime assets under `VILANO_HOME` so the installed package contents
-remain read-only.
+Packaged installs materialize versioned runtime payloads under the install root, not inside
+`VILANO_HOME`. See [Distribution](./distribution.md) for the intended layout.
 
 ## First-Run Health Checks
 
@@ -31,11 +33,13 @@ vilano doctor --fix
 ```
 
 `doctor --fix` only mutates what is missing. For packaged installs that already contain vendored
-kernel deps and build artifacts, it does not fetch Hex deps or rewrite the packaged bundle. Node is
-reported as optional unless you are validating the preview Node worker lane.
+a ready kernel release, it does not fetch Hex deps or rewrite the packaged bundle. Node is reported
+as optional unless you are validating the preview Node worker lane.
+
+If first-run commands fail, use [Troubleshooting](./troubleshooting.md).
 
 `version` and `doctor` are read-only. They do not start the daemon. `doctor --fix` is the mutating
-path when you want Vilano to prepare local Mix/Hex state.
+path when you want Vilano Runtime to prepare local Mix/Hex state.
 
 ## Daemon Lifecycle
 
@@ -61,7 +65,7 @@ vilano daemon stop
 Projects are registered locally:
 
 ```bash
-vilano project init-manifest /path/to/project
+vilano init /path/to/project
 vilano project add /path/to/project --name demo
 vilano project sync demo
 vilano project inspect demo
@@ -70,7 +74,13 @@ vilano project inspect demo
 The registry is machine-local. It is not a remote catalog or package index.
 `project add` creates a new registration. If the project name already exists, use `project sync`
 to refresh the registered snapshot and definition set. For OSS `0.1`, explicit manifests are the
-recommended registration path.
+recommended registration path. `vilano init` generates a starting manifest from source discovery, so
+review it before relying on it for non-trivial export patterns. Registration validates the manifest
+contract, paths, and declared export names, then imports the declared definitions from the pinned
+snapshot to prove definition identity before registration completes. Activation still re-validates
+the same identity when the worker imports the module later.
+
+Treat `project add` and `project sync` as trusted local-code steps. See [Trust Model](./trust-model.md).
 
 ## Operator Commands
 
@@ -132,13 +142,7 @@ case, the runtime falls back to durable failure/cancellation and lease recovery.
 
 ## Local Trust Model
 
-The daemon is:
-
-- loopback-only
-- guarded by a per-runtime token under `VILANO_HOME`
-
-This is meant to prevent blind localhost access by unrelated local processes. It is not intended as
-strong isolation against fully trusted code already running as the same user.
+See [Trust Model](./trust-model.md) for the canonical OSS posture.
 
 ## Upgrade / Compatibility
 

@@ -1,0 +1,16 @@
+{
+  "manifestVersion": 1,
+  "definitions": {
+    "workflows": [
+      {
+        "kind": "workflow",
+        "name": "approvalLoop",
+        "exportName": "approvalLoop",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      }
+    ],
+    "services": []
+  }
+}

@@ -10,14 +10,7 @@ export interface RuntimeBundlePaths {
   bundled: boolean;
 }
 
-export interface RuntimeBundleManifest {
-  bundleVersion: string;
-  bundleContentHash?: string;
-  cliVersion: string;
-  runtimeVersion: string;
-  protocolVersion: number;
-  generatedAt: string;
-}
+export { type RuntimeInstallManifest as RuntimeBundleManifest } from "./distribution-contract.ts";
 
 export function resolveRuntimeBundlePaths(): RuntimeBundlePaths {
   const cliRoot = path.resolve(import.meta.dir, "..");
@@ -32,22 +25,22 @@ export function resolveRuntimeBundlePaths(): RuntimeBundlePaths {
       runtimeRoot: repoRoot,
       kernelDir: path.join(repoRoot, "kernel"),
       workerDir: path.join(repoRoot, "worker"),
-      manifestFile: path.join(repoRoot, "protocol", "bundle-manifest.json"),
+      manifestFile: path.join(repoRoot, "protocol", "install-manifest.json"),
       bundled: false,
     };
   }
 
   const bundledRoot = path.join(cliRoot, "runtime-dist");
-  const bundledKernel = path.join(bundledRoot, "kernel", "mix.exs");
+  const bundledKernelRelease = path.join(bundledRoot, "kernel-release", "bin", "vilano_kernel");
   const bundledWorker = path.join(bundledRoot, "worker", "bun", "src", "cli.ts");
   const bundledSharedWorker = path.join(bundledRoot, "worker", "shared", "src", "core.ts");
-  const bundledManifest = path.join(bundledRoot, "bundle-manifest.json");
+  const bundledManifest = path.join(bundledRoot, "install-manifest.json");
 
-  if (fs.existsSync(bundledKernel) && fs.existsSync(bundledWorker) && fs.existsSync(bundledSharedWorker)) {
+  if (fs.existsSync(bundledKernelRelease) && fs.existsSync(bundledWorker) && fs.existsSync(bundledSharedWorker)) {
     return {
       cliRoot,
       runtimeRoot: bundledRoot,
-      kernelDir: path.join(bundledRoot, "kernel"),
+      kernelDir: path.join(bundledRoot, "kernel-release"),
       workerDir: path.join(bundledRoot, "worker"),
       manifestFile: bundledManifest,
       bundled: true,
@@ -55,9 +48,9 @@ export function resolveRuntimeBundlePaths(): RuntimeBundlePaths {
   }
 
   throw new Error(
-    `Unable to locate the Vilano runtime bundle from ${cliRoot}. Expected kernel/mix.exs and worker/{bun,shared}/src in either ${path.join(
+    `Unable to locate the Vilano runtime bundle from ${cliRoot}. Expected a kernel release under ${path.join(
       bundledRoot,
-      "kernel"
-    )} or ${path.join(repoRoot, "kernel")}.`
+      "kernel-release"
+    )} or kernel source under ${path.join(repoRoot, "kernel")}.`
   );
 }

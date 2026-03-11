@@ -21,10 +21,12 @@ import {
   stopServiceRun,
 } from "./daemon-client.ts";
 import { CliError } from "./cli-error.ts";
-import { handleProjectCommand } from "./commands/project.ts";
+import { handleInitCommand, handleProjectCommand } from "./commands/project.ts";
 import {
   handleDaemonCommand,
   handleDoctorCommand,
+  handleRollbackCommand,
+  handleUpdateCommand,
   handleVersionCommand,
   handleWorkerCommand,
 } from "./commands/system.ts";
@@ -59,13 +61,16 @@ interface ParsedArgs {
 
 function renderHelp(): string {
   return [
-    "Vilano CLI",
+    "Vilano Runtime CLI",
     "",
     "Implemented commands:",
     "  vilano version",
+    "  vilano update [--check]",
+    "  vilano rollback",
     "  vilano doctor [--fix]",
+    "  vilano init [path] [--force]",
     "  vilano daemon start|status|stop",
-    "  vilano project add|list|init-manifest|inspect|sync|remove",
+    "  vilano project add|list|inspect|sync|remove",
     "  vilano workflow list|inspect",
     "  vilano run start|list|inspect|replay|cancel",
     "  vilano worker start",
@@ -89,8 +94,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     switch (group) {
       case "version":
         return handleVersionCommand(parsed.flags);
+      case "update":
+        return handleUpdateCommand(parsed.flags);
+      case "rollback":
+        return handleRollbackCommand(parsed.flags);
       case "doctor":
         return handleDoctorCommand(parsed.flags);
+      case "init":
+        return handleInitCommand(rest, parsed.flags);
       case "daemon":
         return handleDaemonCommand(rest, parsed.flags);
       case "project":

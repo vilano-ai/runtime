@@ -3,11 +3,16 @@ defmodule VilanoKernel.Storage.Migrations do
 
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
+
   alias VilanoKernel.Storage.Migrations.{
     AddRunLeaseAuthToken,
+    AddRunRelationshipsAndExitEvents,
+    AddRunSupervisionGroups,
+    AddPubsubTopics,
     AddRunStepRetryColumns,
     AddRunSnapshotsAndProjectSnapshots,
     AddServiceEnvelopeAttemptColumn,
+    AddServiceEnvelopeWakeAt,
     FailUnpinnedRuns,
     AddRunEventsUniqueIndex,
     CreateRunEventSequences,
@@ -24,7 +29,11 @@ defmodule VilanoKernel.Storage.Migrations do
     CreateRunServiceRefs,
     AddRunLeaseAuthToken,
     FailUnpinnedRuns,
-    AddRunEventsUniqueIndex
+    AddRunEventsUniqueIndex,
+    AddRunRelationshipsAndExitEvents,
+    AddRunSupervisionGroups,
+    AddServiceEnvelopeWakeAt,
+    AddPubsubTopics
   ]
 
   def ensure_tracking_table! do

@@ -1,0 +1,24 @@
+{
+  "manifestVersion": 1,
+  "definitions": {
+    "workflows": [
+      {
+        "kind": "workflow",
+        "name": "parallelReport",
+        "exportName": "parallelReport",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "researchSlice",
+        "exportName": "researchSlice",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      }
+    ],
+    "services": []
+  }
+}

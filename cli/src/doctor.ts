@@ -2,6 +2,9 @@ import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 
 import { getRunningDaemonStatus } from "./daemon-client.ts";
+import type { RuntimeInstallManifest } from "./distribution-contract.ts";
+import { readJsonFile } from "./json-file.ts";
+import { getRuntimeCompatibilityIssues } from "./runtime-compatibility.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
 import { prepareRuntimeBundleWithOptions } from "./runtime-materializer.ts";
 import { CLI_PROTOCOL_VERSION, getCliVersion } from "./runtime-version.ts";
@@ -55,11 +58,19 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
   const runtimePaths = getRuntimePaths();
   const bundle = await prepareRuntimeBundleWithOptions({ materialize: Boolean(options.fix) });
   const appliedFixes: string[] = [];
-  const depsReady = await fileExists(`${bundle.kernelDir}/deps`);
-  const buildReady = await fileExists(`${bundle.kernelDir}/_build`);
+  const installManifest = await readJsonFile<RuntimeInstallManifest | null>(bundle.installManifestFile, null);
+  const kernelReleaseReady = await fileExists(`${bundle.kernelDir}/bin/vilano_kernel`);
+  const depsReady = bundle.source.bundled ? kernelReleaseReady : await fileExists(`${bundle.kernelDir}/deps`);
+  const buildReady = bundle.source.bundled ? kernelReleaseReady : await fileExists(`${bundle.kernelDir}/_build`);
 
   if (options.fix) {
-    const needsKernelTooling = !bundle.source.bundled || !depsReady || !buildReady;
+    if (bundle.source.bundled && (!depsReady || !buildReady)) {
+      throw new Error(
+        "Packaged Vilano Runtime is incomplete. Reinstall Vilano Runtime to restore the bundled kernel release."
+      );
+    }
+
+    const needsKernelTooling = !bundle.source.bundled;
     if (needsKernelTooling) {
       const requiredTools = await Promise.all([
         inspectTool("mix", ["--version"]),
@@ -90,6 +101,10 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
 
   const daemonStatus = daemonState.status;
   const daemonError = daemonState.error;
+  const portabilityIssues =
+    bundle.source.bundled && installManifest?.compatibility
+      ? await getRuntimeCompatibilityIssues(installManifest.compatibility)
+      : [];
 
   const checks: DoctorCheck[] = [
     {
@@ -101,10 +116,27 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
         : `Using repo runtime bundle at ${bundle.runtimeRoot}`,
     },
     {
+      name: "runtime_portability",
+      ok: portabilityIssues.length === 0,
+      required: bundle.source.bundled,
+      detail:
+        portabilityIssues.length === 0
+          ? bundle.source.bundled
+            ? "packaged runtime matches the current host"
+            : "repo runtime portability is managed by the local toolchain"
+          : portabilityIssues.join("; "),
+    },
+    {
       name: "bun",
       ok: bunTool.found,
-      required: true,
-      detail: bunTool.found ? `${bunTool.path} (${bunTool.version ?? "unknown"})` : "bun not found on PATH",
+      required: !bundle.source.bundled,
+      detail: bundle.source.bundled
+        ? bunTool.found
+          ? `${bunTool.path} (${bunTool.version ?? "unknown"}) on PATH; packaged runtimes use the bundled bun binary`
+          : "bun not found on PATH (not required for packaged runtimes; managed installs use the bundled bun binary)"
+        : bunTool.found
+          ? `${bunTool.path} (${bunTool.version ?? "unknown"})`
+          : "bun not found on PATH",
     },
     {
       name: "node",
@@ -117,26 +149,46 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
     {
       name: "mix",
       ok: mixTool.found,
-      required: true,
-      detail: mixTool.found ? `${mixTool.path} (${mixTool.version ?? "unknown"})` : "mix not found on PATH",
+      required: !bundle.source.bundled,
+      detail: mixTool.found
+        ? `${mixTool.path} (${mixTool.version ?? "unknown"})`
+        : bundle.source.bundled
+          ? "mix not found on PATH (not required for packaged runtimes)"
+          : "mix not found on PATH",
     },
     {
       name: "elixir",
       ok: elixirTool.found,
-      required: true,
-      detail: elixirTool.found ? `${elixirTool.path} (${elixirTool.version ?? "unknown"})` : "elixir not found on PATH",
+      required: !bundle.source.bundled,
+      detail: elixirTool.found
+        ? `${elixirTool.path} (${elixirTool.version ?? "unknown"})`
+        : bundle.source.bundled
+          ? "elixir not found on PATH (not required for packaged runtimes)"
+          : "elixir not found on PATH",
     },
     {
       name: "kernel_deps",
       ok: depsReady,
       required: true,
-      detail: depsReady ? "kernel deps directory is present" : "kernel deps are missing; run `vilano doctor --fix` or `mix deps.get`",
+      detail: bundle.source.bundled
+        ? depsReady
+          ? "packaged kernel release is present"
+          : "packaged kernel release is missing; reinstall Vilano Runtime"
+        : depsReady
+          ? "kernel deps directory is present"
+          : "kernel deps are missing; run `vilano doctor --fix` or `mix deps.get`",
     },
     {
       name: "kernel_build",
       ok: true,
       required: true,
-      detail: buildReady ? "kernel build artifacts are present" : "kernel has not been compiled yet; it can compile on first start",
+      detail: bundle.source.bundled
+        ? buildReady
+          ? "packaged kernel release is ready"
+          : "packaged kernel release is missing; reinstall Vilano Runtime"
+        : buildReady
+          ? "kernel build artifacts are present"
+          : "kernel has not been compiled yet; it can compile on first start",
     },
     {
       name: "daemon",
@@ -146,7 +198,7 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
         daemonError !== null
           ? daemonError
           : daemonStatus === null
-          ? "Vilano kernel is not running"
+          ? "Vilano Runtime kernel is not running"
           : `running runtime ${daemonStatus.runtimeVersion} protocol ${daemonStatus.protocolVersion} schema ${daemonStatus.schemaVersion}`,
     },
   ];
@@ -195,7 +247,7 @@ async function applyDoctorFixes(
   const fixes: string[] = [];
 
   if (options.bundled && options.depsReady && options.buildReady) {
-    fixes.push("packaged runtime already contains vendored kernel deps and build artifacts");
+    fixes.push("packaged runtime already contains a ready kernel release");
     return fixes;
   }
 

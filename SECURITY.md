@@ -3,6 +3,8 @@
 Vilano Runtime is currently released as a local-first `0.x` runtime. The current OSS trust model is
 single-user and local-machine scoped.
 
+The canonical runtime posture lives in [docs/trust-model.md](./docs/trust-model.md).
+
 ## Reporting a Vulnerability
 
 Please do not open a public issue for suspected security vulnerabilities.

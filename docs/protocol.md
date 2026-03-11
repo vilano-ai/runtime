@@ -1,6 +1,6 @@
 # Protocol Guide
 
-Vilano has two versioned transport surfaces:
+Vilano Runtime has two versioned transport surfaces:
 
 - **worker protocol**
   - kernel-to-worker activation leasing and durable operation resolution

@@ -1,11 +1,10 @@
 # Examples
 
-`bootstrap-demo/` is the current runnable example project.
+The repo now has two kinds of example projects:
 
-It serves two purposes:
-
-- first-run workflow and service examples for the local runtime
-- richer fixture coverage for integration and soak tests
+- focused reference examples meant to teach one clear pattern
+- `bootstrap-demo/`, which still doubles as first-run material and as a richer fixture source for
+  integration and soak tests
 
 Use it with the local CLI:
 
@@ -15,4 +14,16 @@ Use it with the local CLI:
 ./cli/bin/vilano.ts service list
 ```
 
-The canonical first-run definitions are documented in `examples/bootstrap-demo/README.md`. The rest of the exported definitions are mostly durability and failure fixtures used by the test suite.
+Reference examples:
+
+- `multi-agent-demo/`
+  Canonical cooperating-agents example using multiple services plus a coordinator workflow.
+- `approval-loop-demo/`
+  Minimal signal-driven workflow example.
+- `fanout-demo/`
+  Minimal child-workflow fanout example.
+
+Fixture-heavy example:
+
+- `bootstrap-demo/`
+  Canonical first-run definitions plus many durability, failure, cancellation, and replay fixtures.

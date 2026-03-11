@@ -203,6 +203,142 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/leases/{leaseId}/runs/{id}/monitor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register a durable monitor on a related run. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        key: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Relationship state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RelationshipResolveResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/runs/{id}/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register a durable link on a related run. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        key: string;
+                        /** @enum {string} */
+                        propagate?: "abnormal" | "all";
+                    };
+                };
+            };
+            responses: {
+                /** @description Relationship state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RelationshipResolveResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/trap-exits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enable or disable trapping linked exits for the active run. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        enabled?: boolean;
+                    };
+                };
+            };
+            responses: {
+                /** @description Run state updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunMutationResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/leases/{leaseId}/runs/{id}/signals": {
         parameters: {
             query?: never;
@@ -743,6 +879,256 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/leases/{leaseId}/waits/exit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve or suspend on the next durable exit event. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        key: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Exit wait state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WaitResolveResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/supervision/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve or create a durable supervision group for the active run. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        key: string;
+                        /** @enum {string} */
+                        strategy: "one_for_one" | "one_for_all";
+                        maxRestarts: number;
+                        windowMs: number;
+                        /** @enum {string} */
+                        onExhausted?: "fail_self";
+                    };
+                };
+            };
+            responses: {
+                /** @description Supervision group state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SupervisionGroupResolveResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/supervision/groups/{groupId}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List logical supervised workflow members for a durable supervision group. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    groupId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Supervision members */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SupervisionMemberListResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Resolve or create a logical supervised workflow member. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    groupId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        key: string;
+                        input: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Supervision member state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SupervisionMemberResolveResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/supervision/groups/{groupId}/members/{memberKey}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve or suspend on a logical supervised member result. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    groupId: string;
+                    memberKey: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        key: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Supervision member result state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SupervisionMemberResultResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/supervision/groups/{groupId}/members/{memberKey}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect a logical supervised member from the active lease context. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    groupId: string;
+                    memberKey: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Supervision member state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SupervisionMemberResolveResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/leases/{leaseId}/spawns/resolve": {
         parameters: {
             query?: never;
@@ -872,6 +1258,190 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["ServiceCallResolveResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/services/lookup-singleton": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve an existing singleton-discoverable service from the active lease context. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        role: string;
+                        keyInput?: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Existing singleton service run */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ServiceRunResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/pubsub/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish a durable topic event from the active lease context. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        topic: string;
+                        key: string;
+                        payload?: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Topic publish state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TopicPublishResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/pubsub/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Subscribe the active service run to a durable topic. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        topic: string;
+                        signal: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Topic subscription state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TopicSubscriptionResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/pubsub/subscriptions/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Remove a durable topic subscription from the active service run. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        topic: string;
+                        signal: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Topic subscription removed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @constant */
+                            ok: true;
+                        };
                     };
                 };
             };
@@ -1014,6 +1584,136 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["ServiceTurnCompleteResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/service-turns/{envelopeId}/mailbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect the current service turn envelope and queued backlog. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    envelopeId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Service mailbox state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ServiceTurnMailboxResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/service-turns/{envelopeId}/defer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Requeue the current service turn for later processing. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    envelopeId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        delayMs: number;
+                        reason?: string | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description Service turn deferred */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ServiceTurnDeferResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/leases/{leaseId}/service-turns/{envelopeId}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject the current service turn without retry. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    leaseId: string;
+                    envelopeId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        error: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Service turn rejected */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunMutationResponse"];
                     };
                 };
             };
@@ -1344,6 +2044,82 @@ export interface components {
                 status: string;
             };
         };
+        RelationshipRef: {
+            id: string;
+            targetRunId: string;
+            /** @enum {unknown} */
+            kind: "monitor" | "link";
+            /** @enum {unknown} */
+            propagate: "abnormal" | "all";
+            /** @enum {unknown} */
+            status: "active" | "triggered";
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+        };
+        RelationshipResolveResponse: {
+            /** @constant */
+            ok: true;
+            relationship: components["schemas"]["RelationshipRef"];
+        };
+        SupervisionGroupRef: {
+            id: string;
+            /** @enum {unknown} */
+            strategy: "one_for_one" | "one_for_all";
+            maxRestarts: number;
+            windowMs: number;
+            /** @enum {unknown} */
+            onExhausted: "fail_self";
+            status: string;
+        };
+        SupervisionGroupResolveResponse: {
+            /** @constant */
+            ok: true;
+            group: components["schemas"]["SupervisionGroupRef"];
+        };
+        SupervisionMemberRef: {
+            groupId: string;
+            key: string;
+            currentChildRunId?: string | null;
+            generation: number;
+            status: string;
+        };
+        SupervisionMemberResolveResponse: {
+            /** @constant */
+            ok: true;
+            member: components["schemas"]["SupervisionMemberRef"];
+        };
+        SupervisionMemberListResponse: {
+            /** @constant */
+            ok: true;
+            members: {
+                groupId: string;
+                key: string;
+                definitionName: string;
+                input: unknown;
+                currentChildRunId?: string | null;
+                generation: number;
+                status: string;
+            }[];
+        };
+        SupervisionMemberCompleted: {
+            /** @constant */
+            status: "completed";
+            output: unknown;
+            wait?: components["schemas"]["WaitRef"];
+        };
+        SupervisionMemberFailed: {
+            /** @constant */
+            status: "failed";
+            error: unknown;
+            wait?: components["schemas"]["WaitRef"];
+        };
+        SupervisionMemberResultResponse: {
+            /** @constant */
+            ok: true;
+            member: components["schemas"]["SupervisionMemberCompleted"] | components["schemas"]["SupervisionMemberFailed"] | components["schemas"]["WaitSuspended"];
+        };
         ServiceRunResponse: {
             /** @constant */
             ok: true;
@@ -1376,6 +2152,64 @@ export interface components {
             wait?: components["schemas"]["WaitRef"];
         };
         ServiceTurnCompleteResponse: {
+            /** @constant */
+            ok: true;
+            run: unknown;
+        };
+        ServiceMailboxEnvelope: {
+            id: string;
+            /** @enum {unknown} */
+            kind: "ask" | "send" | "signal";
+            name: string;
+            attempt: number | null;
+            correlationId?: string | null;
+            senderRunId?: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            wakeAt?: string | null;
+        };
+        ServiceMailboxQueuedSummary: {
+            total: number;
+            ready: number;
+            deferred: number;
+            asks: number;
+            sends: number;
+            signals: number;
+            /** Format: date-time */
+            oldestAt?: string | null;
+            /** Format: date-time */
+            nextWakeAt?: string | null;
+        };
+        ServiceTurnMailboxResponse: {
+            /** @constant */
+            ok: true;
+            mailbox: {
+                current: components["schemas"]["ServiceMailboxEnvelope"];
+                queued: components["schemas"]["ServiceMailboxQueuedSummary"];
+            };
+        };
+        TopicPublishResponse: {
+            /** @constant */
+            ok: true;
+            publish: {
+                publishId: string;
+                topic: string;
+                matched: number;
+                enqueued: number;
+                rejected: number;
+            };
+        };
+        TopicSubscriptionResponse: {
+            /** @constant */
+            ok: true;
+            subscription: {
+                topic: string;
+                signal: string;
+                serviceRunId: string;
+            };
+        };
+        ServiceTurnDeferResponse: {
             /** @constant */
             ok: true;
             run: unknown;

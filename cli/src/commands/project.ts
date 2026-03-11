@@ -10,9 +10,15 @@ import {
 } from "../daemon-client.ts";
 import { renderProject, renderProjectSummary, writeOutput } from "../output.ts";
 import { materializeProjectSnapshot, pruneAllProjectSnapshots } from "../project-snapshot.ts";
-import { getProjectManifestPath, writeExplicitProjectManifest } from "../project-manifest.ts";
+import { validateProjectDefinitionsIdentity } from "../project-definition-validation.ts";
+import {
+  getProjectManifestPath,
+  hashDefinitions,
+  writeExplicitProjectManifest,
+} from "../project-manifest.ts";
 import { buildProjectManifest } from "../registry.ts";
 import { CliError } from "../cli-error.ts";
+import type { ProjectRecord } from "../types.ts";
 
 const PROJECT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -41,7 +47,13 @@ export async function handleProjectCommand(
 
       await warnIfUsingGeneratedManifestFallback(projectPath);
       const manifest = await buildProjectManifest(nameFlag, projectPath, { regenerate: true });
-      manifest.snapshotPath = await materializeProjectSnapshot(nameFlag, manifest.path);
+      const validated = await materializeValidatedProjectSnapshot(
+        nameFlag,
+        manifest.path,
+        manifest.definitions
+      );
+      manifest.snapshotPath = validated.snapshotPath;
+      manifest.definitionsManifestHash = validated.definitionsManifestHash;
       const response = await addProject(manifest);
       await pruneRegisteredProjectSnapshots(response.project.name);
       writeOutput(flags, response, (body) => renderProject(body.project));
@@ -57,21 +69,7 @@ export async function handleProjectCommand(
       return 0;
     }
     case "init-manifest": {
-      const projectPath = args[1] ?? ".";
-      const result = await writeExplicitProjectManifest(projectPath, {
-        force: Boolean(flags.force),
-      });
-      writeOutput(
-        flags,
-        { ok: true, manifestPath: result.manifestPath, manifest: result.manifest },
-        (body) =>
-          [
-            `Wrote ${body.manifestPath}`,
-            `workflows: ${body.manifest.definitions.workflows.length}`,
-            `services: ${body.manifest.definitions.services.length}`,
-          ].join("\n")
-      );
-      return 0;
+      return handleInitCommand(args.slice(1), flags);
     }
     case "inspect": {
       const projectName = args[1];
@@ -94,7 +92,13 @@ export async function handleProjectCommand(
       const manifest = await buildProjectManifest(existing.project.name, existing.project.path, {
         regenerate: true,
       });
-      manifest.snapshotPath = await materializeProjectSnapshot(existing.project.name, manifest.path);
+      const validated = await materializeValidatedProjectSnapshot(
+        existing.project.name,
+        manifest.path,
+        manifest.definitions
+      );
+      manifest.snapshotPath = validated.snapshotPath;
+      manifest.definitionsManifestHash = validated.definitionsManifestHash;
       const response = await syncProject(manifest);
       await pruneRegisteredProjectSnapshots(response.project.name);
       writeOutput(flags, response, (body) => renderProject(body.project));
@@ -112,13 +116,67 @@ export async function handleProjectCommand(
       return 0;
     }
     default:
-      throw new CliError("Usage: vilano project add|list|init-manifest|inspect|sync|remove");
+      throw new CliError("Usage: vilano project add|list|inspect|sync|remove");
   }
+}
+
+export async function handleInitCommand(
+  args: string[],
+  flags: Record<string, string | boolean>
+): Promise<number> {
+  const projectPath = args[0] ?? ".";
+  const result = await writeExplicitProjectManifest(projectPath, {
+    force: Boolean(flags.force),
+  });
+
+  writeOutput(
+    flags,
+    { ok: true, manifestPath: result.manifestPath, manifest: result.manifest },
+    (body) =>
+      [
+        `Wrote ${body.manifestPath}`,
+        `workflows: ${body.manifest.definitions.workflows.length}`,
+        `services: ${body.manifest.definitions.services.length}`,
+        "Review the generated manifest before relying on it; non-trivial export patterns may need manual edits.",
+        "",
+        "Next steps:",
+        `  vilano project add ${projectPath === "." ? "." : projectPath} --name <project>`,
+      ].join("\n")
+  );
+
+  return 0;
 }
 
 async function pruneRegisteredProjectSnapshots(_projectName: string): Promise<void> {
   const references = await listReferencedProjectSnapshots();
   await pruneAllProjectSnapshots(references.snapshotPaths);
+}
+
+async function materializeValidatedProjectSnapshot(
+  projectName: string,
+  projectPath: string,
+  definitions: ProjectRecord["definitions"]
+): Promise<{ snapshotPath: string; definitionsManifestHash: string }> {
+  const snapshotPath = await materializeProjectSnapshot(projectName, projectPath);
+
+  try {
+    const validated = await validateProjectDefinitionsIdentity(snapshotPath, [
+      ...definitions.workflows,
+      ...definitions.services,
+    ]);
+
+    definitions.workflows = validated.filter((definition) => definition.kind === "workflow");
+    definitions.services = validated.filter((definition) => definition.kind === "service");
+
+    return {
+      snapshotPath,
+      definitionsManifestHash: hashDefinitions(definitions),
+    };
+  } catch (error) {
+    await fs.rm(snapshotPath, { recursive: true, force: true }).catch(() => undefined);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new CliError(`Project registration failed definition validation: ${message}`);
+  }
 }
 
 async function warnIfUsingGeneratedManifestFallback(projectPath: string): Promise<void> {
@@ -127,7 +185,7 @@ async function warnIfUsingGeneratedManifestFallback(projectPath: string): Promis
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       process.stderr.write(
-        "Vilano is using generated manifest fallback for this project. Run `vilano project init-manifest <path>` to create the recommended explicit contract.\n"
+        "Vilano Runtime is using generated manifest fallback for this project. Run `vilano init <path>` to create the recommended explicit contract.\n"
       );
       return;
     }

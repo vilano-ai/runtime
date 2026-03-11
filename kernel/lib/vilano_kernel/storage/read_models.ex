@@ -315,6 +315,7 @@ defmodule VilanoKernel.Storage.ReadModels do
         status,
         reply_json,
         error_json,
+        wake_at,
         created_at,
         updated_at
       from service_envelopes
@@ -473,6 +474,7 @@ defmodule VilanoKernel.Storage.ReadModels do
       "status" => row["status"],
       "reply" => decode_json_value(row["reply_json"], nil),
       "error" => decode_json_value(row["error_json"], nil),
+      "wakeAt" => row["wake_at"],
       "createdAt" => row["created_at"],
       "updatedAt" => row["updated_at"]
     }
