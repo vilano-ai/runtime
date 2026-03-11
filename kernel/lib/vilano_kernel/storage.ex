@@ -18,6 +18,7 @@ defmodule VilanoKernel.Storage do
   alias VilanoKernel.Repo
 
   alias VilanoKernel.Storage.{
+    AgentKernel,
     Infrastructure,
     Projects,
     ReadModels,
@@ -2826,7 +2827,7 @@ defmodule VilanoKernel.Storage do
           nil
 
         run ->
-          current_value = run_trap_exits_value(run["id"])
+          current_value = AgentKernel.run_trap_exits_value(run["id"])
 
           if current_value != trap_value do
             ensure_fenced_run_write!(
@@ -3012,7 +3013,7 @@ defmodule VilanoKernel.Storage do
           nil
 
         owner_run ->
-          case get_run_supervision_group(owner_run["id"], op_key) do
+          case AgentKernel.get_run_supervision_group(owner_run["id"], op_key) do
             nil ->
               ensure_fenced_run_ownership!(owner_run["id"], lease_id, now)
               group_id = "supg_" <> Ecto.UUID.generate()
@@ -3060,10 +3061,12 @@ defmodule VilanoKernel.Storage do
                 now
               )
 
-              supervision_group_from_row(get_run_supervision_group_by_id(group_id))
+              AgentKernel.supervision_group_from_row(
+                AgentKernel.get_run_supervision_group_by_id(group_id)
+              )
 
             group ->
-              supervision_group_from_row(group)
+              AgentKernel.supervision_group_from_row(group)
           end
       end
     end)
@@ -3079,7 +3082,7 @@ defmodule VilanoKernel.Storage do
           nil
 
         owner_run ->
-          case get_run_supervision_group_for_owner(owner_run["id"], group_id) do
+          case AgentKernel.get_run_supervision_group_for_owner(owner_run["id"], group_id) do
             nil ->
               nil
 
@@ -3087,7 +3090,7 @@ defmodule VilanoKernel.Storage do
               if group["status"] != "active" do
                 nil
               else
-                case get_run_supervision_member(group_id, member_key) do
+                case AgentKernel.get_run_supervision_member(group_id, member_key) do
                   nil ->
                     ensure_fenced_run_ownership!(owner_run["id"], lease_id, now)
 
@@ -3108,10 +3111,10 @@ defmodule VilanoKernel.Storage do
                         "SupervisionMemberSpawned"
                       )
 
-                    supervision_member_runtime_state(member)
+                    AgentKernel.supervision_member_runtime_state(member, &get_run/1)
 
                   member ->
-                    supervision_member_runtime_state(member)
+                    AgentKernel.supervision_member_runtime_state(member, &get_run/1)
                 end
               end
           end
@@ -3122,7 +3125,7 @@ defmodule VilanoKernel.Storage do
 
   def resolve_supervision_member_result_wait(lease_id, group_id, member_key, op_key) do
     now = Infrastructure.now_iso8601()
-    wait_name = supervision_member_wait_name(group_id, member_key)
+    wait_name = AgentKernel.supervision_member_wait_name(group_id, member_key)
 
     Infrastructure.transaction_with_busy_retry(fn ->
       case get_fenced_run_by_lease(lease_id, now) do
@@ -3313,13 +3316,13 @@ defmodule VilanoKernel.Storage do
           nil
 
         owner_run ->
-          case get_run_supervision_group_for_owner(owner_run["id"], group_id) do
+          case AgentKernel.get_run_supervision_group_for_owner(owner_run["id"], group_id) do
             nil ->
               nil
 
             _group ->
-              get_run_supervision_member(group_id, member_key)
-              |> supervision_member_runtime_state()
+              AgentKernel.get_run_supervision_member(group_id, member_key)
+              |> AgentKernel.supervision_member_runtime_state(&get_run/1)
           end
       end
     end)
@@ -3335,14 +3338,16 @@ defmodule VilanoKernel.Storage do
           nil
 
         owner_run ->
-          case get_run_supervision_group_for_owner(owner_run["id"], group_id) do
+          case AgentKernel.get_run_supervision_group_for_owner(owner_run["id"], group_id) do
             nil ->
               nil
 
             _group ->
               group_id
-              |> list_run_supervision_members()
-              |> Enum.map(&supervision_member_runtime_state/1)
+              |> AgentKernel.list_run_supervision_members()
+              |> Enum.map(fn member ->
+                AgentKernel.supervision_member_runtime_state(member, &get_run/1)
+              end)
           end
       end
     end)
@@ -3393,11 +3398,13 @@ defmodule VilanoKernel.Storage do
           nil
 
         caller_run ->
-          case get_run_topic_publish(caller_run["id"], op_key) do
+          case AgentKernel.get_run_topic_publish(caller_run["id"], op_key) do
             nil ->
               ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
               publish_id = "pub_" <> Ecto.UUID.generate()
-              subscriptions = list_topic_subscription_targets(caller_run["project"], topic)
+
+              subscriptions =
+                AgentKernel.list_topic_subscription_targets(caller_run["project"], topic)
 
               {enqueued_count, rejected_count} =
                 Enum.reduce(subscriptions, {0, 0}, fn subscription, {enqueued, rejected} ->
@@ -3472,10 +3479,13 @@ defmodule VilanoKernel.Storage do
               )
 
               ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
-              topic_publish_from_row(get_run_topic_publish(caller_run["id"], op_key))
+
+              AgentKernel.topic_publish_from_row(
+                AgentKernel.get_run_topic_publish(caller_run["id"], op_key)
+              )
 
             publish ->
-              topic_publish_from_row(publish)
+              AgentKernel.topic_publish_from_row(publish)
           end
       end
     end)
@@ -3489,7 +3499,7 @@ defmodule VilanoKernel.Storage do
       with service_run when not is_nil(service_run) <- get_fenced_run_by_lease(lease_id, now),
            "service" <- service_run["definitionKind"] do
         ensure_fenced_run_ownership!(service_run["id"], lease_id, now)
-        existing = get_topic_subscription(topic, service_run["id"], signal_name)
+        existing = AgentKernel.get_topic_subscription(topic, service_run["id"], signal_name)
 
         _changes =
           write_changes!(
@@ -3517,7 +3527,10 @@ defmodule VilanoKernel.Storage do
         end
 
         ensure_fenced_run_ownership!(service_run["id"], lease_id, now)
-        topic_subscription_from_row(get_topic_subscription(topic, service_run["id"], signal_name))
+
+        AgentKernel.topic_subscription_from_row(
+          AgentKernel.get_topic_subscription(topic, service_run["id"], signal_name)
+        )
       else
         _ -> nil
       end
@@ -3796,49 +3809,6 @@ defmodule VilanoKernel.Storage do
     }
   end
 
-  defp relationship_from_row(row) do
-    %{
-      "id" => row["id"],
-      "ownerRunId" => row["owner_run_id"],
-      "key" => row["op_key"],
-      "targetRunId" => row["target_run_id"],
-      "kind" => row["kind"],
-      "propagate" => row["propagate"],
-      "status" => row["status"],
-      "createdAt" => row["created_at"],
-      "updatedAt" => row["updated_at"]
-    }
-  end
-
-  defp supervision_group_from_row(row) do
-    %{
-      "id" => row["id"],
-      "ownerRunId" => row["owner_run_id"],
-      "key" => row["op_key"],
-      "strategy" => row["strategy"],
-      "maxRestarts" => row["max_restarts"],
-      "windowMs" => row["window_ms"],
-      "onExhausted" => row["on_exhausted"],
-      "status" => row["status"],
-      "createdAt" => row["created_at"],
-      "updatedAt" => row["updated_at"]
-    }
-  end
-
-  defp supervision_member_from_row(row, status_override) do
-    %{
-      "groupId" => row["group_id"],
-      "key" => row["member_key"],
-      "definitionName" => row["definition_name"],
-      "input" => decode_json_value(row["input_json"], %{}),
-      "currentChildRunId" => row["current_child_run_id"],
-      "generation" => row["generation"],
-      "status" => status_override || row["status"],
-      "createdAt" => row["created_at"],
-      "updatedAt" => row["updated_at"]
-    }
-  end
-
   defp service_run_from_row(run_row, service_row) do
     run =
       run_from_row(run_row)
@@ -3847,28 +3817,6 @@ defmodule VilanoKernel.Storage do
       |> Map.put("state", decode_json_value(service_row["state_json"], nil))
 
     run
-  end
-
-  defp topic_subscription_from_row(nil), do: nil
-
-  defp topic_subscription_from_row(row) do
-    %{
-      "topic" => row["topic"],
-      "signal" => row["signal_name"],
-      "serviceRunId" => row["service_run_id"]
-    }
-  end
-
-  defp topic_publish_from_row(nil), do: nil
-
-  defp topic_publish_from_row(row) do
-    %{
-      "publishId" => row["publish_id"],
-      "topic" => row["topic"],
-      "matched" => row["matched_count"],
-      "enqueued" => row["enqueued_count"],
-      "rejected" => row["rejected_count"]
-    }
   end
 
   defp project_record_for_run(run) do
@@ -3888,6 +3836,50 @@ defmodule VilanoKernel.Storage do
     project_definitions
     |> Map.get("services", [])
     |> Enum.find(&(get_in(&1, ["discovery", "singletonRole"]) == role))
+  end
+
+  defp list_service_runs_by_definition(project_name, definition_name) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        r.id,
+        r.project_name,
+        r.definition_kind,
+        r.definition_name,
+        r.project_snapshot_path,
+        r.project_definitions_json,
+        r.definition_file,
+        r.definition_export_name,
+        r.definition_runtime_kind,
+        r.definition_source_language,
+        r.status,
+        r.lease_id,
+        r.lease_worker_id,
+        r.lease_expires_at,
+        r.input_json,
+        r.output_json,
+        r.error_json,
+        r.created_at,
+        r.updated_at,
+        s.service_key,
+        s.key_input_json,
+        s.state_json,
+        s.created_at as service_created_at,
+        s.updated_at as service_updated_at
+      from runs r
+      join service_runs s on s.run_id = r.id
+      where
+        r.project_name = ?
+        and r.definition_kind = 'service'
+        and r.definition_name = ?
+        and r.status != 'stopped'
+      order by s.updated_at desc, r.updated_at desc, r.id desc
+      """,
+      [project_name, definition_name]
+    )
+    |> rows_to_maps()
+    |> Enum.map(&service_run_from_row(&1, &1))
   end
 
   defp decorate_service_passivation(nil), do: nil
@@ -4371,276 +4363,6 @@ defmodule VilanoKernel.Storage do
     |> List.first()
   end
 
-  defp get_pending_exit_event(run_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        id,
-        run_id,
-        relationship_id,
-        event_json,
-        consumed_at,
-        created_at
-      from run_exit_events
-      where run_id = ? and consumed_at is null
-      order by created_at asc, id asc
-      limit 1
-      """,
-      [run_id]
-    )
-    |> rows_to_maps()
-    |> List.first()
-  end
-
-  defp get_waiting_exit_wait(run_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        run_id,
-        op_key,
-        wait_kind,
-        wait_name,
-        status,
-        wake_at,
-        output_json,
-        created_at,
-        updated_at
-      from run_waits
-      where run_id = ? and wait_kind = 'exit' and status = 'waiting'
-      order by created_at asc
-      limit 1
-      """,
-      [run_id]
-    )
-    |> rows_to_maps()
-    |> List.first()
-  end
-
-  defp get_run_relationship(owner_run_id, op_key) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        id,
-        owner_run_id,
-        op_key,
-        target_run_id,
-        kind,
-        propagate,
-        status,
-        created_at,
-        updated_at
-      from run_relationships
-      where owner_run_id = ? and op_key = ?
-      """,
-      [owner_run_id, op_key]
-    )
-    |> rows_to_maps()
-    |> List.first()
-  end
-
-  defp get_run_supervision_group(owner_run_id, op_key) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        id,
-        owner_run_id,
-        op_key,
-        strategy,
-        max_restarts,
-        window_ms,
-        on_exhausted,
-        status,
-        created_at,
-        updated_at
-      from run_supervision_groups
-      where owner_run_id = ? and op_key = ?
-      """,
-      [owner_run_id, op_key]
-    )
-    |> rows_to_maps()
-    |> List.first()
-  end
-
-  defp get_run_supervision_group_by_id(group_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        id,
-        owner_run_id,
-        op_key,
-        strategy,
-        max_restarts,
-        window_ms,
-        on_exhausted,
-        status,
-        created_at,
-        updated_at
-      from run_supervision_groups
-      where id = ?
-      """,
-      [group_id]
-    )
-    |> rows_to_maps()
-    |> List.first()
-  end
-
-  defp get_run_supervision_group_for_owner(owner_run_id, group_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        id,
-        owner_run_id,
-        op_key,
-        strategy,
-        max_restarts,
-        window_ms,
-        on_exhausted,
-        status,
-        created_at,
-        updated_at
-      from run_supervision_groups
-      where owner_run_id = ? and id = ?
-      """,
-      [owner_run_id, group_id]
-    )
-    |> rows_to_maps()
-    |> List.first()
-  end
-
-  defp get_run_supervision_member(group_id, member_key) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        group_id,
-        member_key,
-        definition_name,
-        input_json,
-        current_child_run_id,
-        generation,
-        status,
-        created_at,
-        updated_at
-      from run_supervision_members
-      where group_id = ? and member_key = ?
-      """,
-      [group_id, member_key]
-    )
-    |> rows_to_maps()
-    |> List.first()
-  end
-
-  defp get_run_supervision_member_by_child(child_run_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        group_id,
-        member_key,
-        definition_name,
-        input_json,
-        current_child_run_id,
-        generation,
-        status,
-        created_at,
-        updated_at
-      from run_supervision_members
-      where current_child_run_id = ?
-      """,
-      [child_run_id]
-    )
-    |> rows_to_maps()
-    |> List.first()
-  end
-
-  defp list_run_supervision_members(group_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        group_id,
-        member_key,
-        definition_name,
-        input_json,
-        current_child_run_id,
-        generation,
-        status,
-        created_at,
-        updated_at
-      from run_supervision_members
-      where group_id = ?
-      order by created_at asc, member_key asc
-      """,
-      [group_id]
-    )
-    |> rows_to_maps()
-  end
-
-  defp count_recent_supervision_restarts(group_id, since_at) do
-    Repo
-    |> SQL.query!(
-      """
-      select count(*)
-      from run_supervision_restarts
-      where group_id = ? and created_at >= ?
-      """,
-      [group_id, since_at]
-    )
-    |> first_integer()
-  end
-
-  defp get_run_relationship_by_id(relationship_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        id,
-        owner_run_id,
-        op_key,
-        target_run_id,
-        kind,
-        propagate,
-        status,
-        created_at,
-        updated_at
-      from run_relationships
-      where id = ?
-      """,
-      [relationship_id]
-    )
-    |> rows_to_maps()
-    |> List.first()
-  end
-
-  defp list_active_run_relationships_for_target(target_run_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        id,
-        owner_run_id,
-        op_key,
-        target_run_id,
-        kind,
-        propagate,
-        status,
-        created_at,
-        updated_at
-      from run_relationships
-      where target_run_id = ? and status = 'active'
-      order by created_at asc
-      """,
-      [target_run_id]
-    )
-    |> rows_to_maps()
-  end
-
   defp get_run_child(parent_run_id, op_key) do
     Repo
     |> SQL.query!(
@@ -4703,25 +4425,6 @@ defmodule VilanoKernel.Storage do
   defp related_run_visible?(owner_run_id, target_run_id) do
     not is_nil(get_run_child_by_child(owner_run_id, target_run_id)) or
       not is_nil(get_run_service_ref(owner_run_id, target_run_id))
-  end
-
-  defp supervision_member_wait_name(group_id, member_key),
-    do: group_id <> ":" <> member_key
-
-  defp run_trap_exits_value(run_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select trap_exits
-      from runs
-      where id = ?
-      """,
-      [run_id]
-    )
-    |> case do
-      %{rows: [[value]]} when value in [1, true] -> 1
-      _ -> 0
-    end
   end
 
   defp record_service_ref!(nil, _service_run_id, _now), do: :ok
@@ -4947,139 +4650,6 @@ defmodule VilanoKernel.Storage do
       """,
       [project_name, definition_name, service_key]
     )
-  end
-
-  defp list_service_runs_by_definition(project_name, definition_name) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        r.id,
-        r.project_name,
-        r.definition_kind,
-        r.definition_name,
-        r.project_snapshot_path,
-        r.project_definitions_json,
-        r.definition_file,
-        r.definition_export_name,
-        r.definition_runtime_kind,
-        r.definition_source_language,
-        r.status,
-        r.lease_id,
-        r.lease_worker_id,
-        r.lease_expires_at,
-        r.input_json,
-        r.output_json,
-        r.error_json,
-        r.created_at,
-        r.updated_at,
-        s.service_key,
-        s.key_input_json,
-        s.state_json,
-        s.created_at as service_created_at,
-        s.updated_at as service_updated_at
-      from runs r
-      join service_runs s on s.run_id = r.id
-      where
-        r.project_name = ?
-        and r.definition_kind = 'service'
-        and r.definition_name = ?
-        and r.status != 'stopped'
-      order by s.updated_at desc, r.updated_at desc, r.id desc
-      """,
-      [project_name, definition_name]
-    )
-    |> rows_to_maps()
-    |> Enum.map(&service_run_from_row(&1, &1))
-  end
-
-  defp get_topic_subscription(topic, service_run_id, signal_name) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        topic,
-        service_run_id,
-        signal_name,
-        created_at,
-        updated_at
-      from topic_subscriptions
-      where topic = ? and service_run_id = ? and signal_name = ?
-      """,
-      [topic, service_run_id, signal_name]
-    )
-    |> rows_to_maps()
-    |> List.first()
-  end
-
-  defp list_topic_subscription_targets(project_name, topic) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        s.topic,
-        s.signal_name,
-        r.id,
-        r.project_name,
-        r.definition_kind,
-        r.definition_name,
-        r.project_snapshot_path,
-        r.project_definitions_json,
-        r.definition_file,
-        r.definition_export_name,
-        r.definition_runtime_kind,
-        r.definition_source_language,
-        r.status,
-        r.lease_id,
-        r.lease_worker_id,
-        r.lease_expires_at,
-        r.input_json,
-        r.output_json,
-        r.error_json,
-        r.created_at,
-        r.updated_at,
-        sr.service_key,
-        sr.key_input_json,
-        sr.state_json,
-        sr.created_at as service_created_at,
-        sr.updated_at as service_updated_at
-      from topic_subscriptions s
-      join runs r on r.id = s.service_run_id
-      join service_runs sr on sr.run_id = r.id
-      where
-        s.topic = ?
-        and r.project_name = ?
-        and r.definition_kind = 'service'
-        and r.status != 'stopped'
-      order by s.created_at asc, s.signal_name asc, r.id asc
-      """,
-      [topic, project_name]
-    )
-    |> rows_to_maps()
-  end
-
-  defp get_run_topic_publish(caller_run_id, op_key) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        caller_run_id,
-        op_key,
-        publish_id,
-        topic,
-        payload_json,
-        matched_count,
-        enqueued_count,
-        rejected_count,
-        created_at,
-        updated_at
-      from run_topic_publishes
-      where caller_run_id = ? and op_key = ?
-      """,
-      [caller_run_id, op_key]
-    )
-    |> rows_to_maps()
-    |> List.first()
   end
 
   defp deterministic_service_run_id(project_name, definition_name, service_key) do
@@ -5388,7 +4958,7 @@ defmodule VilanoKernel.Storage do
 
     encoded_input = Jason.encode!(input || %{})
 
-    case get_run_supervision_member(group["id"], member_key) do
+    case AgentKernel.get_run_supervision_member(group["id"], member_key) do
       nil ->
         SQL.query!(
           Repo,
@@ -5457,47 +5027,20 @@ defmodule VilanoKernel.Storage do
       now
     )
 
-    get_run_supervision_member(group["id"], member_key)
+    AgentKernel.get_run_supervision_member(group["id"], member_key)
   end
 
   defp supervised_child_op_key(group_id, member_key, generation) do
     "supervision:" <> group_id <> ":" <> member_key <> ":" <> Integer.to_string(generation)
   end
 
-  defp supervision_member_runtime_state(nil), do: nil
-
-  defp supervision_member_runtime_state(member) do
-    status =
-      case member["status"] do
-        "restarting" ->
-          "restarting"
-
-        "completed" ->
-          "completed"
-
-        "failed" ->
-          "failed"
-
-        "exhausted" ->
-          "failed"
-
-        _ ->
-          case member["current_child_run_id"] && get_run(member["current_child_run_id"]) do
-            %{"status" => child_status} -> child_status
-            _ -> member["status"]
-          end
-      end
-
-    supervision_member_from_row(member, status)
-  end
-
   defp supervision_member_result_state(owner_run_id, group_id, member_key) do
-    case get_run_supervision_group_for_owner(owner_run_id, group_id) do
+    case AgentKernel.get_run_supervision_group_for_owner(owner_run_id, group_id) do
       nil ->
         nil
 
       _group ->
-        case get_run_supervision_member(group_id, member_key) do
+        case AgentKernel.get_run_supervision_member(group_id, member_key) do
           nil ->
             nil
 
@@ -7489,7 +7032,7 @@ defmodule VilanoKernel.Storage do
 
                 target_run ->
                   relationship =
-                    case get_run_relationship(owner_run["id"], op_key) do
+                    case AgentKernel.get_run_relationship(owner_run["id"], op_key) do
                       nil ->
                         relationship_id = "rel_" <> Ecto.UUID.generate()
 
@@ -7532,14 +7075,17 @@ defmodule VilanoKernel.Storage do
                           now
                         )
 
-                        get_run_relationship_by_id(relationship_id)
+                        AgentKernel.get_run_relationship_by_id(relationship_id)
 
                       existing ->
                         existing
                     end
 
                   maybe_trigger_run_relationship!(relationship, target_run, now)
-                  relationship_from_row(get_run_relationship_by_id(relationship["id"]))
+
+                  AgentKernel.relationship_from_row(
+                    AgentKernel.get_run_relationship_by_id(relationship["id"])
+                  )
               end
           end
       end
@@ -7548,12 +7094,12 @@ defmodule VilanoKernel.Storage do
   end
 
   defp maybe_apply_supervision_for_terminal_run!(run_id, now) do
-    case get_run_supervision_member_by_child(run_id) do
+    case AgentKernel.get_run_supervision_member_by_child(run_id) do
       nil ->
         :ok
 
       member ->
-        case {get_run_supervision_group_by_id(member["group_id"]), get_run(run_id)} do
+        case {AgentKernel.get_run_supervision_group_by_id(member["group_id"]), get_run(run_id)} do
           {nil, _} ->
             :ok
 
@@ -7614,7 +7160,8 @@ defmodule VilanoKernel.Storage do
           now
         )
 
-      abnormal_terminal_status?(child_run["status"]) and supervision_restart_allowed?(group, now) ->
+      AgentKernel.abnormal_terminal_status?(child_run["status"]) and
+          supervision_restart_allowed?(group, now) ->
         record_supervision_restart!(group["id"], member["member_key"], child_run["id"], now)
 
         case group["strategy"] do
@@ -7625,7 +7172,7 @@ defmodule VilanoKernel.Storage do
             restart_supervision_member!(owner_run, group, member, now)
         end
 
-      abnormal_terminal_status?(child_run["status"]) ->
+      AgentKernel.abnormal_terminal_status?(child_run["status"]) ->
         exhaust_supervision_group!(owner_run, group, member, child_run, now)
 
       true ->
@@ -7634,7 +7181,10 @@ defmodule VilanoKernel.Storage do
   end
 
   defp supervision_restart_allowed?(group, now) do
-    count_recent_supervision_restarts(group["id"], shift_milliseconds(now, -group["window_ms"])) <
+    AgentKernel.count_recent_supervision_restarts(
+      group["id"],
+      shift_milliseconds(now, -group["window_ms"])
+    ) <
       group["max_restarts"]
   end
 
@@ -7694,7 +7244,7 @@ defmodule VilanoKernel.Storage do
   defp restart_supervision_group_members!(owner_run, group, triggering_member, child_run, now) do
     members =
       group["id"]
-      |> list_run_supervision_members()
+      |> AgentKernel.list_run_supervision_members()
       |> Enum.filter(&member_selected_for_one_for_all_restart?(&1, triggering_member))
 
     Enum.each(members, fn member ->
@@ -7821,7 +7371,7 @@ defmodule VilanoKernel.Storage do
       now
     )
 
-    Enum.each(list_run_supervision_members(group["id"]), fn current_member ->
+    Enum.each(AgentKernel.list_run_supervision_members(group["id"]), fn current_member ->
       if current_member["member_key"] != member["member_key"] and
            is_binary(current_member["current_child_run_id"]) do
         case get_run(current_member["current_child_run_id"]) do
@@ -7892,7 +7442,7 @@ defmodule VilanoKernel.Storage do
         :ok
 
       target_run ->
-        Enum.each(list_active_run_relationships_for_target(run_id), fn relationship ->
+        Enum.each(AgentKernel.list_active_run_relationships_for_target(run_id), fn relationship ->
           maybe_trigger_run_relationship!(relationship, target_run, now)
         end)
     end
@@ -7922,21 +7472,21 @@ defmodule VilanoKernel.Storage do
           if terminal_run_status?(owner_run["status"]) do
             :ok
           else
-            event = build_exit_event(target_run, relationship["kind"], now)
+            event = AgentKernel.build_exit_event(target_run, relationship["kind"], now)
 
             cond do
               relationship["kind"] == "monitor" ->
                 queue_exit_event!(owner_run["id"], relationship["id"], event, now)
 
-              run_trap_exits_value(owner_run["id"]) == 1 and
-                  should_queue_link_exit_event?(
+              AgentKernel.run_trap_exits_value(owner_run["id"]) == 1 and
+                  AgentKernel.should_queue_link_exit_event?(
                     target_run["status"],
                     relationship["propagate"]
                   ) ->
                 queue_exit_event!(owner_run["id"], relationship["id"], event, now)
 
               relationship["kind"] == "link" and
-                  abnormal_terminal_status?(target_run["status"]) ->
+                  AgentKernel.abnormal_terminal_status?(target_run["status"]) ->
                 propagate_linked_exit!(owner_run, target_run, event, now)
 
               true ->
@@ -7979,7 +7529,7 @@ defmodule VilanoKernel.Storage do
   end
 
   defp deliver_oldest_pending_exit_event!(run_id, now) do
-    case {get_pending_exit_event(run_id), get_waiting_exit_wait(run_id)} do
+    case {AgentKernel.get_pending_exit_event(run_id), AgentKernel.get_waiting_exit_wait(run_id)} do
       {nil, _} ->
         :none
 
@@ -8036,27 +7586,6 @@ defmodule VilanoKernel.Storage do
         {:delivered, get_run_wait(run_id, wait["op_key"])}
     end
   end
-
-  defp build_exit_event(target_run, relationship_kind, now) do
-    base = %{
-      "targetId" => target_run["id"],
-      "targetKind" => target_run["definitionKind"],
-      "relationship" => relationship_kind,
-      "status" => target_run["status"],
-      "at" => now
-    }
-
-    case target_run["status"] do
-      "completed" -> Map.put(base, "output", target_run["output"])
-      _ -> Map.put(base, "error", target_run["error"])
-    end
-  end
-
-  defp should_queue_link_exit_event?(status, propagate) do
-    abnormal_terminal_status?(status) or (status == "completed" and propagate == "all")
-  end
-
-  defp abnormal_terminal_status?(status), do: status in ["failed", "cancelled", "stopped"]
 
   defp propagate_linked_exit!(owner_run, target_run, event, now) do
     error_body = linked_exit_error(target_run, event)
@@ -8182,7 +7711,7 @@ defmodule VilanoKernel.Storage do
   end
 
   defp wake_waiting_supervision_member_results!(group_id, member_key, result_status, payload, now) do
-    wait_name = supervision_member_wait_name(group_id, member_key)
+    wait_name = AgentKernel.supervision_member_wait_name(group_id, member_key)
 
     waiting_rows =
       Repo
