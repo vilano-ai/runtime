@@ -3179,6 +3179,67 @@ test("bounded service mailboxes reject new work when queued backlog is full", as
   }
 });
 
+test("idle services report explicit passivation and wake-on-mailbox semantics", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { sessionId: "passivation-idle" };
+
+  try {
+    await harness.ensureService("demo/mailboxProbe", keyInput);
+
+    const inspect = await harness.waitForService(
+      "demo/mailboxProbe",
+      keyInput,
+      (body) => body.run.status === "idle"
+    );
+
+    expect(inspect.run.passivation).toMatchObject({
+      state: "passivated",
+      reason: "mailbox_empty",
+      wakeOn: ["mailbox"],
+      queuedMessages: 0,
+    });
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("waiting services report explicit passivation wake reasons", async () => {
+  const harness = await RuntimeHarness.create();
+  const keyInput = { sessionId: "passivation-waiting" };
+
+  try {
+    const run = await harness.startWorkflow("demo/approvalCoordinator", {
+      sessionId: keyInput.sessionId,
+    });
+
+    const waiting = await harness.waitForService(
+      "demo/operator",
+      keyInput,
+      (body) =>
+        body.run.status === "waiting" &&
+        body.waits.some((wait) => wait.kind === "signal" && wait.status === "waiting")
+    );
+
+    expect(waiting.run.passivation).toMatchObject({
+      state: "passivated",
+      wakeOn: ["signal"],
+      queuedMessages: 0,
+    });
+    expect(waiting.run.passivation?.reason).toContain("signal");
+
+    await harness.sendSignal(waiting.run.id, "approved", {
+      source: "passivation-test",
+    });
+
+    await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+  } finally {
+    await harness.dispose();
+  }
+});
+
 async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
 

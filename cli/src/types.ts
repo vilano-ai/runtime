@@ -111,6 +111,13 @@ export interface RunRecord {
   state?: unknown | null;
   output: unknown | null;
   error: unknown | null;
+  passivation?: {
+    state: "passivated" | "ready" | "active" | "stopped";
+    reason: string | null;
+    wakeOn: string[];
+    queuedMessages: number;
+    nextWakeAt?: string | null;
+  } | null;
   createdAt: string;
   updatedAt: string;
 }

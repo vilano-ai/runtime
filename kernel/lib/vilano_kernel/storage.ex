@@ -321,6 +321,7 @@ defmodule VilanoKernel.Storage do
     )
     |> rows_to_maps()
     |> Enum.map(&service_run_from_row(&1, &1))
+    |> Enum.map(&decorate_service_passivation/1)
   end
 
   def resolve_spawn(lease_id, definition_name, op_key, child_run_id, input) do
@@ -3454,7 +3455,10 @@ defmodule VilanoKernel.Storage do
         nil
 
       %{"definitionKind" => "service"} ->
-        get_service_run_by_id(run_id) || get_run(run_id)
+        run_id
+        |> get_service_run_by_id()
+        |> Kernel.||(get_run(run_id))
+        |> decorate_service_passivation()
 
       run ->
         run
@@ -3623,6 +3627,68 @@ defmodule VilanoKernel.Storage do
   defp project_definitions_for_run(run) do
     run["projectDefinitions"] || %{"workflows" => [], "services" => []}
   end
+
+  defp decorate_service_passivation(nil), do: nil
+
+  defp decorate_service_passivation(%{"definitionKind" => "service"} = run) do
+    now = Infrastructure.now_iso8601()
+    queued = queued_mailbox_summary(run["id"], now)
+    waits = list_waiting_wait_rows(run["id"])
+    wake_on = waits |> Enum.map(&passivation_wake_kind(&1["wait_kind"])) |> Enum.uniq()
+    next_wait_wake_at = earliest_wake_at(Enum.map(waits, & &1["wake_at"]))
+
+    passivation =
+      case run["status"] do
+        "active" ->
+          %{
+            "state" => "active",
+            "reason" => "leased",
+            "wakeOn" => [],
+            "queuedMessages" => queued["total"] || 0,
+            "nextWakeAt" => earliest_wake_at([queued["nextWakeAt"], next_wait_wake_at])
+          }
+
+        "pending" ->
+          %{
+            "state" => "ready",
+            "reason" => "mailbox_ready",
+            "wakeOn" => ["mailbox"],
+            "queuedMessages" => queued["total"] || 0,
+            "nextWakeAt" => earliest_wake_at([queued["nextWakeAt"], next_wait_wake_at])
+          }
+
+        "waiting" ->
+          %{
+            "state" => "passivated",
+            "reason" => if(wake_on == [], do: "durable_wait", else: Enum.join(wake_on, ",")),
+            "wakeOn" => wake_on,
+            "queuedMessages" => queued["total"] || 0,
+            "nextWakeAt" => earliest_wake_at([queued["nextWakeAt"], next_wait_wake_at])
+          }
+
+        "stopped" ->
+          %{
+            "state" => "stopped",
+            "reason" => "stopped",
+            "wakeOn" => [],
+            "queuedMessages" => queued["total"] || 0,
+            "nextWakeAt" => nil
+          }
+
+        _ ->
+          %{
+            "state" => "passivated",
+            "reason" => if((queued["total"] || 0) > 0, do: "mailbox_deferred", else: "mailbox_empty"),
+            "wakeOn" => ["mailbox"],
+            "queuedMessages" => queued["total"] || 0,
+            "nextWakeAt" => earliest_wake_at([queued["nextWakeAt"], next_wait_wake_at])
+          }
+      end
+
+    Map.put(run, "passivation", passivation)
+  end
+
+  defp decorate_service_passivation(run), do: run
 
   defp definition_from_project_definitions!(definitions, kind, definition_name) do
     bucket =
@@ -6973,6 +7039,18 @@ defmodule VilanoKernel.Storage do
         "nextWakeAt" => row["next_wake_at"]
       }
     end)
+  end
+
+  defp passivation_wake_kind("sleep"), do: "timer"
+  defp passivation_wake_kind("retry_backoff"), do: "timer"
+  defp passivation_wake_kind(kind) when is_binary(kind), do: kind
+  defp passivation_wake_kind(_kind), do: "durable_wait"
+
+  defp earliest_wake_at(values) do
+    values
+    |> Enum.filter(&is_binary/1)
+    |> Enum.sort()
+    |> List.first()
   end
 
   defp service_mailbox_config(service_run) do
