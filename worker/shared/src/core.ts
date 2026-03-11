@@ -6,9 +6,13 @@ import type {
   AskOptions,
   AskResult,
   ConnectOptions,
+  ExitEvent,
   ExecResult,
   ExecSpec,
+  LinkOptions,
   MessageOptions,
+  MonitorOptions,
+  RelationshipRef,
   RunStatus,
   ServiceDefinition,
   ServiceRef,
@@ -317,6 +321,47 @@ function createTurnContext(
           await spawnPromise;
           await client.sendChildRunSignal(activation.leaseId, childRunId, name, payload ?? null);
         },
+        async monitor(options: MonitorOptions = {}): Promise<RelationshipRef> {
+          await spawnPromise;
+          const key = scopeActivationOpKey(
+            activation,
+            nextImplicitActivationOpKey(
+              implicitActivationOpCounters,
+              "monitor",
+              childRunId,
+              options.key
+            )
+          );
+          const relationship = await client.resolveRunMonitor(activation.leaseId, childRunId, { key });
+
+          return {
+            id: relationship.id,
+            targetId: relationship.targetRunId,
+            kind: relationship.kind,
+          };
+        },
+        async link(options: LinkOptions = {}): Promise<RelationshipRef> {
+          await spawnPromise;
+          const key = scopeActivationOpKey(
+            activation,
+            nextImplicitActivationOpKey(
+              implicitActivationOpCounters,
+              "link",
+              childRunId,
+              options.key
+            )
+          );
+          const relationship = await client.resolveRunLink(activation.leaseId, childRunId, {
+            key,
+            propagate: options.propagate,
+          });
+
+          return {
+            id: relationship.id,
+            targetId: relationship.targetRunId,
+            kind: relationship.kind,
+          };
+        },
       };
     },
     async connect<
@@ -564,6 +609,26 @@ function createTurnContext(
 
       throw new RunSuspendedError("signal", key);
     },
+    async trapExit(enabled = true) {
+      await client.setTrapExits(activation.leaseId, enabled);
+    },
+    async nextExit(options?: { key?: string }) {
+      const key = scopeActivationOpKey(
+        activation,
+        nextImplicitActivationOpKey(
+          implicitActivationOpCounters,
+          "next_exit",
+          activation.run.id,
+          options?.key
+        )
+      );
+      const resolved = await client.resolveExitWait(activation.leaseId, { key });
+      if (resolved.status === "completed") {
+        return resolved.output as ExitEvent;
+      }
+
+      throw new RunSuspendedError("exit", key);
+    },
   };
 }
 
@@ -664,6 +729,45 @@ function createServiceRef(
     signal: Object.fromEntries(signalEntries),
     async status() {
       return (await client.getRelatedRunStatus(activation.leaseId, serviceRunId)) as RunStatus;
+    },
+    async monitor(options: MonitorOptions = {}): Promise<RelationshipRef> {
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "monitor",
+        serviceRunId,
+        options.key
+      );
+      const scopedKey = scopeActivationOpKey(activation, key);
+      const relationship = await client.resolveRunMonitor(activation.leaseId, serviceRunId, {
+        key: scopedKey,
+      });
+
+      return {
+        id: relationship.id,
+        targetId: relationship.targetRunId,
+        kind: relationship.kind,
+      };
+    },
+    async link(options: LinkOptions = {}): Promise<RelationshipRef> {
+      const key = nextImplicitServiceOpKey(
+        implicitOpCounters,
+        serviceRunId,
+        "link",
+        serviceRunId,
+        options.key
+      );
+      const scopedKey = scopeActivationOpKey(activation, key);
+      const relationship = await client.resolveRunLink(activation.leaseId, serviceRunId, {
+        key: scopedKey,
+        propagate: options.propagate,
+      });
+
+      return {
+        id: relationship.id,
+        targetId: relationship.targetRunId,
+        kind: relationship.kind,
+      };
     },
   };
 }
@@ -781,7 +885,7 @@ function looksLikeOptions(value: unknown, kind: ServiceMethodKind): boolean {
 function nextImplicitServiceOpKey(
   counters: Map<string, number>,
   serviceRunId: string,
-  opKind: "send" | "ask" | "signal",
+  opKind: "send" | "ask" | "signal" | "monitor" | "link",
   messageName: string,
   explicitKey?: string
 ): string {
@@ -805,7 +909,15 @@ function scopeActivationOpKey(activation: Activation, key: string): string {
 
 function nextImplicitActivationOpKey(
   counters: Map<string, number>,
-  opKind: "spawn" | "step" | "exec" | "sleep" | "wait_for_signal",
+  opKind:
+    | "spawn"
+    | "step"
+    | "exec"
+    | "sleep"
+    | "wait_for_signal"
+    | "monitor"
+    | "link"
+    | "next_exit",
   name: string,
   explicitKey?: string
 ): string {

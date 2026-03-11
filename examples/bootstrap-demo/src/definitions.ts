@@ -345,6 +345,90 @@ export const cancelledChildParent = workflow({
   },
 });
 
+export const relationshipChild = workflow({
+  name: "relationshipChild",
+  run: async (
+    input: { mode: "complete" | "fail"; duration?: string; value?: string },
+    ctx
+  ) => {
+    if (input.duration) {
+      await ctx.sleep(input.duration, { key: "relationship-child-delay" });
+    }
+
+    if (input.mode === "fail") {
+      throw new Error(input.value ?? "relationship child failed");
+    }
+
+    return {
+      value: input.value ?? "relationship-child-ok",
+    };
+  },
+});
+
+export const childMonitorCoordinator = workflow({
+  name: "childMonitorCoordinator",
+  run: async (
+    input: { mode: "complete" | "fail"; duration?: string; value?: string },
+    ctx
+  ) => {
+    const child = ctx.spawn(relationshipChild, input, { key: "child" });
+    await child.monitor({ key: "monitor" });
+    const exit = await ctx.nextExit({ key: "exit" });
+
+    return {
+      childRunId: child.id,
+      exit,
+    };
+  },
+});
+
+export const trappedChildLinkCoordinator = workflow({
+  name: "trappedChildLinkCoordinator",
+  run: async (input: { duration?: string; value?: string }, ctx) => {
+    await ctx.trapExit();
+
+    const child = ctx.spawn(
+      relationshipChild,
+      {
+        mode: "fail",
+        duration: input.duration ?? "50ms",
+        value: input.value ?? "linked child failed",
+      },
+      { key: "child" }
+    );
+
+    await child.link({ key: "link" });
+    const exit = await ctx.nextExit({ key: "exit" });
+
+    return {
+      childRunId: child.id,
+      exit,
+    };
+  },
+});
+
+export const linkedChildCancellationCoordinator = workflow({
+  name: "linkedChildCancellationCoordinator",
+  run: async (input: { duration?: string; value?: string }, ctx) => {
+    const child = ctx.spawn(
+      relationshipChild,
+      {
+        mode: "fail",
+        duration: input.duration ?? "50ms",
+        value: input.value ?? "linked child failed",
+      },
+      { key: "child" }
+    );
+
+    await child.link({ key: "link" });
+    await ctx.sleep("30s", { key: "linked-child-cancel-wait" });
+
+    return {
+      childRunId: child.id,
+    };
+  },
+});
+
 export const slowDelegator = workflow({
   name: "slowDelegator",
   run: async (input: { topic: string; duration?: string }, ctx) => {

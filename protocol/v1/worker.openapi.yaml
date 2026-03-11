@@ -386,6 +386,34 @@ components:
           properties:
             status:
               type: string
+    RelationshipRef:
+      type: object
+      required: [id, targetRunId, kind, propagate, status]
+      properties:
+        id:
+          type: string
+        targetRunId:
+          type: string
+        kind:
+          enum: [monitor, link]
+        propagate:
+          enum: [abnormal, all]
+        status:
+          enum: [active, triggered]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    RelationshipResolveResponse:
+      type: object
+      required: [ok, relationship]
+      properties:
+        ok:
+          const: true
+        relationship:
+          $ref: '#/components/schemas/RelationshipRef'
     ServiceRunResponse:
       type: object
       required: [ok, run]
@@ -554,6 +582,96 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RunStatusResponse'
+  /v1/leases/{leaseId}/runs/{id}/monitor:
+    post:
+      summary: Register a durable monitor on a related run.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key:
+                  type: string
+      responses:
+        '200':
+          description: Relationship state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationshipResolveResponse'
+  /v1/leases/{leaseId}/runs/{id}/link:
+    post:
+      summary: Register a durable link on a related run.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key:
+                  type: string
+                propagate:
+                  type: string
+                  enum: [abnormal, all]
+      responses:
+        '200':
+          description: Relationship state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationshipResolveResponse'
+  /v1/leases/{leaseId}/trap-exits:
+    post:
+      summary: Enable or disable trapping linked exits for the active run.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Run state updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunMutationResponse'
   /v1/leases/{leaseId}/runs/{id}/signals:
     post:
       summary: Send a signal to a child run from the active lease context.
@@ -952,6 +1070,32 @@ paths:
       responses:
         '200':
           description: Wait state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WaitResolveResponse'
+  /v1/leases/{leaseId}/waits/exit:
+    post:
+      summary: Resolve or suspend on the next durable exit event.
+      parameters:
+        - in: path
+          name: leaseId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key:
+                  type: string
+      responses:
+        '200':
+          description: Exit wait state
           content:
             application/json:
               schema:

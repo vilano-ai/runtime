@@ -127,6 +127,116 @@ test("cancelled child results fail the waiting parent", async () => {
   }
 });
 
+test("child monitors deliver durable exit events", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/childMonitorCoordinator", {
+      mode: "complete",
+      duration: "50ms",
+      value: "monitor-ok",
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+    const output = completed.run.output as
+      | {
+          childRunId?: string;
+          exit?: { targetId?: string };
+        }
+      | undefined;
+    const childRunId = output?.childRunId;
+
+    expect(completed.run.output).toMatchObject({
+      childRunId,
+      exit: {
+        relationship: "monitor",
+        status: "completed",
+        targetKind: "workflow",
+        output: {
+          value: "monitor-ok",
+        },
+      },
+    });
+
+    expect(typeof childRunId).toBe("string");
+    expect(output?.exit?.targetId).toBe(childRunId);
+    expect(completed.events.map((event) => event.type)).toContain("ExitNotified");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("trapExit converts linked child failure into a durable exit event", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/trappedChildLinkCoordinator", {
+      duration: "50ms",
+      value: "trap-linked-child-failure",
+    });
+
+    const completed = await harness.waitForRun(
+      run.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+    const output = completed.run.output as
+      | {
+          childRunId?: string;
+          exit?: { targetId?: string };
+        }
+      | undefined;
+    const childRunId = output?.childRunId;
+
+    expect(completed.run.output).toMatchObject({
+      childRunId,
+      exit: {
+        relationship: "link",
+        status: "failed",
+        targetKind: "workflow",
+        error: {
+          message: "trap-linked-child-failure",
+        },
+      },
+    });
+
+    expect(typeof childRunId).toBe("string");
+    expect(output?.exit?.targetId).toBe(childRunId);
+    expect(completed.events.map((event) => event.type)).toContain("ExitNotified");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("linked child failures cancel untrapped waiting parents", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/linkedChildCancellationCoordinator", {
+      duration: "50ms",
+      value: "linked-child-cancelled-parent",
+    });
+
+    const cancelled = await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "cancelled" &&
+        inspect.children.length === 1 &&
+        inspect.children[0]?.status === "failed"
+    );
+
+    expect(cancelled.run.error).toMatchObject({
+      reason: "linked_exit",
+      targetStatus: "failed",
+    });
+    expect(cancelled.events.map((event) => event.type)).toContain("LinkedExitPropagated");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("run cancel propagates through outbound service asks", async () => {
   const harness = await RuntimeHarness.create();
   const keyInput = { sessionId: "cancel-session" };

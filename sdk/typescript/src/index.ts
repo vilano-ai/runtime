@@ -96,11 +96,40 @@ export interface SignalOptions {
   key?: string;
 }
 
+export interface MonitorOptions {
+  key?: string;
+}
+
+export interface LinkOptions {
+  key?: string;
+  propagate?: "abnormal" | "all";
+}
+
+export type ExitStatus = "completed" | "failed" | "cancelled" | "stopped";
+
+export interface ExitEvent {
+  targetId: string;
+  targetKind: "workflow" | "service";
+  relationship: "monitor" | "link";
+  status: ExitStatus;
+  at: string;
+  output?: unknown;
+  error?: unknown;
+}
+
+export interface RelationshipRef {
+  readonly id: string;
+  readonly targetId: string;
+  readonly kind: "monitor" | "link";
+}
+
 export interface WorkflowHandle<TOutput> {
   readonly id: string;
   result(): Promise<TOutput>;
   status(): Promise<RunStatus>;
   signal(name: string, payload?: unknown, options?: SignalOptions): Promise<void>;
+  monitor(options?: MonitorOptions): Promise<RelationshipRef>;
+  link(options?: LinkOptions): Promise<RelationshipRef>;
 }
 
 export type SendResult<TState> = void | { state?: TState; stop?: true };
@@ -118,6 +147,8 @@ export interface ServiceTurnContext {
   exec<TOutput = ExecResult>(spec: ExecSpec<TOutput>): Promise<TOutput>;
   sleep(duration: string, options?: { key?: string }): Promise<void>;
   waitForSignal(name: string, options?: { key?: string }): Promise<unknown>;
+  trapExit(enabled?: boolean): Promise<void>;
+  nextExit(options?: { key?: string }): Promise<ExitEvent>;
   log(message: string, fields?: Record<string, unknown>): Promise<void>;
   spawn<TInput, TOutput>(
     definition: WorkflowDefinition<TInput, TOutput>,
@@ -257,6 +288,8 @@ export interface ServiceRef<
     [K in keyof TSignal]: (...args: SignalMethodArgs<FirstArg<TSignal[K]>>) => Promise<void>;
   };
   status(): Promise<RunStatus>;
+  monitor(options?: MonitorOptions): Promise<RelationshipRef>;
+  link(options?: LinkOptions): Promise<RelationshipRef>;
 }
 
 export class NonRetryableError extends Error {

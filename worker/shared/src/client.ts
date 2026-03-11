@@ -46,9 +46,18 @@ interface SpawnResolveResponse {
 type ChildResultResponse = WorkerComponents["schemas"]["ChildResultResponse"];
 type RunStatusResponse = WorkerComponents["schemas"]["RunStatusResponse"];
 type LeaseStatusResponse = WorkerComponents["schemas"]["LeaseStatusResponse"];
+type RelationshipResolveResponse = WorkerComponents["schemas"]["RelationshipResolveResponse"];
 type ServiceRunResponse = WorkerComponents["schemas"]["ServiceRunResponse"];
 type ServiceCallResolveResponse = WorkerComponents["schemas"]["ServiceCallResolveResponse"];
 type ServiceTurnFailResponse = WorkerComponents["schemas"]["ServiceTurnFailResponse"];
+
+interface TrapExitsResponse {
+  ok: true;
+  run: {
+    id: string;
+    status: string;
+  };
+}
 
 export class WorkerRequestError extends Error {
   readonly status?: number;
@@ -296,6 +305,20 @@ export class WorkerClient {
     return response.wait;
   }
 
+  async resolveExitWait(
+    leaseId: string,
+    spec: { key: string }
+  ): Promise<WaitResolveResponse["wait"]> {
+    const response = await this.request<WaitResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/waits/exit`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.wait;
+  }
+
   async resolveSpawn(
     leaseId: string,
     spec: { name: string; key: string; childRunId: string; input: unknown }
@@ -332,6 +355,45 @@ export class WorkerClient {
       this.requireLeaseAuthToken(leaseId)
     );
     return response.run.status;
+  }
+
+  async resolveRunMonitor(
+    leaseId: string,
+    runId: string,
+    spec: { key: string }
+  ): Promise<RelationshipResolveResponse["relationship"]> {
+    const response = await this.request<RelationshipResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/runs/${encodeURIComponent(runId)}/monitor`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.relationship;
+  }
+
+  async resolveRunLink(
+    leaseId: string,
+    runId: string,
+    spec: { key: string; propagate?: "abnormal" | "all" }
+  ): Promise<RelationshipResolveResponse["relationship"]> {
+    const response = await this.request<RelationshipResolveResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/runs/${encodeURIComponent(runId)}/link`,
+      spec,
+      this.requireLeaseAuthToken(leaseId)
+    );
+
+    return response.relationship;
+  }
+
+  async setTrapExits(leaseId: string, enabled: boolean): Promise<void> {
+    await this.request<TrapExitsResponse>(
+      "POST",
+      `/v1/leases/${encodeURIComponent(leaseId)}/trap-exits`,
+      { enabled },
+      this.requireLeaseAuthToken(leaseId)
+    );
   }
 
   async sendChildRunSignal(leaseId: string, runId: string, name: string, payload: unknown): Promise<void> {

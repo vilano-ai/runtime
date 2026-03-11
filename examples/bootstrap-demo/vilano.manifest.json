@@ -44,6 +44,14 @@
       },
       {
         "kind": "workflow",
+        "name": "childMonitorCoordinator",
+        "exportName": "childMonitorCoordinator",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "childSignalCoordinator",
         "exportName": "childSignalCoordinator",
         "file": "src/definitions.ts",
@@ -94,6 +102,14 @@
         "kind": "workflow",
         "name": "implicitKeyProbe",
         "exportName": "implicitKeyProbe",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "linkedChildCancellationCoordinator",
+        "exportName": "linkedChildCancellationCoordinator",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"
@@ -158,6 +174,14 @@
         "kind": "workflow",
         "name": "retryingStep",
         "exportName": "retryingStep",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "relationshipChild",
+        "exportName": "relationshipChild",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"
@@ -254,6 +278,14 @@
         "kind": "workflow",
         "name": "timeoutRetryingStep",
         "exportName": "timeoutRetryingStep",
+        "file": "src/definitions.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "trappedChildLinkCoordinator",
+        "exportName": "trappedChildLinkCoordinator",
         "file": "src/definitions.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"
