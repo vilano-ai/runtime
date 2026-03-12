@@ -20,6 +20,27 @@ import type {
 } from "../cli/src/types.ts";
 import { decorateRunInspect } from "../cli/src/run-views.ts";
 import { deriveExecutionHomeDir } from "../cli/src/runtime-home.ts";
+import {
+  SpawnedCommand,
+  forceKillPidSync,
+  forceKillProcessGroupSync,
+  killProcessTree,
+  terminateDetachedProcessGroup,
+} from "./runtime-harness-processes.ts";
+import {
+  choosePortCandidate,
+  cloneBootstrapDemoProject,
+  deriveServiceKey,
+  expectInOrder,
+  makeTreeWritable,
+  maybeLogTiming,
+  parseQualifiedReference,
+  readDaemonAuthState,
+  readDaemonState,
+  sleep,
+  waitFor,
+} from "./runtime-harness-utils.ts";
+export { expectInOrder, sleep } from "./runtime-harness-utils.ts";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 const CLI_ENTRY = path.join(ROOT, "cli", "bin", "vilano.ts");
@@ -54,7 +75,7 @@ export class RuntimeHarness {
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const runtimeHome = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-test-"));
       const projectDir = path.join(runtimeHome, "projects", "bootstrap-demo");
-      await cloneBootstrapDemoProject(projectDir);
+      await cloneBootstrapDemoProject(projectDir, BOOTSTRAP_DEMO_ROOT, SDK_ROOT);
       const port = choosePortCandidate();
       const harness = new RuntimeHarness(runtimeHome, port, {
         VILANO_KERNEL_NO_COMPILE: "1",
@@ -440,168 +461,6 @@ export class RuntimeHarness {
   }
 }
 
-function deriveServiceKey(keyInput: unknown): string {
-  if (typeof keyInput === "string" && keyInput.trim() !== "") {
-    return keyInput;
-  }
-
-  if (
-    keyInput &&
-    typeof keyInput === "object" &&
-    !Array.isArray(keyInput)
-  ) {
-    const entries = Object.entries(keyInput as Record<string, unknown>).filter(
-      ([, value]) =>
-        typeof value === "string" || typeof value === "number" || typeof value === "boolean"
-    );
-
-    if (entries.length === 1) {
-      return String(entries[0]?.[1]);
-    }
-  }
-
-  throw new Error(
-    "RuntimeHarness could not derive a service key from key input. Pass a simple stable identifier."
-  );
-}
-
-export class SpawnedCommand {
-  private waitPromise: Promise<{ stdout: string; stderr: string; exitCode: number }> | null = null;
-
-  constructor(
-    private readonly proc: Bun.Subprocess<any, "pipe", "pipe">,
-    private readonly onSettled: () => void
-  ) {}
-
-  get pid(): number {
-    return this.proc.pid;
-  }
-
-  kill(signal: NodeJS.Signals = "SIGKILL"): void {
-    void killProcessTree(this.proc.pid, signal).catch(() => undefined);
-  }
-
-  async wait(): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    return await this.ensureWaitPromise();
-  }
-
-  async terminate(): Promise<void> {
-    const waitPromise = this.ensureWaitPromise();
-
-    await killProcessTree(this.proc.pid, "SIGTERM").catch(() => undefined);
-    if (await waitForPromiseSettled(waitPromise, 1_500)) {
-      return;
-    }
-
-    await killProcessTree(this.proc.pid, "SIGKILL").catch(() => undefined);
-    await waitForPromiseSettled(waitPromise, 1_500);
-  }
-
-  forceKillSync(): void {
-    forceKillPidSync(this.proc.pid);
-  }
-
-  private ensureWaitPromise(): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    if (!this.waitPromise) {
-      this.waitPromise = Promise.all([
-        streamToText(this.proc.stdout),
-        streamToText(this.proc.stderr),
-        this.proc.exited,
-      ])
-        .then(([stdout, stderr, exitCode]) => ({ stdout, stderr, exitCode }))
-        .finally(() => {
-          this.onSettled();
-        });
-    }
-
-    return this.waitPromise;
-  }
-}
-
-export async function sleep(durationMs: number): Promise<void> {
-  await new Promise((resolve) => {
-    setTimeout(resolve, durationMs);
-  });
-}
-
-export function expectInOrder(text: string, fragments: string[]): void {
-  let lastIndex = -1;
-
-  for (const fragment of fragments) {
-    const nextIndex = text.indexOf(fragment, lastIndex + 1);
-    expectIndexOrdering(nextIndex, lastIndex);
-    lastIndex = nextIndex;
-  }
-}
-
-function expectIndexOrdering(nextIndex: number, lastIndex: number): void {
-  if (nextIndex <= lastIndex) {
-    throw new Error(`Expected fragment ordering after index ${lastIndex}, got ${nextIndex}`);
-  }
-}
-
-async function waitFor<T>(
-  fn: () => Promise<T>,
-  predicate: (value: T) => boolean,
-  timeoutMs: number
-): Promise<T> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
-  const startedAt = Date.now();
-
-  while (Date.now() <= deadline) {
-    try {
-      const value = await fn();
-      if (predicate(value)) {
-        maybeLogTiming(`waitFor(${timeoutMs})`, Date.now() - startedAt);
-        return value;
-      }
-    } catch (error) {
-      lastError = error;
-    }
-
-    await sleep(150);
-  }
-
-  if (lastError instanceof Error) {
-    throw lastError;
-  }
-
-  throw new Error(`Timed out waiting after ${timeoutMs}ms`);
-}
-
-async function cloneBootstrapDemoProject(projectDir: string): Promise<void> {
-  await fs.mkdir(path.dirname(projectDir), { recursive: true });
-  await fs.cp(BOOTSTRAP_DEMO_ROOT, projectDir, {
-    recursive: true,
-    force: true,
-    filter: (_source, destination) => {
-      const name = path.basename(destination);
-      return name !== ".vilano" && name !== "tmp";
-    },
-  });
-
-  const runtimePackageDir = path.join(projectDir, "node_modules", "@vilano", "runtime");
-  await fs.mkdir(path.dirname(runtimePackageDir), { recursive: true });
-  await fs.symlink(SDK_ROOT, runtimePackageDir, "dir");
-}
-
-function choosePortCandidate(): number {
-  const min = 20_000;
-  const max = 50_000;
-  return min + Math.floor(Math.random() * (max - min));
-}
-
-async function streamToText(
-  stream: ReadableStream<Uint8Array<ArrayBufferLike>> | number | null | undefined
-): Promise<string> {
-  if (!stream || typeof stream === "number") {
-    return "";
-  }
-
-  return await new Response(stream).text();
-}
-
 function registerActiveHarness(harness: RuntimeHarness): void {
   activeHarnesses.add(harness);
   installCleanupHooks();
@@ -641,212 +500,5 @@ function forceCleanupAllHarnessesSync(): void {
   forcingGlobalCleanup = true;
   for (const harness of activeHarnesses) {
     harness.forceCleanupSync();
-  }
-}
-
-async function terminateDetachedProcessGroup(pid: number | null): Promise<void> {
-  if (!Number.isInteger(pid) || (pid as number) <= 0) {
-    return;
-  }
-
-  signalProcessGroup(pid as number, "SIGTERM");
-  if (await waitForProcessExit(pid as number, 1_500)) {
-    return;
-  }
-
-  signalProcessGroup(pid as number, "SIGKILL");
-  if (await waitForProcessExit(pid as number, 1_500)) {
-    return;
-  }
-
-  await killProcessTree(pid as number, "SIGKILL").catch(() => undefined);
-}
-
-async function killProcessTree(pid: number, signal: NodeJS.Signals): Promise<void> {
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return;
-  }
-
-  const childPids = await listChildPids(pid);
-  for (const childPid of childPids.reverse()) {
-    signalPid(childPid, signal);
-  }
-
-  signalPid(pid, signal);
-}
-
-async function listChildPids(rootPid: number): Promise<number[]> {
-  const proc = Bun.spawn(["ps", "-axo", "pid=,ppid="], {
-    cwd: ROOT,
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  const output = await new Response(proc.stdout).text();
-  const childrenByParent = new Map<number, number[]>();
-
-  for (const line of output.split("\n")) {
-    const [pidText, parentText] = line.trim().split(/\s+/, 2);
-    const pid = Number.parseInt(pidText ?? "", 10);
-    const parentPid = Number.parseInt(parentText ?? "", 10);
-
-    if (!Number.isFinite(pid) || !Number.isFinite(parentPid)) {
-      continue;
-    }
-
-    const siblings = childrenByParent.get(parentPid) ?? [];
-    siblings.push(pid);
-    childrenByParent.set(parentPid, siblings);
-  }
-
-  const discovered: number[] = [];
-  const queue = [...(childrenByParent.get(rootPid) ?? [])];
-
-  while (queue.length > 0) {
-    const nextPid = queue.shift()!;
-    discovered.push(nextPid);
-    queue.push(...(childrenByParent.get(nextPid) ?? []));
-  }
-
-  return discovered;
-}
-
-function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(-pid, signal);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ESRCH" && code !== "EPERM") {
-      throw error;
-    }
-  }
-}
-
-function forceKillProcessGroupSync(pid: number | null): void {
-  if (!Number.isInteger(pid) || (pid as number) <= 0) {
-    return;
-  }
-
-  try {
-    process.kill(-(pid as number), "SIGKILL");
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ESRCH" && code !== "EPERM") {
-      throw error;
-    }
-  }
-
-  forceKillPidSync(pid);
-}
-
-function forceKillPidSync(pid: number | null): void {
-  if (!Number.isInteger(pid) || (pid as number) <= 0) {
-    return;
-  }
-
-  signalPid(pid as number, "SIGKILL");
-}
-
-function signalPid(pid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(pid, signal);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ESRCH" && code !== "EPERM") {
-      throw error;
-    }
-  }
-}
-
-async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    if (!(await isProcessAlive(pid))) {
-      return true;
-    }
-
-    await sleep(100);
-  }
-
-  return !(await isProcessAlive(pid));
-}
-
-async function waitForPromiseSettled<T>(promise: Promise<T>, timeoutMs: number): Promise<boolean> {
-  return await Promise.race([
-    promise.then(
-      () => true,
-      () => true
-    ),
-    sleep(timeoutMs).then(() => false),
-  ]);
-}
-
-async function isProcessAlive(pid: number): Promise<boolean> {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    return code === "EPERM";
-  }
-}
-
-async function readDaemonState(runtimeHome: string): Promise<DaemonState | null> {
-  try {
-    const raw = await fs.readFile(path.join(runtimeHome, "daemon.json"), "utf8");
-    return JSON.parse(raw) as DaemonState;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") {
-      return null;
-    }
-
-    throw error;
-  }
-}
-
-async function readDaemonAuthState(runtimeHome: string): Promise<DaemonAuthState | null> {
-  try {
-    const raw = await fs.readFile(path.join(runtimeHome, "daemon-auth.json"), "utf8");
-    return JSON.parse(raw) as DaemonAuthState;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") {
-      return null;
-    }
-
-    throw error;
-  }
-}
-
-function parseQualifiedReference(reference: string): [string, string] {
-  const slashIndex = reference.indexOf("/");
-  if (slashIndex <= 0 || slashIndex === reference.length - 1) {
-    throw new Error(`Expected qualified reference like 'project/name', got '${reference}'`);
-  }
-
-  return [reference.slice(0, slashIndex), reference.slice(slashIndex + 1)];
-}
-
-function maybeLogTiming(label: string, durationMs: number): void {
-  if (process.env.VILANO_TEST_TIMING !== "1") {
-    return;
-  }
-
-  console.error(`[timing] ${label} ${durationMs}ms`);
-}
-
-async function makeTreeWritable(rootPath: string): Promise<void> {
-  const stat = await fs.lstat(rootPath);
-
-  if (stat.isDirectory()) {
-    const entries = await fs.readdir(rootPath);
-    await Promise.all(entries.map((entry) => makeTreeWritable(path.join(rootPath, entry))));
-    await fs.chmod(rootPath, stat.mode | 0o200);
-    return;
-  }
-
-  if (stat.isFile()) {
-    await fs.chmod(rootPath, stat.mode | 0o200);
   }
 }

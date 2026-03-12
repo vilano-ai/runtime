@@ -1,6 +1,4 @@
 import type {
-  AskOptions,
-  AskResult,
   ConnectOptions,
   DiscoveredServiceRef,
   ExitEvent,
@@ -14,8 +12,6 @@ import type {
   ServiceDefinition,
   ServiceRef,
   ServiceTurnContext,
-  SignalOptions,
-  SignalResult,
   SpawnOptions,
   StepContext,
   StepOptions,
@@ -34,15 +30,10 @@ import type {
 import {
   WorkerClient,
   WorkerRequestError,
-  type ServiceTurnActivation,
-  type WorkflowActivation,
 } from "./client.ts";
 import type { RuntimeAdapter } from "./runtime-adapter.ts";
 import {
   ActivationCancelledError,
-  RunSuspendedError,
-  StepControlError,
-  TurnHandledError,
   buildStepError,
   deterministicChildRunId,
   executeProcess,
@@ -50,17 +41,23 @@ import {
   isRetryableError,
   parseDurationToMs,
   resolveExecCwd,
+  RunSuspendedError,
+  StepControlError,
   throwAbortReason,
   toChildRunError,
   toExecError,
   toRetryPolicy,
-  toServiceAskError,
-  toServiceCallError,
   toStepError,
 } from "./runtime-utils.ts";
-
-type Activation = WorkflowActivation | ServiceTurnActivation;
-type ServiceMethodKind = "message" | "ask" | "signal";
+import { createDiscoveredServiceRef, createServiceRef } from "./service-refs.ts";
+import {
+  type Activation,
+  nextImplicitActivationOpKey,
+  nextImplicitSupervisionMemberKey,
+  scopeActivationOpKey,
+} from "./turn-context-helpers.ts";
+import { TurnHandledError } from "./runtime-errors.ts";
+export { executeServiceTurn } from "./service-turn.ts";
 
 export function createTurnContext(
   adapter: RuntimeAdapter,
@@ -700,457 +697,6 @@ export function createTurnContext(
   };
 }
 
-export async function executeServiceTurn(
-  adapter: RuntimeAdapter,
-  client: WorkerClient,
-  activation: ServiceTurnActivation,
-  definition: ServiceDefinition<any, any, any, any, any>,
-  activationCwd: string
-): Promise<void> {
-  const ctx = createTurnContext(adapter, client, activation, activationCwd, definition);
-  let state = activation.service.state;
-  let shouldCommitState = false;
-
-  if (state == null && definition.init) {
-    state = await definition.init(activation.service.keyInput, ctx);
-    shouldCommitState = true;
-  }
-
-  const envelope = activation.envelope;
-  const payload = envelope.payload === null ? undefined : envelope.payload;
-
-  if (envelope.kind === "ask") {
-    const handler = definition.onAsk?.[envelope.name];
-    if (typeof handler !== "function") {
-      throw new Error(`Unknown service ask handler '${envelope.name}' on '${definition.name}'`);
-    }
-
-    const result = (await handler(payload, state, ctx)) as AskResult<any, unknown>;
-    const nextState = hasOwnState(result) ? result.state : state;
-
-    await client.completeServiceTurn(activation.leaseId, envelope.id, {
-      state: shouldCommitState || hasOwnState(result) ? nextState : undefined,
-      reply: result.reply,
-      stop: result.stop === true,
-    });
-
-    return;
-  }
-
-  if (envelope.kind === "send") {
-    const handler = definition.onSend?.[envelope.name];
-    if (typeof handler !== "function") {
-      throw new Error(`Unknown service send handler '${envelope.name}' on '${definition.name}'`);
-    }
-
-    const result = (await handler(payload, state, ctx)) as
-      | void
-      | { state?: unknown; stop?: true };
-    const nextState = hasOwnState(result) ? result.state : state;
-
-    await client.completeServiceTurn(activation.leaseId, envelope.id, {
-      state: shouldCommitState || hasOwnState(result) ? nextState : undefined,
-      stop: result?.stop === true,
-    });
-
-    return;
-  }
-
-  const handler = definition.onSignal?.[envelope.name];
-  if (typeof handler !== "function") {
-    throw new Error(`Unknown service signal handler '${envelope.name}' on '${definition.name}'`);
-  }
-
-  const result = (await handler(payload, state, ctx)) as SignalResult<any>;
-  const nextState = hasOwnState(result) ? result.state : state;
-
-  await client.completeServiceTurn(activation.leaseId, envelope.id, {
-    state: shouldCommitState || hasOwnState(result) ? nextState : undefined,
-    stop: result?.stop === true,
-  });
-}
-
-function createDiscoveredServiceRef(
-  client: WorkerClient,
-  activation: Activation,
-  serviceRunId: string,
-  project: string,
-  definitionName: string,
-  serviceKey: string,
-  keyInput: unknown,
-  implicitOpCounters: Map<string, number>
-): DiscoveredServiceRef {
-  return {
-    id: serviceRunId,
-    project,
-    definitionName,
-    serviceKey,
-    keyInput,
-    async send(name: string, payload?: unknown, options?: MessageOptions) {
-      const key = nextImplicitServiceOpKey(
-        implicitOpCounters,
-        serviceRunId,
-        "send",
-        name,
-        options?.key
-      );
-      const scopedKey = scopeActivationOpKey(activation, key);
-      const resolved = await client.resolveServiceSend(activation.leaseId, {
-        serviceRunId,
-        name,
-        key: scopedKey,
-        payload: payload ?? null,
-      });
-
-      if (resolved.status === "failed") {
-        throw toServiceCallError(serviceRunId, name, resolved.error, "send");
-      }
-    },
-    async ask(name: string, payload?: unknown, options?: AskOptions) {
-      const key = nextImplicitServiceOpKey(
-        implicitOpCounters,
-        serviceRunId,
-        "ask",
-        name,
-        options?.key
-      );
-      const scopedKey = scopeActivationOpKey(activation, key);
-      const resolved = await client.resolveServiceAsk(activation.leaseId, {
-        serviceRunId,
-        name,
-        key: scopedKey,
-        payload: payload ?? null,
-        timeoutMs:
-          typeof options?.timeout === "string" ? parseDurationToMs(options.timeout) : undefined,
-      });
-
-      if (resolved.status === "completed") {
-        return resolved.output;
-      }
-
-      if (resolved.status === "failed") {
-        throw toServiceAskError(serviceRunId, name, resolved.error);
-      }
-
-      throw new RunSuspendedError("ask_reply", `ask_reply:ask:${scopedKey}`);
-    },
-    async signal(name: string, payload?: unknown, options?: SignalOptions) {
-      const key = nextImplicitServiceOpKey(
-        implicitOpCounters,
-        serviceRunId,
-        "signal",
-        name,
-        options?.key
-      );
-      const scopedKey = scopeActivationOpKey(activation, key);
-      const resolved = await client.resolveServiceSignal(activation.leaseId, {
-        serviceRunId,
-        name,
-        key: scopedKey,
-        payload: payload ?? null,
-      });
-
-      if (resolved.status === "failed") {
-        throw toServiceCallError(serviceRunId, name, resolved.error, "signal");
-      }
-    },
-    async status() {
-      return (await client.getRelatedRunStatus(activation.leaseId, serviceRunId)) as RunStatus;
-    },
-    async monitor(options: MonitorOptions = {}): Promise<RelationshipRef> {
-      const key = nextImplicitServiceOpKey(
-        implicitOpCounters,
-        serviceRunId,
-        "monitor",
-        serviceRunId,
-        options.key
-      );
-      const scopedKey = scopeActivationOpKey(activation, key);
-      const relationship = await client.resolveRunMonitor(activation.leaseId, serviceRunId, {
-        key: scopedKey,
-      });
-
-      return {
-        id: relationship.id,
-        targetId: relationship.targetRunId,
-        kind: relationship.kind,
-      };
-    },
-    async link(options: LinkOptions = {}): Promise<RelationshipRef> {
-      const key = nextImplicitServiceOpKey(
-        implicitOpCounters,
-        serviceRunId,
-        "link",
-        serviceRunId,
-        options.key
-      );
-      const scopedKey = scopeActivationOpKey(activation, key);
-      const relationship = await client.resolveRunLink(activation.leaseId, serviceRunId, {
-        key: scopedKey,
-        propagate: options.propagate,
-      });
-
-      return {
-        id: relationship.id,
-        targetId: relationship.targetRunId,
-        kind: relationship.kind,
-      };
-    },
-  };
-}
-
-function createServiceRef(
-  client: WorkerClient,
-  activation: Activation,
-  definition: ServiceDefinition<any, any, any, any, any>,
-  serviceRunId: string,
-  implicitOpCounters: Map<string, number>
-): ServiceRef<any, any, any> {
-  const sendEntries = Object.keys(definition.onSend ?? {}).map((name) => [
-    name,
-    async (...args: any[]) => {
-      const { payload, options } = splitPayloadAndOptions(args, "message");
-      const key = nextImplicitServiceOpKey(
-        implicitOpCounters,
-        serviceRunId,
-        "send",
-        name,
-        options?.key
-      );
-      const scopedKey = scopeActivationOpKey(activation, key);
-      const resolved = await client.resolveServiceSend(activation.leaseId, {
-        serviceRunId,
-        name,
-        key: scopedKey,
-        payload: payload ?? null,
-      });
-
-      if (resolved.status === "failed") {
-        throw toServiceCallError(serviceRunId, name, resolved.error, "send");
-      }
-    },
-  ]);
-
-  const askEntries = Object.keys(definition.onAsk ?? {}).map((name) => [
-    name,
-    async (...args: any[]) => {
-      const { payload, options } = splitPayloadAndOptions(args, "ask");
-      const askOptions = options as AskOptions | undefined;
-      const key = nextImplicitServiceOpKey(
-        implicitOpCounters,
-        serviceRunId,
-        "ask",
-        name,
-        askOptions?.key
-      );
-      const scopedKey = scopeActivationOpKey(activation, key);
-      const resolved = await client.resolveServiceAsk(activation.leaseId, {
-        serviceRunId,
-        name,
-        key: scopedKey,
-        payload: payload ?? null,
-        timeoutMs:
-          typeof askOptions?.timeout === "string"
-            ? parseDurationToMs(askOptions.timeout)
-            : undefined,
-      });
-
-      if (resolved.status === "completed") {
-        return resolved.output;
-      }
-
-      if (resolved.status === "failed") {
-        throw toServiceAskError(serviceRunId, name, resolved.error);
-      }
-
-      throw new RunSuspendedError("ask_reply", `ask_reply:ask:${scopedKey}`);
-    },
-  ]);
-
-  const signalEntries = Object.keys(definition.onSignal ?? {}).map((name) => [
-    name,
-    async (...args: any[]) => {
-      const { payload, options } = splitPayloadAndOptions(args, "signal");
-      const key = nextImplicitServiceOpKey(
-        implicitOpCounters,
-        serviceRunId,
-        "signal",
-        name,
-        options?.key
-      );
-      const scopedKey = scopeActivationOpKey(activation, key);
-      const resolved = await client.resolveServiceSignal(activation.leaseId, {
-        serviceRunId,
-        name,
-        key: scopedKey,
-        payload: payload ?? null,
-      });
-
-      if (resolved.status === "failed") {
-        throw toServiceCallError(serviceRunId, name, resolved.error, "signal");
-      }
-    },
-  ]);
-
-  return {
-    id: serviceRunId,
-    send: Object.fromEntries(sendEntries),
-    ask: Object.fromEntries(askEntries),
-    signal: Object.fromEntries(signalEntries),
-    async status() {
-      return (await client.getRelatedRunStatus(activation.leaseId, serviceRunId)) as RunStatus;
-    },
-    async monitor(options: MonitorOptions = {}): Promise<RelationshipRef> {
-      const key = nextImplicitServiceOpKey(
-        implicitOpCounters,
-        serviceRunId,
-        "monitor",
-        serviceRunId,
-        options.key
-      );
-      const scopedKey = scopeActivationOpKey(activation, key);
-      const relationship = await client.resolveRunMonitor(activation.leaseId, serviceRunId, {
-        key: scopedKey,
-      });
-
-      return {
-        id: relationship.id,
-        targetId: relationship.targetRunId,
-        kind: relationship.kind,
-      };
-    },
-    async link(options: LinkOptions = {}): Promise<RelationshipRef> {
-      const key = nextImplicitServiceOpKey(
-        implicitOpCounters,
-        serviceRunId,
-        "link",
-        serviceRunId,
-        options.key
-      );
-      const scopedKey = scopeActivationOpKey(activation, key);
-      const relationship = await client.resolveRunLink(activation.leaseId, serviceRunId, {
-        key: scopedKey,
-        propagate: options.propagate,
-      });
-
-      return {
-        id: relationship.id,
-        targetId: relationship.targetRunId,
-        kind: relationship.kind,
-      };
-    },
-  };
-}
-
-function hasOwnState(value: unknown): value is { state?: unknown } {
-  return (
-    Boolean(value) &&
-    typeof value === "object" &&
-    Object.prototype.hasOwnProperty.call(value, "state")
-  );
-}
-
-function splitPayloadAndOptions(
-  args: unknown[],
-  kind: ServiceMethodKind
-): {
-  payload: unknown;
-  options: AskOptions | MessageOptions | SignalOptions | undefined;
-} {
-  if (args.length === 0) {
-    return { payload: undefined, options: undefined };
-  }
-
-  if (args.length === 1) {
-    return {
-      payload: args[0],
-      options: undefined,
-    };
-  }
-
-  return {
-    payload: args[0],
-    options: looksLikeOptions(args[1], kind)
-      ? (args[1] as AskOptions | MessageOptions | SignalOptions)
-      : undefined,
-  };
-}
-
-function looksLikeOptions(value: unknown, kind: ServiceMethodKind): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-
-  const allowedKeys = kind === "ask" ? new Set(["key", "timeout"]) : new Set(["key"]);
-  const keys = Object.keys(value);
-  return keys.length > 0 && keys.every((key) => allowedKeys.has(key));
-}
-
-function nextImplicitServiceOpKey(
-  counters: Map<string, number>,
-  serviceRunId: string,
-  opKind: "send" | "ask" | "signal" | "monitor" | "link",
-  messageName: string,
-  explicitKey?: string
-): string {
-  if (explicitKey) {
-    return explicitKey;
-  }
-
-  const counterKey = `${serviceRunId}:${opKind}:${messageName}`;
-  const nextCount = (counters.get(counterKey) ?? 0) + 1;
-  counters.set(counterKey, nextCount);
-  return `${opKind}:${serviceRunId}:${messageName}:${nextCount}`;
-}
-
-function scopeActivationOpKey(activation: Activation, key: string): string {
-  if (activation.kind !== "service_turn") {
-    return key;
-  }
-
-  return `turn:${activation.envelope.id}:${key}`;
-}
-
-function nextImplicitActivationOpKey(
-  counters: Map<string, number>,
-  opKind:
-    | "spawn"
-    | "step"
-    | "exec"
-    | "publish"
-    | "sleep"
-    | "wait_for_signal"
-    | "monitor"
-    | "link"
-    | "next_exit"
-    | "supervise"
-    | "supervision_member_result",
-  name: string,
-  explicitKey?: string
-): string {
-  if (explicitKey) {
-    return explicitKey;
-  }
-
-  const counterKey = `${opKind}:${name}`;
-  const nextCount = (counters.get(counterKey) ?? 0) + 1;
-  counters.set(counterKey, nextCount);
-  return `${opKind}:${name}:${nextCount}`;
-}
-
-function nextImplicitSupervisionMemberKey(
-  counters: Map<string, number>,
-  definitionName: string,
-  explicitKey?: string
-): string {
-  if (explicitKey) {
-    return explicitKey;
-  }
-
-  const nextCount = (counters.get(definitionName) ?? 0) + 1;
-  counters.set(definitionName, nextCount);
-  return `member:${definitionName}:${nextCount}`;
-}
 
 function createStepController(
   adapter: RuntimeAdapter,
