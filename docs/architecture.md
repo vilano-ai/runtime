@@ -1,7 +1,7 @@
 # Architecture
 
 Vilano Runtime is a local-first BEAM-backed agent runtime with external JavaScript/TypeScript
-workers.
+workers today.
 
 ## Runtime Layers
 
@@ -23,6 +23,12 @@ Primary modules:
 - [runtime_supervisor.ex](../kernel/lib/vilano_kernel/runtime_supervisor.ex)
 - [router.ex](../kernel/lib/vilano_kernel/router.ex)
 - [storage.ex](../kernel/lib/vilano_kernel/storage.ex)
+- [storage/activation_lifecycle.ex](../kernel/lib/vilano_kernel/storage/activation_lifecycle.ex)
+- [storage/agent_relationships.ex](../kernel/lib/vilano_kernel/storage/agent_relationships.ex)
+- [storage/agent_topology.ex](../kernel/lib/vilano_kernel/storage/agent_topology.ex)
+- [storage/failure_recovery.ex](../kernel/lib/vilano_kernel/storage/failure_recovery.ex)
+- [storage/service_ops.ex](../kernel/lib/vilano_kernel/storage/service_ops.ex)
+- [storage/supervision.ex](../kernel/lib/vilano_kernel/storage/supervision.ex)
 - [managed_worker.ex](../kernel/lib/vilano_kernel/managed_worker.ex)
 
 ### 2. Worker Protocol
@@ -48,6 +54,9 @@ kernel. It executes agent behavior, but it is not the source of truth.
 The shared core lives in:
 
 - [worker/shared/src/core.ts](../worker/shared/src/core.ts)
+- [worker/shared/src/workflow-context.ts](../worker/shared/src/workflow-context.ts)
+- [worker/shared/src/service-refs.ts](../worker/shared/src/service-refs.ts)
+- [worker/shared/src/service-turn.ts](../worker/shared/src/service-turn.ts)
 - [worker/shared/src/runtime-utils.ts](../worker/shared/src/runtime-utils.ts)
 - [worker/shared/src/definitions.ts](../worker/shared/src/definitions.ts)
 
@@ -78,7 +87,7 @@ Primary modules:
 - [cli/src/index.ts](../cli/src/index.ts)
 - [cli/src/daemon-client.ts](../cli/src/daemon-client.ts)
 - [cli/src/output.ts](../cli/src/output.ts)
-- [cli/src/run-views.ts](../cli/src/run-views.ts)
+- [cli/src/run-views](../cli/src/run-views)
 
 ## Control Flow
 
@@ -153,21 +162,15 @@ This is why the runtime is now JS-runtime-neutral enough for Bun and Node, but n
 the language SDK level. The current manifest/runtime contract is still explicitly JS/TS execution
 oriented even though the long-term direction is broader.
 
-## Current Refactor Priorities
+## Current Module Shape
 
-The remaining large modules are still the main maintainability pressure:
+Recent refactors intentionally pushed the biggest hotspots into domain modules:
 
-- [storage.ex](../kernel/lib/vilano_kernel/storage.ex)
-- [router.ex](../kernel/lib/vilano_kernel/router.ex)
-- [cli/src/index.ts](../cli/src/index.ts)
+- `VilanoKernel.Storage` is now a thin facade over activation lifecycle, failure/recovery, service
+  ops, supervision, relationships, topology, and support layers
+- worker authoring/runtime logic is now split between workflow context construction, service turn
+  execution, process/retry/error helpers, and the worker loop
+- inspect/replay rendering and runtime harness logic are no longer concentrated in single files
 
-Recent decompositions already moved:
-
-- CLI output/render logic into [output.ts](../cli/src/output.ts) and
-  [run-views.ts](../cli/src/run-views.ts)
-- worker runtime/process/retry helpers into
-  [runtime-utils.ts](../worker/shared/src/runtime-utils.ts)
-- router support helpers into [support.ex](../kernel/lib/vilano_kernel/router/support.ex)
-- storage read models into [read_models.ex](../kernel/lib/vilano_kernel/storage/read_models.ex)
-
-Further decomposition should continue by responsibility rather than by file size alone.
+The remaining larger files are mostly real domain surfaces rather than unstructured buckets.
+Further decomposition should continue by responsibility, not by line count alone.

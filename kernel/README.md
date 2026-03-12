@@ -26,11 +26,20 @@ That split is the core of the runtime:
 - kernel = coordination, durability, supervision, agent semantics
 - worker = execution
 
+Today, TypeScript is the flagship SDK and JS/TS workers are the primary external execution layer,
+but the kernel model itself is broader than a single language surface.
+
 ## Main Modules
 
 - [lib/vilano_kernel/runtime_supervisor.ex](./lib/vilano_kernel/runtime_supervisor.ex)
 - [lib/vilano_kernel/router.ex](./lib/vilano_kernel/router.ex)
 - [lib/vilano_kernel/storage.ex](./lib/vilano_kernel/storage.ex)
+- [lib/vilano_kernel/storage/activation_lifecycle.ex](./lib/vilano_kernel/storage/activation_lifecycle.ex)
+- [lib/vilano_kernel/storage/agent_relationships.ex](./lib/vilano_kernel/storage/agent_relationships.ex)
+- [lib/vilano_kernel/storage/agent_topology.ex](./lib/vilano_kernel/storage/agent_topology.ex)
+- [lib/vilano_kernel/storage/failure_recovery.ex](./lib/vilano_kernel/storage/failure_recovery.ex)
+- [lib/vilano_kernel/storage/service_ops.ex](./lib/vilano_kernel/storage/service_ops.ex)
+- [lib/vilano_kernel/storage/supervision.ex](./lib/vilano_kernel/storage/supervision.ex)
 - [lib/vilano_kernel/managed_worker.ex](./lib/vilano_kernel/managed_worker.ex)
 - [lib/vilano_kernel/wait_manager.ex](./lib/vilano_kernel/wait_manager.ex)
 - [lib/vilano_kernel/step_deadline_manager.ex](./lib/vilano_kernel/step_deadline_manager.ex)
@@ -39,11 +48,15 @@ Recent decompositions:
 
 - [lib/vilano_kernel/router/support.ex](./lib/vilano_kernel/router/support.ex)
 - [lib/vilano_kernel/router/run_views.ex](./lib/vilano_kernel/router/run_views.ex)
+- [lib/vilano_kernel/storage/support.ex](./lib/vilano_kernel/storage/support.ex)
 - [lib/vilano_kernel/storage/read_models.ex](./lib/vilano_kernel/storage/read_models.ex)
 - [lib/vilano_kernel/storage/projects.ex](./lib/vilano_kernel/storage/projects.ex)
 - [lib/vilano_kernel/storage/runtime_metadata.ex](./lib/vilano_kernel/storage/runtime_metadata.ex)
 - [lib/vilano_kernel/storage/retry_policy.ex](./lib/vilano_kernel/storage/retry_policy.ex)
 - [lib/vilano_kernel/storage/service_lifecycle.ex](./lib/vilano_kernel/storage/service_lifecycle.ex)
+- [lib/vilano_kernel/storage/service_support.ex](./lib/vilano_kernel/storage/service_support.ex)
+- [lib/vilano_kernel/storage/activation_lifecycle/](./lib/vilano_kernel/storage/activation_lifecycle)
+- [lib/vilano_kernel/storage/failure_recovery/](./lib/vilano_kernel/storage/failure_recovery)
 
 ## Storage Model
 
@@ -55,6 +68,10 @@ It tracks:
 - runtime metadata
 - run/event timelines
 - current-state projections and scheduling indexes
+- durable agent lifecycle, mailbox, relationship, and supervision state
+
+`VilanoKernel.Storage` is intentionally now a facade over the transactional write domains rather
+than a single monolithic implementation file.
 
 Kernel startup applies pending migrations before serving traffic and exposes runtime/schema metadata
 through `/v1/status`.

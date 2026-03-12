@@ -7,7 +7,10 @@ Vilano Runtime is a local-first BEAM-backed agent runtime.
 
 Vilano Runtime is a product by Vilano AI.
 
-It is built for workflows and long-lived services that need:
+This is the beginning of Vilano Runtime as an open-source project. Today, the flagship authoring
+surface is TypeScript, and the local runtime foundation is what we are building outward from.
+
+It is built for workflows and long-lived agents that need:
 
 - durable replay instead of best-effort retries
 - long-lived keyed agents instead of ad hoc background processes
@@ -28,7 +31,7 @@ Vilano Runtime has three main pieces:
     supervision policy, passivation state, and managed worker supervision
 - **JS/TS workers**
   - replay workflows and service turns, execute agent behavior, run in-process `step()` logic,
-    and run durable subprocesses through `exec()`
+    run durable subprocesses through `exec()`, and stay disposable underneath the kernel
 - **CLI**
   - local operator surface for bootstrapping the daemon, registering projects, starting runs,
     inspecting timelines, and delivering signals
@@ -86,7 +89,7 @@ Supported today:
 - Bun CLI
 - JS/TS worker core running under Bun, with Node worker support in preview
 
-Not supported yet:
+Not part of the current OSS runtime surface:
 
 - hosted/cloud mode
 - clustering / multi-node scheduling
@@ -255,7 +258,7 @@ export const planner = workflow({
 });
 ```
 
-### Service
+### Service Agent
 
 ```ts
 import { service } from "@vilano/runtime";
@@ -293,7 +296,7 @@ const status = await reviewerRef.ask.status();
 
 ### Agent Runtime Primitives
 
-These are now part of the TypeScript surface:
+These are part of the current TypeScript surface:
 
 - `ctx.monitor(...)`
 - `ctx.link(...)`
