@@ -110,7 +110,11 @@ To bootstrap an explicit manifest for an existing TS/JS repo:
 
 If you change runtime semantics, you should usually touch at least one of:
 
-- [tests/integration.test.ts](../tests/integration.test.ts)
+- [tests/integration-step-recovery.test.ts](../tests/integration-step-recovery.test.ts)
+- [tests/integration-service-runtime.test.ts](../tests/integration-service-runtime.test.ts)
+- [tests/integration-durability-restart.test.ts](../tests/integration-durability-restart.test.ts)
+- [tests/integration-runtime-surface.test.ts](../tests/integration-runtime-surface.test.ts)
+- [tests/integration-replay-exec.test.ts](../tests/integration-replay-exec.test.ts)
 - [tests/node-worker.test.ts](../tests/node-worker.test.ts)
 - [tests/soak.test.ts](../tests/soak.test.ts)
 
