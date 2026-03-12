@@ -14,7 +14,8 @@ import {
   ensureActivationImportRoot,
   ensureActivationWorkspace,
 } from "./activation-workspace.ts";
-import { createTurnContext, executeServiceTurn } from "./turn-context.ts";
+import { executeServiceTurn } from "./service-turn.ts";
+import { createTurnContext } from "./workflow-context.ts";
 import { loadServiceDefinition, loadWorkflowDefinition } from "./definitions.ts";
 import type { RuntimeAdapter } from "./runtime-adapter.ts";
 import { WORKER_PROTOCOL_VERSION } from "./runtime-version.ts";

@@ -5,7 +5,7 @@ import type {
   ServiceDefinition,
   SignalResult,
 } from "./runtime-sdk.ts";
-import { createTurnContext } from "./turn-context.ts";
+import { createTurnContext } from "./workflow-context.ts";
 import { hasOwnState } from "./turn-context-helpers.ts";
 
 export async function executeServiceTurn(
