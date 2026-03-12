@@ -242,7 +242,7 @@ test("service turns can reject an envelope without retry", async () => {
   }
 });
 
-test("bounded service mailboxes reject new work when queued backlog is full", async () => {
+test("bounded service mailboxes reject CLI sends when queued backlog is full", async () => {
   const harness = await RuntimeHarness.create({
     env: {
       VILANO_MANAGED_WORKERS: "2",
@@ -283,6 +283,56 @@ test("bounded service mailboxes reject new work when queued backlog is full", as
     expect(cliError).toBeTruthy();
     expect(cliError?.message ?? "").toContain("Service mailbox overloaded");
 
+    await harness.waitForRun(
+      blocker.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+
+    const serviceInspect = await harness.waitForService(
+      "demo/boundedMailboxProbe",
+      keyInput,
+      (body) =>
+        body.run.status === "idle" &&
+        body.envelopes.some((envelope) => envelope.name === "record" && envelope.status === "completed")
+    );
+
+    expect(serviceInspect.events.map((event) => event.type)).toContain("InboundRejected");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("bounded service mailboxes reject in-run asks when queued backlog is full", async () => {
+  const harness = await RuntimeHarness.create({
+    env: {
+      VILANO_MANAGED_WORKERS: "2",
+    },
+  });
+  const keyInput = { sessionId: "bounded-mailbox-overflow-run" };
+
+  try {
+    const blocker = await harness.startWorkflow("demo/boundedMailboxDelayWorkflow", {
+      sessionId: keyInput.sessionId,
+      id: "processing",
+      delayMs: 400,
+    });
+
+    await harness.waitForService(
+      "demo/boundedMailboxProbe",
+      keyInput,
+      (body) =>
+        body.run.status === "active" &&
+        body.envelopes.some((envelope) => envelope.name === "delay" && envelope.status === "processing")
+    );
+
+    await harness.sendService("demo/boundedMailboxProbe", "record", keyInput, { id: "queued" });
+
+    await harness.waitForService(
+      "demo/boundedMailboxProbe",
+      keyInput,
+      (body) => body.envelopes.some((envelope) => envelope.name === "record" && envelope.status === "queued")
+    );
+
     const overflow = await harness.startWorkflow("demo/boundedMailboxOverflowWorkflow", {
       sessionId: keyInput.sessionId,
     });
@@ -301,16 +351,6 @@ test("bounded service mailboxes reject new work when queued backlog is full", as
       blocker.run.id,
       (inspect) => inspect.run.status === "completed"
     );
-
-    const serviceInspect = await harness.waitForService(
-      "demo/boundedMailboxProbe",
-      keyInput,
-      (body) =>
-        body.run.status === "idle" &&
-        body.envelopes.some((envelope) => envelope.name === "record" && envelope.status === "completed")
-    );
-
-    expect(serviceInspect.events.map((event) => event.type)).toContain("InboundRejected");
   } finally {
     await harness.dispose();
   }
