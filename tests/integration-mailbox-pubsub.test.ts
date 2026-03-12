@@ -254,15 +254,16 @@ test("bounded service mailboxes reject CLI sends when queued backlog is full", a
     const blocker = await harness.startWorkflow("demo/boundedMailboxDelayWorkflow", {
       sessionId: keyInput.sessionId,
       id: "processing",
-      delayMs: 400,
+      holdSignal: "release",
     });
 
-    await harness.waitForService(
+    const blocked = await harness.waitForService(
       "demo/boundedMailboxProbe",
       keyInput,
       (body) =>
-        body.run.status === "active" &&
-        body.envelopes.some((envelope) => envelope.name === "delay" && envelope.status === "processing")
+        body.run.status === "waiting" &&
+        body.envelopes.some((envelope) => envelope.name === "delay" && envelope.status === "processing") &&
+        body.waits.some((wait) => wait.kind === "signal" && wait.status === "waiting")
     );
 
     await harness.sendService("demo/boundedMailboxProbe", "record", keyInput, { id: "queued" });
@@ -282,6 +283,8 @@ test("bounded service mailboxes reject CLI sends when queued backlog is full", a
 
     expect(cliError).toBeTruthy();
     expect(cliError?.message ?? "").toContain("Service mailbox overloaded");
+
+    await harness.sendSignal(blocked.run.id, "release", {});
 
     await harness.waitForRun(
       blocker.run.id,
@@ -314,15 +317,16 @@ test("bounded service mailboxes reject in-run asks when queued backlog is full",
     const blocker = await harness.startWorkflow("demo/boundedMailboxDelayWorkflow", {
       sessionId: keyInput.sessionId,
       id: "processing",
-      delayMs: 400,
+      holdSignal: "release",
     });
 
-    await harness.waitForService(
+    const blocked = await harness.waitForService(
       "demo/boundedMailboxProbe",
       keyInput,
       (body) =>
-        body.run.status === "active" &&
-        body.envelopes.some((envelope) => envelope.name === "delay" && envelope.status === "processing")
+        body.run.status === "waiting" &&
+        body.envelopes.some((envelope) => envelope.name === "delay" && envelope.status === "processing") &&
+        body.waits.some((wait) => wait.kind === "signal" && wait.status === "waiting")
     );
 
     await harness.sendService("demo/boundedMailboxProbe", "record", keyInput, { id: "queued" });
@@ -346,6 +350,8 @@ test("bounded service mailboxes reject in-run asks when queued backlog is full",
       overloaded: true,
       reason: "service_overloaded",
     });
+
+    await harness.sendSignal(blocked.run.id, "release", {});
 
     await harness.waitForRun(
       blocker.run.id,

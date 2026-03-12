@@ -4,9 +4,16 @@ import { boundedMailboxProbe, mailboxProbe, pubsubProbe } from "./services.ts";
 
 export const mailboxAskWorkflow = workflow({
   name: "mailboxAskWorkflow",
-  run: async (input: { sessionId: string; id: string; delayMs?: number }, ctx) => {
+  run: async (
+    input: { sessionId: string; id: string; delayMs?: number; holdSignal?: string },
+    ctx
+  ) => {
     const ref = await ctx.connect(mailboxProbe, { sessionId: input.sessionId });
-    return await ref.ask.delay({ id: input.id, delayMs: input.delayMs ?? 0 });
+    return await ref.ask.delay({
+      id: input.id,
+      delayMs: input.delayMs ?? 0,
+      holdSignal: input.holdSignal,
+    });
   },
 });
 
@@ -91,9 +98,16 @@ export const mailboxRejectWorkflow = workflow({
 
 export const boundedMailboxDelayWorkflow = workflow({
   name: "boundedMailboxDelayWorkflow",
-  run: async (input: { sessionId: string; id: string; delayMs?: number }, ctx) => {
+  run: async (
+    input: { sessionId: string; id: string; delayMs?: number; holdSignal?: string },
+    ctx
+  ) => {
     const ref = await ctx.connect(boundedMailboxProbe, { sessionId: input.sessionId });
-    return await ref.ask.delay({ id: input.id, delayMs: input.delayMs ?? 0 });
+    return await ref.ask.delay({
+      id: input.id,
+      delayMs: input.delayMs ?? 0,
+      holdSignal: input.holdSignal,
+    });
   },
 });
 

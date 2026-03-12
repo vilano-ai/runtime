@@ -181,7 +181,7 @@ export const mailboxProbe = service({
     }),
   },
   onAsk: {
-    delay: async (payload: { id: string; delayMs?: number }, state, ctx) => {
+    delay: async (payload: { id: string; delayMs?: number; holdSignal?: string }, state, ctx) => {
       if ((payload.delayMs ?? 0) > 0) {
         await ctx.step(
           "mailbox-delay",
@@ -194,6 +194,12 @@ export const mailboxProbe = service({
           },
           { key: `mailbox-delay:${payload.id}:${payload.delayMs ?? 0}` }
         );
+      }
+
+      if (payload.holdSignal) {
+        await ctx.waitForSignal(payload.holdSignal, {
+          key: `mailbox-hold:${payload.id}:${payload.holdSignal}`,
+        });
       }
 
       const history = [...state.history, `ask:${payload.id}`];
@@ -288,7 +294,7 @@ export const boundedMailboxProbe = service({
     }),
   },
   onAsk: {
-    delay: async (payload: { id: string; delayMs?: number }, state, ctx) => {
+    delay: async (payload: { id: string; delayMs?: number; holdSignal?: string }, state, ctx) => {
       if ((payload.delayMs ?? 0) > 0) {
         await ctx.step(
           "bounded-mailbox-delay",
@@ -301,6 +307,12 @@ export const boundedMailboxProbe = service({
           },
           { key: `bounded-mailbox-delay:${payload.id}:${payload.delayMs ?? 0}` }
         );
+      }
+
+      if (payload.holdSignal) {
+        await ctx.waitForSignal(payload.holdSignal, {
+          key: `bounded-mailbox-hold:${payload.id}:${payload.holdSignal}`,
+        });
       }
 
       const history = [...state.history, `ask:${payload.id}`];

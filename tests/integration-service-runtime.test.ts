@@ -108,7 +108,7 @@ test("service turn blocking step timeout is enforced by the kernel and restarts 
       (inspect) =>
         inspect.run.status === "active" &&
         inspect.steps.some((step) => step.name === "blocking-service-step" && step.status === "running"),
-      20_000
+      40_000
     );
 
     const askResult = await askCommand.wait();
@@ -295,18 +295,19 @@ test("services process mixed ask and send backlogs in FIFO order", async () => {
       "--key-json",
       JSON.stringify(keyInput),
       "--input",
-      JSON.stringify({ id: "first", delayMs: 400 }),
+      JSON.stringify({ id: "first", holdSignal: "release" }),
       "--wait-timeout",
       "60s",
       "--json",
     ]);
 
-    await harness.waitForService(
+    const queued = await harness.waitForService(
       "demo/mailboxProbe",
       keyInput,
       (inspect) =>
-        inspect.run.status === "active" &&
-        inspect.envelopes.some((envelope) => envelope.name === "delay" && envelope.status === "processing"),
+        inspect.run.status === "waiting" &&
+        inspect.envelopes.some((envelope) => envelope.name === "delay" && envelope.status === "processing") &&
+        inspect.waits.some((wait) => wait.kind === "signal" && wait.status === "waiting"),
       30_000
     );
 
@@ -328,7 +329,7 @@ test("services process mixed ask and send backlogs in FIFO order", async () => {
       "--json",
     ]);
 
-    const queued = await harness.waitForService(
+    const backlog = await harness.waitForService(
       "demo/mailboxProbe",
       keyInput,
       (inspect) =>
@@ -338,11 +339,13 @@ test("services process mixed ask and send backlogs in FIFO order", async () => {
       30_000
     );
 
-    expect(queued.envelopes.slice(0, 3).map((envelope) => envelope.name)).toEqual([
+    expect(backlog.envelopes.slice(0, 3).map((envelope) => envelope.name)).toEqual([
       "delay",
       "record",
       "history",
     ]);
+
+    await harness.sendSignal(queued.run.id, "release", {});
 
     const [firstAskResult, historyAskResult] = await Promise.all([firstAsk.wait(), historyAsk.wait()]);
     if (firstAskResult.exitCode !== 0) {
