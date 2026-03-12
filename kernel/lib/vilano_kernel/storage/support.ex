@@ -218,6 +218,18 @@ defmodule VilanoKernel.Storage.Support do
 
   def wait_deadline(_now, _timeout_ms), do: nil
 
+  def run_storage_test_hook(name, payload) do
+    hooks = Application.get_env(:vilano_kernel, :storage_test_hooks, %{})
+
+    case Map.get(hooks, name) do
+      hook when is_function(hook, 1) -> hook.(payload)
+      _ -> :ok
+    end
+  end
+
+  def unwrap_transaction_result({:ok, value}), do: value
+  def unwrap_transaction_result({:error, reason}), do: raise(reason)
+
   def decode_json_list(nil), do: []
   def decode_json_list(value) when is_binary(value), do: Jason.decode!(value)
 

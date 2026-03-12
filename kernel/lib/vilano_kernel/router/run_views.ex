@@ -178,7 +178,7 @@ defmodule VilanoKernel.Router.RunViews do
 
       type when type in ["SignalReceived", "SignalSent"] ->
         format_summary(%{
-          signal: Map.get(body, "signal"),
+          signal: Map.get(body, "signal") || Map.get(body, "name"),
           payload:
             if(Map.has_key?(body, "payload"), do: truncate_json(Map.get(body, "payload")), else: nil)
         })

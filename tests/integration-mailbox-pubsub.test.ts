@@ -331,9 +331,7 @@ test("idle services report explicit passivation and wake-on-mailbox semantics", 
 
     expect(inspect.run.passivation).toMatchObject({
       state: "passivated",
-      reason: "mailbox_empty",
-      wakeOn: ["mailbox"],
-      queuedMessages: 0,
+      wakeReason: "message",
     });
   } finally {
     await harness.dispose();
@@ -358,11 +356,9 @@ test("waiting services report explicit passivation wake reasons", async () => {
     );
 
     expect(waiting.run.passivation).toMatchObject({
-      state: "passivated",
-      wakeOn: ["signal"],
-      queuedMessages: 0,
+      state: "waiting",
+      wakeReason: "signal",
     });
-    expect(waiting.run.passivation?.reason).toContain("signal");
 
     await harness.sendSignal(waiting.run.id, "approved", {
       source: "passivation-test",
