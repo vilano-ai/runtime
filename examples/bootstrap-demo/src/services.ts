@@ -1,6 +1,6 @@
 import { nonRetryable, service } from "@vilano/runtime";
 
-import { childTask } from "./workflows-core";
+import { childTask } from "./workflows-core.ts";
 
 export const reviewer = service({
   name: "reviewer",

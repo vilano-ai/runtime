@@ -1,7 +1,7 @@
 import { workflow } from "@vilano/runtime";
 
-import { bumpMarkerAttempt } from "./demo-shared";
-import { childTask } from "./workflows-core";
+import { bumpMarkerAttempt } from "./demo-shared.ts";
+import { childTask } from "./workflows-core.ts";
 
 export const relationshipChild = workflow({
   name: "relationshipChild",

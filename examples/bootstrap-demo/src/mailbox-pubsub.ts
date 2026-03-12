@@ -1,6 +1,6 @@
 import { workflow } from "@vilano/runtime";
 
-import { boundedMailboxProbe, mailboxProbe, pubsubProbe } from "./services";
+import { boundedMailboxProbe, mailboxProbe, pubsubProbe } from "./services.ts";
 
 export const mailboxAskWorkflow = workflow({
   name: "mailboxAskWorkflow",

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 
 import { nonRetryable, workflow } from "@vilano/runtime";
 
-import { type DemoRetryBackoff, type DemoRetryFamily } from "./demo-shared";
+import { type DemoRetryBackoff, type DemoRetryFamily } from "./demo-shared.ts";
 
 let moduleStateProbeCounter = 0;
 

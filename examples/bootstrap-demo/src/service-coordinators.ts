@@ -1,6 +1,6 @@
 import { workflow } from "@vilano/runtime";
 
-import { operator, optionsPayloadProbe, reviewer } from "./services";
+import { operator, optionsPayloadProbe, reviewer } from "./services.ts";
 
 export const reviewCoordinator = workflow({
   name: "reviewCoordinator",

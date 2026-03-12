@@ -1,6 +1,6 @@
 import { nonRetryable, workflow } from "@vilano/runtime";
 
-import { bumpMarkerAttempt, type DemoRetryBackoff, type DemoRetryFamily } from "./demo-shared";
+import { bumpMarkerAttempt, type DemoRetryBackoff, type DemoRetryFamily } from "./demo-shared.ts";
 
 export const planner = workflow({
   name: "planner",

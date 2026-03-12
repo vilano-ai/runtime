@@ -273,6 +273,16 @@ test("bounded service mailboxes reject new work when queued backlog is full", as
       (body) => body.envelopes.some((envelope) => envelope.name === "record" && envelope.status === "queued")
     );
 
+    let cliError: Error | null = null;
+    try {
+      await harness.sendService("demo/boundedMailboxProbe", "record", keyInput, { id: "overflow" });
+    } catch (error) {
+      cliError = error as Error;
+    }
+
+    expect(cliError).toBeTruthy();
+    expect(cliError?.message ?? "").toContain("Service mailbox overloaded");
+
     const overflow = await harness.startWorkflow("demo/boundedMailboxOverflowWorkflow", {
       sessionId: keyInput.sessionId,
     });
@@ -286,16 +296,6 @@ test("bounded service mailboxes reject new work when queued backlog is full", as
       overloaded: true,
       reason: "service_overloaded",
     });
-
-    let cliError: Error | null = null;
-    try {
-      await harness.sendService("demo/boundedMailboxProbe", "record", keyInput, { id: "overflow" });
-    } catch (error) {
-      cliError = error as Error;
-    }
-
-    expect(cliError).toBeTruthy();
-    expect(cliError?.message ?? "").toContain("Service mailbox overloaded");
 
     await harness.waitForRun(
       blocker.run.id,
