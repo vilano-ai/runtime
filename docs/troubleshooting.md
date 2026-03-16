@@ -58,6 +58,8 @@ vilano init /path/to/project
 vilano project add /path/to/project --name <project>
 ```
 
+If you are starting from an empty directory, use `vilano init /path/to/project --starter` instead.
+
 Then review [Manifest Guide](./manifests.md) if the project uses non-trivial exports.
 
 ## A Run Looks Stuck
@@ -82,15 +84,6 @@ If the run is waiting, the runtime may be behaving correctly and expecting:
 For long-lived services, inspect output also shows passivation and queued mailbox state so you can
 tell whether the agent is idle, waiting, or overloaded without guessing from process liveness.
 
-## Preview Node Worker Confusion
-
-Node worker support is still preview.
-
-- Bun worker path: supported
-- Node worker path: preview
-
-If you are validating the supported OSS path, use the Bun worker runtime.
-
 ## Install Or Update Problems
 
 Check:
@@ -101,8 +94,8 @@ vilano update --check
 vilano doctor
 ```
 
-The public installer and `vilano update` both default to the stable channel. Preview installs are
-opt-in through `VILANO_RELEASE_CHANNEL=preview`.
+The public installer and `vilano update` both default to the stable channel. Alternate release
+channels are selected with `VILANO_RELEASE_CHANNEL`.
 
 ## Still Unsure
 

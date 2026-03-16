@@ -28,8 +28,7 @@ managed install root when the daemon actually needs to start. Read-only commands
 and `doctor` do not mutate the installed package tree. When the packaged bundle already contains a
 ready kernel release, `doctor --fix` does not fetch Hex deps or rewrite the installed bundle.
 
-The current local trust model is still single-user. The CLI reduces blind localhost access, but it
-does not claim strong isolation from arbitrary code running as the same OS user. See
+Vilano Runtime uses a local single-user trust model. See
 [docs/trust-model.md](../docs/trust-model.md) for the canonical runtime posture.
 
 ## Important Commands
@@ -40,14 +39,13 @@ vilano update --check
 vilano update
 vilano rollback
 vilano doctor
-vilano daemon start
-vilano daemon status
-vilano init /path/to/project
-vilano project add /path/to/project --name demo
-vilano run start demo/planner --input '{"topic":"BEAM"}'
+vilano init ./my-agent --starter
+cd my-agent && bun add @vilano/runtime
+vilano project add . --name my-agent
+vilano run start my-agent/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
 vilano run inspect <run-id>
 vilano run replay <run-id>
-vilano service ask demo/reviewer status --service-key repo_123 --wait-timeout 30s
+vilano service ask my-agent/reviewer status --service-key repo_123 --wait-timeout 30s
 ```
 
 ## Code Layout
@@ -69,9 +67,8 @@ vilano service ask demo/reviewer status --service-key repo_123 --wait-timeout 30
 
 ## Release Notes
 
-The CLI currently supports the Bun-first release path. Bun workers are the supported OSS v1 lane.
-Node workers remain preview, the CLI itself remains Bun-oriented today, and non-JS worker
-implementations are future work rather than a supported part of the current manifest/runtime story.
+The CLI targets the canonical local release path built around the managed install layout and the
+bundled runtime payload.
 
 The current release-management surface is intentionally small:
 
@@ -95,7 +92,7 @@ For release-prep and distribution work, the repo also provides:
   - install the built artifact into a clean root and prove the installed launcher can run a real workflow
 
 For OSS `0.1`, explicit `vilano.manifest.json` files are the recommended path. Use
-`vilano init` to bootstrap one for existing TS/JS repos, and review the generated manifest before
-relying on it for non-trivial export patterns. `vilano project add` and `vilano project sync`
-import the declared definitions from the pinned snapshot to validate export identity before the
-registration completes.
+`vilano init --starter` for a runnable new project, or plain `vilano init` to bootstrap a manifest
+for an existing TS/JS repo. Review generated manifests before relying on them for non-trivial
+export patterns. `vilano project add` and `vilano project sync` import the declared definitions
+from the pinned snapshot to validate export identity before the registration completes.

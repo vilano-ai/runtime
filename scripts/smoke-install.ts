@@ -54,19 +54,8 @@ try {
   updateArtifact = await buildUpdateArtifact(installDir, "0.1.1");
 
   const manifestProjectDir = path.join(installDir, "manifest-project");
-  await fs.mkdir(path.join(manifestProjectDir, "src"), { recursive: true });
-  await fs.writeFile(
-    path.join(manifestProjectDir, "src", "definitions.ts"),
-    [
-      "import { workflow } from '@vilano/runtime';",
-      "",
-      "export const smokeWorkflow = workflow({",
-      "  name: 'smokeWorkflow',",
-      "  run: async (input) => ({ ok: true, value: input?.value ?? 'smoke' }),",
-      "});",
-      "",
-      ].join("\n")
-  );
+  await fs.mkdir(manifestProjectDir, { recursive: true });
+  await run(cliEntry, ["init", ".", "--starter"], manifestProjectDir, baseEnv);
 
   const version = JSON.parse((await run(cliEntry, ["version", "--json"], installDir, baseEnv)).stdout) as {
     cliVersion: string;
@@ -415,18 +404,26 @@ try {
   }
 
   const initManifest = JSON.parse(
-    (await run(managedCliEntry, ["init", "./manifest-project", "--json"], installDir, env)).stdout
+    (
+      await run(
+        managedCliEntry,
+        ["init", "./manifest-project", "--starter", "--force", "--json"],
+        installDir,
+        env
+      )
+    ).stdout
   ) as {
-    manifestPath: string;
-    manifest: {
-      definitions: {
-        workflows: Array<{ name: string }>;
-      };
+    starter: {
+      projectName: string;
+      files: string[];
     };
   };
 
-  if (!initManifest.manifest.definitions.workflows.some((definition) => definition.name === "smokeWorkflow")) {
-    throw new Error("Packaged CLI did not generate an explicit manifest for the smoke project");
+  if (
+    initManifest.starter.projectName !== "manifest-project" ||
+    !initManifest.starter.files.includes("src/definitions.ts")
+  ) {
+    throw new Error("Packaged CLI did not scaffold the starter project");
   }
 
   await run(managedCliEntry, ["project", "add", "./manifest-project", "--name", "smoke"], installDir, env);
@@ -436,12 +433,16 @@ try {
     project: {
       definitions: {
         workflows: Array<{ name: string }>;
+        services: Array<{ name: string }>;
       };
     };
   };
 
-  if (!projectInspect.project.definitions.workflows.some((definition) => definition.name === "smokeWorkflow")) {
-    throw new Error("Packaged CLI did not register the explicit vilano.manifest.json project contract");
+  if (
+    !projectInspect.project.definitions.workflows.some((definition) => definition.name === "reviewCoordinator") ||
+    !projectInspect.project.definitions.services.some((definition) => definition.name === "reviewer")
+  ) {
+    throw new Error("Packaged CLI did not register the starter project contract");
   }
 
   const workflowList = JSON.parse(
@@ -450,15 +451,22 @@ try {
     definitions: Array<{ name: string }>;
   };
 
-  if (!workflowList.definitions.some((definition) => definition.name === "smokeWorkflow")) {
-    throw new Error("Packaged CLI did not load the explicit vilano.manifest.json project contract");
+  if (!workflowList.definitions.some((definition) => definition.name === "reviewCoordinator")) {
+    throw new Error("Packaged CLI did not load the starter workflow definition");
   }
 
   const runStarted = JSON.parse(
     (
       await run(
         managedCliEntry,
-        ["run", "start", "smoke/smokeWorkflow", "--input", '{"value":"installed"}', "--json"],
+        [
+          "run",
+          "start",
+          "smoke/reviewCoordinator",
+          "--input",
+          '{"repoId":"repo_123","note":"installed"}',
+          "--json",
+        ],
         installDir,
         env
       )
@@ -470,7 +478,12 @@ try {
     throw new Error(`Packaged CLI did not complete smoke workflow: ${completedRun.run.status}`);
   }
 
-  if ((completedRun.run.output as { value?: string } | null)?.value !== "installed") {
+  const output = completedRun.run.output as
+    | {
+        status?: { repoId?: string; noteCount?: number; notes?: string[] };
+      }
+    | null;
+  if (output?.status?.repoId !== "repo_123" || output.status?.noteCount !== 1) {
     throw new Error(
       `Packaged CLI returned unexpected smoke workflow output: ${JSON.stringify(completedRun.run.output)}`
     );
@@ -829,8 +842,19 @@ async function startDaemonWithRetry(
     }
   }
 
+  const startupLog = await fs
+    .readFile(path.join(runtimeHome, "kernel-startup.log"), "utf8")
+    .then((value) => value.trim())
+    .catch(() => "");
+
   throw new Error(
-    `Packaged CLI failed to start the daemon after multiple attempts:\n${lastError?.message ?? "unknown error"}`
+    [
+      "Packaged CLI failed to start the daemon after multiple attempts:",
+      lastError?.message ?? "unknown error",
+      startupLog ? `kernel-startup.log:\n${startupLog}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n")
   );
 }
 

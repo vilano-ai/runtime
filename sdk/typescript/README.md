@@ -1,15 +1,30 @@
 # TypeScript SDK
 
-The TypeScript SDK is the flagship authoring surface today for Vilano Runtime's BEAM-backed agent
-kernel.
+The TypeScript SDK is the primary authoring surface for Vilano Runtime's BEAM-backed agent kernel.
 
 It gives you two durable definition types:
 
 - `workflow()` for orchestration and supervision
 - `service()` for durable keyed, inbox-driven agent execution
 
-The runtime itself is not intended to be TypeScript-only forever. This SDK is simply the most
-complete authoring surface in the current OSS release.
+## Fastest Start
+
+Generate a runnable starter project with the CLI:
+
+```bash
+vilano init ./my-agent --starter
+cd my-agent
+bun add @vilano/runtime
+vilano project add . --name my-agent
+vilano run start my-agent/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
+```
+
+For an existing repo, add the package and generate an explicit manifest:
+
+```bash
+bun add @vilano/runtime
+vilano init .
+```
 
 ## Core APIs
 
@@ -50,8 +65,8 @@ The SDK follows the Vilano replay model:
 - durable operations resolve from history
 - arbitrary JavaScript continuation capture is not attempted
 
-JS/TS gets BEAM-like operational semantics from the runtime kernel. It does not become BEAM in
-process memory, and it does not own the durable coordination truth.
+JS/TS gets BEAM-like operational semantics from the runtime kernel, while the kernel remains the
+durable source of truth.
 
 ### `step()`
 
@@ -83,7 +98,7 @@ retry: {
 }
 ```
 
-Supported retry families today:
+Supported retry families:
 
 - `application`
 - `timeout`
@@ -99,12 +114,11 @@ import { nonRetryable } from "@vilano/runtime";
 throw nonRetryable(new Error("invalid input"));
 ```
 
-## Limits
+## Runtime Notes
 
-- no arbitrary JS stack capture
-- no exact-once side-effect guarantee
-- hard-stop fallback only for managed workers the kernel supervises
-- TypeScript is the flagship SDK today; other language SDKs are future work
+- workflows and service turns replay from the top against durable history
+- managed workers supervised by the kernel get hard-stop fallback for blocking timed steps
+- `step()` is for replayable in-process logic; `exec()` is for subprocess boundaries
 
 See [docs/architecture.md](../../docs/architecture.md) and
 [docs/support-matrix.md](../../docs/support-matrix.md) for the broader runtime context.

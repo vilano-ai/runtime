@@ -280,6 +280,8 @@ CURRENT_LINK="$INSTALL_ROOT/current"
 BIN_DIR="$INSTALL_ROOT/bin"
 INSTALL_STATE_FILE="$INSTALL_ROOT/install-state.json"
 PREVIOUS_VERSION=""
+LAUNCHER_CMD="vilano"
+BUNDLED_BUN="$CURRENT_LINK/bun/bun"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -356,10 +358,17 @@ echo "Vilano $VERSION ($CHANNEL) installed to $INSTALL_ROOT"
 if path_contains_dir "$BIN_DIR"; then
   echo "Run 'vilano version' to verify the install."
 else
+  LAUNCHER_CMD="$BIN_DIR/vilano"
   echo "Run '$BIN_DIR/vilano version' to verify the install."
   echo "To use 'vilano' directly in this shell, run:"
   printf '  export PATH="%s:$PATH"\n' "$BIN_DIR"
 fi
+echo "Create a runnable starter project with:"
+echo "  mkdir vilano-starter && cd vilano-starter"
+echo "  $LAUNCHER_CMD init . --starter"
+echo "  $BUNDLED_BUN add @vilano/runtime"
+echo "  $LAUNCHER_CMD project add . --name vilano-starter"
+echo "  $LAUNCHER_CMD run start vilano-starter/reviewCoordinator --input '{\"repoId\":\"repo_123\",\"note\":\"Ship 0.1\"}'"
 `;
 }
 

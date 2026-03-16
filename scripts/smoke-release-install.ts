@@ -30,6 +30,10 @@ try {
     throw new Error(`Release installer did not print PATH guidance for the managed launcher:\n${firstInstall.stdout}`);
   }
 
+  if (!firstInstall.stdout.includes("init . --starter")) {
+    throw new Error(`Release installer did not print starter-project guidance:\n${firstInstall.stdout}`);
+  }
+
   await run("bash", [installScriptPath], ROOT, {
     ...process.env,
     VILANO_INSTALL_ROOT: installRoot,
@@ -87,28 +91,8 @@ try {
   }
 
   await fs.mkdir(projectDir, { recursive: true });
-  await fs.writeFile(
-    path.join(projectDir, "package.json"),
-    `${JSON.stringify({ name: "vilano-release-install-smoke", private: true }, null, 2)}\n`
-  );
+  await run(installedCli, ["init", ".", "--starter"], projectDir);
   await run("bun", ["add", sdkTarball], projectDir);
-
-  await fs.mkdir(path.join(projectDir, "src"), { recursive: true });
-  await fs.writeFile(
-    path.join(projectDir, "src", "definitions.ts"),
-    [
-      "import { workflow } from '@vilano/runtime';",
-      "",
-      "export const smokeWorkflow = workflow({",
-      "  name: 'smokeWorkflow',",
-      "  run: async (input) => ({ ok: true, value: input?.value ?? 'smoke' }),",
-      "});",
-      "",
-    ].join("\n"),
-    "utf8"
-  );
-
-  await run(installedCli, ["init", ".", "--json"], projectDir);
 
   const daemonPort = await reservePort();
   await run(installedCli, ["daemon", "start", "--port", String(daemonPort)], projectDir, {
@@ -159,7 +143,14 @@ try {
     (
       await run(
         installedCli,
-        ["run", "start", "smoke/smokeWorkflow", "--input", '{"value":"release-install"}', "--json"],
+        [
+          "run",
+          "start",
+          "smoke/reviewCoordinator",
+          "--input",
+          '{"repoId":"repo_123","note":"release-install"}',
+          "--json",
+        ],
         projectDir,
         {
           ...process.env,
@@ -179,7 +170,12 @@ try {
     throw new Error(`Release install smoke run did not complete: ${completed.run.status}`);
   }
 
-  if ((completed.run.output as { value?: string } | null)?.value !== "release-install") {
+  const output = completed.run.output as
+    | {
+        status?: { repoId?: string; noteCount?: number; notes?: string[] };
+      }
+    | null;
+  if (output?.status?.repoId !== "repo_123" || output.status?.noteCount !== 1) {
     throw new Error(
       `Release install smoke run returned unexpected output: ${JSON.stringify(completed.run.output)}`
     );

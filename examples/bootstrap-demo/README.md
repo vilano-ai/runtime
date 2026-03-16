@@ -1,6 +1,7 @@
 # Bootstrap Demo
 
-`bootstrap-demo` is the example project used for local first-run flows and most runtime verification.
+`bootstrap-demo` is the canonical repo-checkout demo and the main fixture source for runtime
+verification.
 
 Recommended first-run definitions:
 
@@ -19,9 +20,7 @@ replay, supervision, mailbox, discovery, pubsub, and soak fixtures for the integ
 Try it from the repo root:
 
 ```bash
-./cli/bin/vilano.ts daemon start
 ./cli/bin/vilano.ts project add ./examples/bootstrap-demo --name demo
-./cli/bin/vilano.ts run start demo/planner --input '{"topic":"BEAM"}'
-./cli/bin/vilano.ts service ensure demo/reviewer --service-key repo_123 --key-json '{"repoId":"repo_123"}'
-./cli/bin/vilano.ts service ask demo/reviewer status --service-key repo_123
+./cli/bin/vilano.ts run start demo/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
+./cli/bin/vilano.ts service ask demo/reviewer status --service-key repo_123 --wait-timeout 30s
 ```

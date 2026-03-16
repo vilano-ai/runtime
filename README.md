@@ -3,12 +3,13 @@
 [![CI](https://github.com/vilano-ai/runtime/actions/workflows/ci.yml/badge.svg)](https://github.com/vilano-ai/runtime/actions/workflows/ci.yml)
 [![Launch Gate](https://github.com/vilano-ai/runtime/actions/workflows/launch-gate.yml/badge.svg)](https://github.com/vilano-ai/runtime/actions/workflows/launch-gate.yml)
 
-Vilano Runtime is a local-first BEAM-backed agent runtime.
+Vilano Runtime is a local-first BEAM-backed agent runtime for durable workflows and long-lived
+agents.
 
 Vilano Runtime is a product by Vilano AI.
 
-This is the beginning of Vilano Runtime as an open-source project. Today, the flagship authoring
-surface is TypeScript, and the local runtime foundation is what we are building outward from.
+Vilano Runtime `0.1` ships a TypeScript-first local runtime with a durable BEAM kernel,
+disposable JS/TS workers, and an operator CLI.
 
 It is built for workflows and long-lived agents that need:
 
@@ -19,8 +20,8 @@ It is built for workflows and long-lived agents that need:
 - subprocess-heavy work with durable artifacts
 - inspectable execution timelines instead of opaque background jobs
 
-Vilano Runtime is currently a `0.x` runtime. The core execution model is real and tested, but the project
-should still be treated as preview software.
+Vilano Runtime is a `0.x` release with a focused support path and a tested core
+execution model.
 
 ## What It Is
 
@@ -44,7 +45,7 @@ The simplest mental model is:
 - services are durable keyed agents
 - workflows orchestrate and supervise them
 
-The runtime is intentionally local-first today:
+Vilano Runtime runs as a local daemon with:
 
 - single-machine
 - SQLite-backed
@@ -54,9 +55,8 @@ The runtime is intentionally local-first today:
 By default, installed runtime payloads are intended to live under `~/.vilano/installs`, while
 mutable runtime state lives under `~/.vilano/state`.
 
-Vilano Runtime does not currently claim strong filesystem isolation from code running as the same OS user.
-The OSS `0.x` trust model assumes a local, single-user machine.
-See [docs/trust-model.md](./docs/trust-model.md) for the canonical current posture.
+Vilano Runtime uses a local single-user trust model. See
+[docs/trust-model.md](./docs/trust-model.md) for the canonical runtime posture.
 
 Vilano Runtime is released under the [Apache-2.0 License](./LICENSE).
 
@@ -80,23 +80,15 @@ Vilano Runtime is released under the [Apache-2.0 License](./LICENSE).
 - packaged local install flow with immutable runtime payloads under the managed install root
   and mutable state under `VILANO_HOME`
 
-## Status
+## Supported Path
 
-Supported today:
+Vilano Runtime `0.1` ships with:
 
 - BEAM kernel
 - TypeScript SDK
 - Bun CLI
-- JS/TS worker core running under Bun, with Node worker support in preview
-
-Not part of the current OSS runtime surface:
-
-- hosted/cloud mode
-- clustering / multi-node scheduling
-- language-native SDKs beyond TypeScript
-- exact-once side-effect guarantees
-- pooled / replicated agent services
-- broad topology policy beyond the current discovery + pubsub layer
+- Bun managed worker
+- local SQLite-backed runtime home
 
 Managed workers supervised by the kernel get hard-stop fallback for blocking timed steps. External
 workers currently rely on cooperative in-process step cancellation.
@@ -122,29 +114,48 @@ curl -fsSL https://runtime.vilano.ai/install.sh | bash
 
 The installer writes the managed launcher to `~/.vilano/bin/vilano`. Add `~/.vilano/bin` to your
 `PATH` if you want to use bare `vilano`. `install.sh` and `vilano update` both default to the
-stable channel. Preview installs are opt-in through `VILANO_RELEASE_CHANNEL=preview`.
+stable channel. Alternate release channels can be selected with `VILANO_RELEASE_CHANNEL`.
 
-Then add the TypeScript SDK in your project:
+### Create A Runnable Starter
 
 ```bash
+mkdir vilano-starter
+cd vilano-starter
+vilano init . --starter
 bun add @vilano/runtime
+vilano project add . --name vilano-starter
+vilano workflow list --project vilano-starter
+vilano service list --project vilano-starter
+vilano run start vilano-starter/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
 ```
 
-For your own repo, prefer an explicit `vilano.manifest.json`:
+The starter writes an explicit `vilano.manifest.json`, a minimal TypeScript workflow/service pair,
+and a local `package.json`. `project add` and `run start` will start the runtime if it is not
+already running.
+
+Inspect the resulting run and service:
 
 ```bash
-vilano init /path/to/project
+vilano run inspect <run-id>
+vilano run replay <run-id>
+vilano service ask vilano-starter/reviewer status --service-key repo_123 --wait-timeout 30s
 ```
 
-`vilano init` is a generated starting point for TS/JS projects. Review the generated
-manifest before relying on it, especially if your definitions use non-trivial export patterns.
+### Bring An Existing Repo Under Vilano
 
-Register the project and inspect what Vilano Runtime found:
+Add the SDK, then generate and review an explicit manifest:
 
 ```bash
-vilano project add /path/to/project --name my-project
+cd /path/to/project
+bun add @vilano/runtime
+vilano init .
+vilano project add . --name my-project
 vilano workflow list --project my-project
 ```
+
+`vilano init` without `--starter` scans an existing TS/JS project and writes a generated manifest
+starting point. Review that manifest before relying on it, especially if your definitions use
+non-trivial export patterns.
 
 Registration validates the manifest contract, paths, and declared export names, then imports the
 declared definitions from the pinned snapshot to prove definition identity before registration
@@ -152,35 +163,18 @@ completes. Activation still re-validates the same identity when the worker impor
 
 Because of that, treat `vilano project add` and `vilano project sync` as trusted local-code steps.
 
-Start a workflow:
-
-```bash
-vilano run start my-project/planner --input '{"topic":"BEAM"}'
-vilano run list
-vilano run inspect <run-id>
-vilano run replay <run-id>
-```
-
-Talk to a service:
-
-```bash
-vilano service ensure my-project/reviewer --service-key repo_123 --key-json '{"repoId":"repo_123"}'
-vilano service send my-project/reviewer hint --service-key repo_123 --input '{"note":"Focus on migrations"}'
-vilano service ask my-project/reviewer status --service-key repo_123 --wait-timeout 30s
-```
-
 ### From A Repo Checkout
 
 ```bash
 direnv allow
 bun install
 ./cli/bin/vilano.ts doctor --fix
-./cli/bin/vilano.ts daemon start
 ./cli/bin/vilano.ts project add ./examples/bootstrap-demo --name demo
-./cli/bin/vilano.ts workflow list
+./cli/bin/vilano.ts run start demo/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
 ```
 
-For smaller reference projects, see [`examples/multi-agent-demo`](./examples/multi-agent-demo),
+`bootstrap-demo` is the canonical repo-checkout demo plus the richer fixture source for the test
+suite. For smaller reference projects, see [`examples/multi-agent-demo`](./examples/multi-agent-demo),
 [`examples/approval-loop-demo`](./examples/approval-loop-demo), and
 [`examples/fanout-demo`](./examples/fanout-demo).
 
@@ -223,7 +217,7 @@ The release-distribution path goes one step further:
   - verifies the managed launcher output and `PATH` guidance
   - verifies bundled-worker startup, `doctor`, inspect, and replay from the installed runtime
 
-The public installer/update front door is intended to live at:
+The public installer/update front door lives at:
 
 - `https://runtime.vilano.ai/install.sh`
 - `https://runtime.vilano.ai/release.json`
@@ -312,15 +306,13 @@ These are part of the current TypeScript surface:
 
 ## Execution Semantics
 
-Vilano does **not** capture arbitrary JavaScript stack frames.
-
-Recovery works by rerunning workflow or service-turn orchestration code from the top against durable
+Vilano recovery reruns workflow or service-turn orchestration code from the top against durable
 kernel state until the next incomplete operation boundary.
 
-That means JS/TS gets BEAM-like operational semantics from the outside, not by pretending JS is
-running inside the BEAM VM.
+That gives JS/TS BEAM-like operational semantics from the outside while keeping the kernel as the
+durable source of truth.
 
-Durable boundaries today:
+Durable boundaries:
 
 - `ctx.step()`
 - `ctx.exec()`

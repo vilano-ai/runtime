@@ -10,6 +10,7 @@ import {
 } from "../daemon-client.ts";
 import { renderProject, renderProjectSummary, writeOutput } from "../output.ts";
 import { materializeProjectSnapshot, pruneAllProjectSnapshots } from "../project-snapshot.ts";
+import { writeStarterProject } from "../project-starter.ts";
 import { validateProjectDefinitionsIdentity } from "../project-definition-validation.ts";
 import {
   getProjectManifestPath,
@@ -45,8 +46,8 @@ export async function handleProjectCommand(
         throw new CliError("Project name must match /^[A-Za-z0-9][A-Za-z0-9._-]*$/");
       }
 
-      await warnIfUsingGeneratedManifestFallback(projectPath);
       const manifest = await buildProjectManifest(nameFlag, projectPath, { regenerate: true });
+      await warnIfUsingGeneratedManifestFallback(manifest.path);
       const validated = await materializeValidatedProjectSnapshot(
         nameFlag,
         manifest.path,
@@ -88,10 +89,10 @@ export async function handleProjectCommand(
       }
 
       const existing = await inspectProject(projectName);
-      await warnIfUsingGeneratedManifestFallback(existing.project.path);
       const manifest = await buildProjectManifest(existing.project.name, existing.project.path, {
         regenerate: true,
       });
+      await warnIfUsingGeneratedManifestFallback(manifest.path);
       const validated = await materializeValidatedProjectSnapshot(
         existing.project.name,
         manifest.path,
@@ -125,6 +126,34 @@ export async function handleInitCommand(
   flags: Record<string, string | boolean>
 ): Promise<number> {
   const projectPath = args[0] ?? ".";
+  if (flags.starter) {
+    const starter = await writeStarterProject(projectPath, {
+      force: Boolean(flags.force),
+    });
+    const relativeProjectPath = projectPath === "." ? "." : projectPath;
+
+    writeOutput(
+      flags,
+      { ok: true, starter },
+      (body) =>
+        [
+          `Created starter at ${body.starter.rootPath}`,
+          `package: ${body.starter.packageName}`,
+          `project: ${body.starter.projectName}`,
+          "files:",
+          ...body.starter.files.map((file: string) => `  ${file}`),
+          "",
+          "Next steps:",
+          ...(relativeProjectPath === "." ? [] : [`  cd ${relativeProjectPath}`]),
+          "  bun add @vilano/runtime",
+          `  vilano project add . --name ${body.starter.projectName}`,
+          `  vilano run start ${body.starter.projectName}/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'`,
+        ].join("\n")
+    );
+
+    return 0;
+  }
+
   const result = await writeExplicitProjectManifest(projectPath, {
     force: Boolean(flags.force),
   });

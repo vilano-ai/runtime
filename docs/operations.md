@@ -1,6 +1,6 @@
 # Operations Guide
 
-Vilano Runtime is currently designed as a local BEAM-backed agent runtime on a single machine.
+Vilano Runtime is a local BEAM-backed agent runtime on a single machine.
 
 ## Runtime Home
 
@@ -20,7 +20,7 @@ Important contents include:
 - captured exec artifacts
 
 Packaged installs materialize versioned runtime payloads under the install root, not inside
-`VILANO_HOME`. See [Distribution](./distribution.md) for the intended layout.
+`VILANO_HOME`. See [Distribution](./distribution.md) for the install layout.
 
 ## First-Run Health Checks
 
@@ -32,9 +32,8 @@ vilano doctor
 vilano doctor --fix
 ```
 
-`doctor --fix` only mutates what is missing. For packaged installs that already contain vendored
-a ready kernel release, it does not fetch Hex deps or rewrite the packaged bundle. Node is reported
-as optional unless you are validating the preview Node worker lane.
+`doctor --fix` only mutates what is missing. For packaged installs that already contain a ready
+kernel release, it does not fetch Hex deps or rewrite the packaged bundle.
 
 If first-run commands fail, use [Troubleshooting](./troubleshooting.md).
 
@@ -65,20 +64,23 @@ vilano daemon stop
 Projects are registered locally:
 
 ```bash
-vilano init /path/to/project
-vilano project add /path/to/project --name demo
+vilano init /path/to/project --starter
+cd /path/to/project
+bun add @vilano/runtime
+vilano project add . --name demo
 vilano project sync demo
 vilano project inspect demo
 ```
 
 The registry is machine-local. It is not a remote catalog or package index.
 `project add` creates a new registration. If the project name already exists, use `project sync`
-to refresh the registered snapshot and definition set. For OSS `0.1`, explicit manifests are the
-recommended registration path. `vilano init` generates a starting manifest from source discovery, so
-review it before relying on it for non-trivial export patterns. Registration validates the manifest
-contract, paths, and declared export names, then imports the declared definitions from the pinned
-snapshot to prove definition identity before registration completes. Activation still re-validates
-the same identity when the worker imports the module later.
+to refresh the registered snapshot and definition set. Explicit manifests are the recommended
+registration path. `vilano init --starter` scaffolds a runnable new project. Plain `vilano init`
+generates a manifest from source discovery for an existing TS/JS repo, so review it before relying
+on it for non-trivial export patterns. Registration validates the manifest contract, paths, and
+declared export names, then imports the declared definitions from the pinned snapshot to prove
+definition identity before registration completes. Activation still re-validates the same identity
+when the worker imports the module later.
 
 Treat `project add` and `project sync` as trusted local-code steps. See [Trust Model](./trust-model.md).
 
@@ -87,7 +89,7 @@ Treat `project add` and `project sync` as trusted local-code steps. See [Trust M
 ### Runs
 
 ```bash
-vilano run start demo/planner --input '{"topic":"BEAM"}'
+vilano run start demo/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
 vilano run list
 vilano run inspect <run-id>
 vilano run replay <run-id>

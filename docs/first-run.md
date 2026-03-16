@@ -1,20 +1,16 @@
 # First-Run Walkthrough
 
-This is the fastest end-to-end path for evaluating Vilano Runtime as a BEAM-backed agent runtime.
+This is the fastest end-to-end path for evaluating Vilano Runtime as a local BEAM-backed agent
+runtime.
 
-It proves five things in one pass:
+It proves six things in one pass:
 
 - packaged install works
-- the daemon starts cleanly
+- a runnable starter project can be created locally
 - project registration succeeds
-- a multi-agent workflow run completes durably
-- inspect/replay and service inspection work from the operator surface
-
-## Prerequisites
-
-- macOS Apple Silicon or Linux x86_64
-- Bun installed for the repo checkout
-- git installed
+- a workflow run completes durably
+- a keyed service stores and returns durable state
+- inspect and replay work from the operator surface
 
 ## 1. Install Vilano Runtime
 
@@ -26,80 +22,88 @@ curl -fsSL https://runtime.vilano.ai/install.sh | bash
 
 If you want bare `vilano`, add `~/.vilano/bin` to your `PATH`.
 
-## 2. Get The Demo Project
+## 2. Create A Starter Project
 
 ```bash
-git clone https://github.com/vilano-ai/runtime.git
-cd runtime
-bun install
+mkdir vilano-starter
+cd vilano-starter
+vilano init . --starter
 ```
 
-This walkthrough uses the checked-in `multi-agent-demo` project because it exercises both
-coordinator workflows and long-lived agent services.
+`vilano init --starter` writes a minimal TypeScript project with:
 
-## 3. Start The Daemon
+- an explicit `vilano.manifest.json`
+- a `reviewCoordinator` workflow
+- a `reviewer` keyed service
+
+## 3. Install Project Dependencies
 
 ```bash
-~/.vilano/bin/vilano daemon start
-~/.vilano/bin/vilano daemon status
+bun add @vilano/runtime
 ```
 
-Confirm that `daemon status` reports a runtime version, protocol version, schema version, and
-managed worker runtime.
-
-## 4. Register The Demo
+If you installed Vilano under the default root and want to use the bundled Bun binary instead of a
+host Bun install, you can run:
 
 ```bash
-~/.vilano/bin/vilano project add ./examples/multi-agent-demo --name multi-agent
-~/.vilano/bin/vilano workflow list --project multi-agent
-~/.vilano/bin/vilano service list --project multi-agent
+~/.vilano/current/bun/bun add @vilano/runtime
 ```
 
-You should see `multiAgentCoordinator` plus the three durable agent services.
-
-## 5. Start A Run
+## 4. Register The Project And Start A Run
 
 ```bash
-~/.vilano/bin/vilano run start multi-agent/multiAgentCoordinator --input '{"briefId":"brief_123","topic":"launch readiness","audience":"operators"}'
+vilano project add . --name vilano-starter
+vilano workflow list --project vilano-starter
+vilano service list --project vilano-starter
+vilano run start vilano-starter/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
 ```
 
 Copy the returned run id.
 
-## 6. Inspect And Replay The Run
+`project add` and `run start` will start the local runtime automatically if it is not already
+running.
+
+## 5. Inspect And Replay The Run
 
 ```bash
-~/.vilano/bin/vilano run inspect <run-id>
-~/.vilano/bin/vilano run replay <run-id>
+vilano run inspect <run-id>
+vilano run replay <run-id>
 ```
 
-`run inspect` should show the current durable state. `run replay` should render the timeline of the
-coordinator workflow and the agent/service interactions that happened during the run.
+`run inspect` shows the current durable state. `run replay` renders the durable timeline for the
+workflow and service interaction.
 
-## 7. Inspect The Created Services
+## 6. Ask The Created Service
 
-The workflow creates three keyed services for `brief_123`.
+The workflow writes one note into the `reviewer` service keyed by `repo_123`.
 
 ```bash
-~/.vilano/bin/vilano service inspect multi-agent/researchAgent --service-key brief_123 --key-json '{"briefId":"brief_123"}'
-~/.vilano/bin/vilano service inspect multi-agent/writerAgent --service-key brief_123 --key-json '{"briefId":"brief_123"}'
-~/.vilano/bin/vilano service inspect multi-agent/reviewerAgent --service-key brief_123 --key-json '{"briefId":"brief_123"}'
+vilano service ask vilano-starter/reviewer status --service-key repo_123 --wait-timeout 30s
+vilano service inspect vilano-starter/reviewer --service-key repo_123
 ```
 
-You should see persisted service state and completed envelopes.
+You should see a reply that includes `repoId`, `noteCount`, and the stored notes.
 
-## 8. Clean Up
+## 7. Clean Up
 
 ```bash
-~/.vilano/bin/vilano daemon stop
+vilano daemon stop
 ```
+
+## Next Steps
+
+For a fuller repo-checkout example, use [`examples/bootstrap-demo`](../examples/bootstrap-demo).
+For smaller focused references, use [`examples/multi-agent-demo`](../examples/multi-agent-demo),
+[`examples/approval-loop-demo`](../examples/approval-loop-demo), and
+[`examples/fanout-demo`](../examples/fanout-demo).
 
 ## If Something Fails
 
 Start with:
 
 ```bash
-~/.vilano/bin/vilano doctor
-~/.vilano/bin/vilano daemon status
+vilano doctor
+vilano daemon status
 ```
 
 Then use [Troubleshooting](./troubleshooting.md) and [Operations Guide](./operations.md).
