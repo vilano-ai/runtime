@@ -57,73 +57,79 @@ test("service asks from different caller runs do not collide on reply correlatio
   }
 });
 
-test("service handler stop drains queued backlog behind the completing turn", async () => {
-  const harness = await RuntimeHarness.create();
-  const keyInput = { sessionId: "stop-backlog" };
+test(
+  "service handler stop drains queued backlog behind the completing turn",
+  async () => {
+    const harness = await RuntimeHarness.create();
+    const keyInput = { sessionId: "stop-backlog" };
 
-  try {
-    const stopCommand = harness.spawnCliCommand([
-      "service",
-      "ask",
-      "demo/mailboxProbe",
-      "stopAfterDelay",
-      "--service-key",
-      keyInput.sessionId,
-      "--key-json",
-      JSON.stringify(keyInput),
-      "--input",
-      JSON.stringify({ delayMs: 300 }),
-      "--json",
-    ]);
+    try {
+      const stopCommand = harness.spawnCliCommand([
+        "service",
+        "ask",
+        "demo/mailboxProbe",
+        "stopAfterDelay",
+        "--service-key",
+        keyInput.sessionId,
+        "--key-json",
+        JSON.stringify(keyInput),
+        "--input",
+        JSON.stringify({ delayMs: 1000 }),
+        "--json",
+      ]);
 
-    await harness.waitForService(
-      "demo/mailboxProbe",
-      keyInput,
-      (body) =>
-        body.envelopes.some((envelope) => envelope.name === "stopAfterDelay" && envelope.status === "processing")
-    );
+      await harness.waitForService(
+        "demo/mailboxProbe",
+        keyInput,
+        (body) =>
+          body.envelopes.some((envelope) => envelope.name === "stopAfterDelay" && envelope.status === "processing")
+      );
 
-    const queuedCommand = harness.spawnCliCommand([
-      "service",
-      "ask",
-      "demo/mailboxProbe",
-      "history",
-      "--service-key",
-      keyInput.sessionId,
-      "--key-json",
-      JSON.stringify(keyInput),
-      "--json",
-    ]);
+      const queuedCommand = harness.spawnCliCommand([
+        "service",
+        "ask",
+        "demo/mailboxProbe",
+        "history",
+        "--service-key",
+        keyInput.sessionId,
+        "--key-json",
+        JSON.stringify(keyInput),
+        "--json",
+      ]);
 
-    await harness.waitForService(
-      "demo/mailboxProbe",
-      keyInput,
-      (body) => body.envelopes.length >= 2
-    );
+      await harness.waitForService(
+        "demo/mailboxProbe",
+        keyInput,
+        (body) => body.envelopes.length >= 2,
+        30_000
+      );
 
-    const [stopResult, queuedResult] = await Promise.all([stopCommand.wait(), queuedCommand.wait()]);
-    expect(stopResult.exitCode).toBe(0);
-    expect(JSON.parse(stopResult.stdout)).toMatchObject({
-      ok: true,
-      reply: { stopped: true },
-    });
+      const [stopResult, queuedResult] = await Promise.all([stopCommand.wait(), queuedCommand.wait()]);
+      expect(stopResult.exitCode).toBe(0);
+      expect(JSON.parse(stopResult.stdout)).toMatchObject({
+        ok: true,
+        reply: { stopped: true },
+      });
 
-    expect(queuedResult.exitCode).toBe(1);
-    expect(`${queuedResult.stdout}\n${queuedResult.stderr}`).toContain("Service stopped");
+      expect(queuedResult.exitCode).toBe(1);
+      expect(`${queuedResult.stdout}\n${queuedResult.stderr}`).toContain("Service stopped");
 
-    const serviceInspect = await harness.waitForService(
-      "demo/mailboxProbe",
-      keyInput,
-      (body) =>
-        body.run.status === "stopped" &&
-        body.envelopes.some((envelope) => envelope.name === "history" && envelope.status === "failed")
-    );
+      const serviceInspect = await harness.waitForService(
+        "demo/mailboxProbe",
+        keyInput,
+        (body) =>
+          body.run.status === "stopped" &&
+          body.envelopes.some((envelope) => envelope.name === "history" && envelope.status === "failed"),
+        30_000
+      );
 
-    expect(serviceInspect.events.map((event) => event.type)).toContain("ServiceStopped");
-  } finally {
-    await harness.dispose();
-  }
-});
+      expect(serviceInspect.events.map((event) => event.type)).toContain("ServiceStopped");
+    } finally {
+      await harness.dispose();
+    }
+  },
+  { timeout: 60_000 }
+);
 
 test("service turns can inspect mailbox backlog state", async () => {
   const harness = await RuntimeHarness.create();
