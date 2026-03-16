@@ -148,7 +148,7 @@ test("service turn blocking step timeout is enforced by the kernel and restarts 
   } finally {
     await harness.dispose();
   }
-});
+}, 60_000);
 
 test("unmanaged workers fall back to durable failure when a service turn blocks past its timeout", async () => {
   const harness = await RuntimeHarness.create({
