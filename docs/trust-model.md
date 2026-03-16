@@ -1,8 +1,10 @@
 # Trust Model
 
-Vilano Runtime is a local-first `0.x` BEAM-backed agent runtime.
+Vilano Runtime is a durable runtime for building agent systems.
 
 This document is the canonical OSS trust posture for the current codebase.
+
+For OSS `0.1`, the supported release path is local-first and single-machine.
 
 ## Trust Boundary
 

@@ -5,6 +5,9 @@ import { pathToFileURL } from "node:url";
 
 import type { DefinitionRecord } from "./types.ts";
 
+// Registration proves that the explicit project contract matches what the project actually exports.
+// This imports project modules from the pinned snapshot, so callers must treat registration as a
+// trusted local-code step rather than a passive metadata read.
 export async function validateProjectDefinitionsIdentity(
   projectPath: string,
   definitions: DefinitionRecord[]

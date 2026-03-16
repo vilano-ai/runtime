@@ -81,7 +81,7 @@ function renderHelp(positionals: string[] = []): string {
       return [
         "Usage: vilano init [path] [--starter] [--force] [--json]",
         "",
-        "Create an explicit manifest for an existing project, or scaffold a runnable starter with --starter.",
+        "Create an explicit manifest for an existing project, or scaffold the fastest runnable starter path with --starter.",
         "",
         "Examples:",
         "  vilano init .",
@@ -147,7 +147,9 @@ function renderProjectHelp(command?: string): string {
       return [
         "Usage: vilano project add <path> --name <project> [--json]",
         "",
-        "Register a local project with the runtime.",
+        "Register a local project with the runtime. This validates the manifest, snapshots the project, and imports the declared definitions from that snapshot.",
+        "",
+        "Treat project registration as a trusted local-code step.",
         "",
         "Examples:",
         "  vilano project add . --name demo",
@@ -158,7 +160,13 @@ function renderProjectHelp(command?: string): string {
     case "inspect":
       return ["Usage: vilano project inspect <project> [--json]", "", "Show the registered manifest and snapshot details for a project."].join("\n");
     case "sync":
-      return ["Usage: vilano project sync <project> [--json]", "", "Refresh a registered project from its source path."].join("\n");
+      return [
+        "Usage: vilano project sync <project> [--json]",
+        "",
+        "Refresh a registered project from its source path. This re-validates the manifest, snapshots the project, and imports the declared definitions from that snapshot.",
+        "",
+        "Treat project sync as a trusted local-code step.",
+      ].join("\n");
     case "remove":
       return ["Usage: vilano project remove <project> [--json]", "", "Remove a project registration."].join("\n");
     default:

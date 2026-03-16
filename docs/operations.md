@@ -1,6 +1,6 @@
 # Operations Guide
 
-Vilano Runtime is a local BEAM-backed agent runtime on a single machine.
+Vilano Runtime `0.1` is a local-first durable runtime for building agent systems.
 
 If you are using the packaged install and have not added `~/.vilano/bin` to `PATH`, use
 `~/.vilano/bin/vilano` for CLI commands below. For starter or manifest setup without a host Bun
@@ -86,7 +86,8 @@ declared export names, then imports the declared definitions from the pinned sna
 definition identity before registration completes. Activation still re-validates the same identity
 when the worker imports the module later.
 
-Treat `project add` and `project sync` as trusted local-code steps. See [Trust Model](./trust-model.md).
+Treat `project add` and `project sync` as trusted local-code steps. If a project module has
+top-level side effects, registration can trigger them. See [Trust Model](./trust-model.md).
 
 ## Operator Commands
 

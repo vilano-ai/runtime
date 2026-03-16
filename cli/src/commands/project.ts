@@ -48,6 +48,7 @@ export async function handleProjectCommand(
 
       const manifest = await buildProjectManifest(nameFlag, projectPath, { regenerate: true });
       await warnIfUsingGeneratedManifestFallback(manifest.path);
+      warnProjectRegistrationTrustBoundary();
       const validated = await materializeValidatedProjectSnapshot(
         nameFlag,
         manifest.path,
@@ -93,6 +94,7 @@ export async function handleProjectCommand(
         regenerate: true,
       });
       await warnIfUsingGeneratedManifestFallback(manifest.path);
+      warnProjectRegistrationTrustBoundary();
       const validated = await materializeValidatedProjectSnapshot(
         existing.project.name,
         manifest.path,
@@ -145,9 +147,11 @@ export async function handleInitCommand(
           "",
           "Next steps:",
           ...(relativeProjectPath === "." ? [] : [`  cd ${relativeProjectPath}`]),
-          "  bun add @vilano/runtime",
+          "  ~/.vilano/current/bun/bun add @vilano/runtime  # or bun add @vilano/runtime",
           `  vilano project add . --name ${body.starter.projectName}`,
           `  vilano run start ${body.starter.projectName}/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'`,
+          "  vilano run inspect <run-id>",
+          "  vilano run replay <run-id>",
         ].join("\n")
     );
 
@@ -221,4 +225,10 @@ async function warnIfUsingGeneratedManifestFallback(projectPath: string): Promis
 
     throw error;
   }
+}
+
+function warnProjectRegistrationTrustBoundary(): void {
+  process.stderr.write(
+    "Project registration imports the declared definitions from a pinned snapshot to validate export identity. Register only code you trust as the current OS user.\n"
+  );
 }
