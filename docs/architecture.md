@@ -1,7 +1,8 @@
 # Architecture
 
 Vilano Runtime is a durable runtime for building agent systems. The current OSS `0.1` release path
-is local-first and uses external JavaScript/TypeScript workers.
+is local-first and uses kernel-managed Bun workers, with external JavaScript/TypeScript workers
+available through the same protocol.
 
 ## Runtime Layers
 

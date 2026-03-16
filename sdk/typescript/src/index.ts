@@ -2,7 +2,6 @@ export type RunStatus =
   | "pending"
   | "running"
   | "waiting"
-  | "sleeping"
   | "completed"
   | "failed"
   | "cancelled"
