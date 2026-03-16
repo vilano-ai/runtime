@@ -94,6 +94,7 @@ export async function ensureDaemonStarted(
   const noCompile =
     process.env.VILANO_KERNEL_NO_COMPILE === "1" ||
     (bundle.materialized && bundledReleaseReady);
+  const releaseNode = deriveReleaseNodeName(runtimePaths.homeDir);
 
   await fs.writeFile(runtimePaths.daemonStartupLogFile, "", { mode: 0o600 });
   const startupLogFd = fsSync.openSync(runtimePaths.daemonStartupLogFile, "a");
@@ -105,6 +106,7 @@ export async function ensureDaemonStarted(
         stdio: ["ignore", startupLogFd, startupLogFd],
         env: {
           ...process.env,
+          RELEASE_NODE: releaseNode,
           VILANO_HOME: runtimePaths.homeDir,
           VILANO_EXECUTION_HOME: runtimePaths.executionHomeDir,
           VILANO_KERNEL_PORT: String(port),
@@ -339,11 +341,11 @@ export async function readDaemonAuthState(): Promise<DaemonAuthState | null> {
   return await readJsonFile<DaemonAuthState | null>(getRuntimePaths().daemonAuthFile, null);
 }
 
-export async function listProjects(): Promise<ProjectListResponse> {
+export async function listProjects(options: { autoStart?: boolean } = {}): Promise<ProjectListResponse> {
   return requestJson<ProjectListResponse>({
     method: "GET",
     pathname: "/v1/projects",
-    autoStart: false,
+    autoStart: options.autoStart ?? false,
   });
 }
 
@@ -394,7 +396,8 @@ export async function listReferencedProjectSnapshots(
 
 export async function listDefinitions(
   kind: "workflow" | "service",
-  project?: string
+  project?: string,
+  options: { autoStart?: boolean } = {}
 ): Promise<DefinitionListResponse> {
   const query = project ? `?project=${encodeURIComponent(project)}` : "";
   const pathname = kind === "workflow" ? `/v1/workflows${query}` : `/v1/services${query}`;
@@ -402,7 +405,7 @@ export async function listDefinitions(
   return requestJson<DefinitionListResponse>({
     method: "GET",
     pathname,
-    autoStart: false,
+    autoStart: options.autoStart ?? false,
   });
 }
 
@@ -500,7 +503,8 @@ export async function inspectServiceRun(
 
 export async function listServiceRuns(
   project?: string,
-  activeOnly = false
+  activeOnly = false,
+  options: { autoStart?: boolean } = {}
 ): Promise<ServiceRunListResponse> {
   const params = new URLSearchParams();
   if (project) {
@@ -515,7 +519,7 @@ export async function listServiceRuns(
   return requestJson<ServiceRunListResponse>({
     method: "GET",
     pathname: `/v1/service-runs${query}`,
-    autoStart: false,
+    autoStart: options.autoStart ?? false,
   });
 }
 
@@ -751,6 +755,11 @@ function assertCompatibleKernelStatus(status: Pick<DaemonStatusResponse, "protoc
 
 function generateDaemonAuthToken(): string {
   return crypto.randomBytes(32).toString("hex");
+}
+
+function deriveReleaseNodeName(homeDir: string): string {
+  const suffix = crypto.createHash("sha256").update(path.resolve(homeDir)).digest("hex").slice(0, 12);
+  return `vilano_kernel_${suffix}`;
 }
 
 async function clearDaemonStateFiles(): Promise<void> {
