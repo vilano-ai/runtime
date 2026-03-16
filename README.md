@@ -113,20 +113,22 @@ curl -fsSL https://runtime.vilano.ai/install.sh | bash
 ```
 
 The installer writes the managed launcher to `~/.vilano/bin/vilano`. Add `~/.vilano/bin` to your
-`PATH` if you want to use bare `vilano`. `install.sh` and `vilano update` both default to the
-stable channel. Alternate release channels can be selected with `VILANO_RELEASE_CHANNEL`.
+`PATH` if you want to use bare `vilano`. The quick-start commands below use the fully qualified
+launcher path plus the bundled Bun binary so they work on a clean machine without extra shell
+setup. `install.sh` and `vilano update` both default to the stable channel. Alternate release
+channels can be selected with `VILANO_RELEASE_CHANNEL`.
 
 ### Create A Runnable Starter
 
 ```bash
 mkdir vilano-starter
 cd vilano-starter
-vilano init . --starter
-bun add @vilano/runtime
-vilano project add . --name vilano-starter
-vilano workflow list --project vilano-starter
-vilano service list --project vilano-starter
-vilano run start vilano-starter/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
+~/.vilano/bin/vilano init . --starter
+~/.vilano/current/bun/bun add @vilano/runtime
+~/.vilano/bin/vilano project add . --name vilano-starter
+~/.vilano/bin/vilano workflow list --project vilano-starter
+~/.vilano/bin/vilano service list --project vilano-starter
+~/.vilano/bin/vilano run start vilano-starter/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
 ```
 
 The starter writes an explicit `vilano.manifest.json`, a minimal TypeScript workflow/service pair,
@@ -136,9 +138,9 @@ already running.
 Inspect the resulting run and service:
 
 ```bash
-vilano run inspect <run-id>
-vilano run replay <run-id>
-vilano service ask vilano-starter/reviewer status --service-key repo_123 --wait-timeout 30s
+~/.vilano/bin/vilano run inspect <run-id>
+~/.vilano/bin/vilano run replay <run-id>
+~/.vilano/bin/vilano service ask vilano-starter/reviewer status --service-key repo_123 --wait-timeout 30s
 ```
 
 ### Bring An Existing Repo Under Vilano
@@ -147,10 +149,10 @@ Add the SDK, then generate and review an explicit manifest:
 
 ```bash
 cd /path/to/project
-bun add @vilano/runtime
-vilano init .
-vilano project add . --name my-project
-vilano workflow list --project my-project
+~/.vilano/current/bun/bun add @vilano/runtime
+~/.vilano/bin/vilano init .
+~/.vilano/bin/vilano project add . --name my-project
+~/.vilano/bin/vilano workflow list --project my-project
 ```
 
 `vilano init` without `--starter` scans an existing TS/JS project and writes a generated manifest

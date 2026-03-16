@@ -22,6 +22,7 @@ Use this before cutting the first public Vilano Runtime release.
 - [ ] The Launch Gate workflow passes on macOS and Linux.
 - [ ] Public clean-machine validation passes against the real installer and release metadata.
 - [ ] The packaged install path proves inspect/replay and service inspection, not just `version`.
+- [ ] `@vilano/runtime` is published and resolves publicly from the intended package registry.
 
 ## Manual Launch-Day Checks
 

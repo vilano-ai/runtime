@@ -33,6 +33,9 @@ Vilano Runtime uses a local single-user trust model. See
 
 ## Important Commands
 
+If you are following these from a fresh packaged install before adding `~/.vilano/bin` to `PATH`,
+use `~/.vilano/bin/vilano` and `~/.vilano/current/bun/bun` in place of the bare commands below.
+
 ```bash
 vilano version
 vilano update --check
