@@ -60,6 +60,14 @@ export async function verifyReleasePublication(
     }
   }
 
+  if (isHttpUrl(loadedManifest.source)) {
+    for (const [platform, artifact] of Object.entries(versionMetadata.artifacts)) {
+      if (isHttpUrl(artifact.url)) {
+        await verifyRemoteArtifactReachability(platform, artifact.url, artifact.sizeBytes);
+      }
+    }
+  }
+
   if (localBundleDir) {
     for (const [platform, artifact] of Object.entries(versionMetadata.artifacts)) {
       const expectedFile = path.join(localBundleDir, artifactFileNameFromUrl(artifact.url));
@@ -125,6 +133,84 @@ function normalizeSource(source: string): string {
   }
 
   return path.resolve(source);
+}
+
+function isHttpUrl(source: string): boolean {
+  return source.startsWith("http://") || source.startsWith("https://");
+}
+
+async function verifyRemoteArtifactReachability(
+  platform: string,
+  url: string,
+  expectedSizeBytes?: number
+): Promise<void> {
+  const headResponse = await fetch(url, { method: "HEAD", redirect: "follow" });
+  if (headResponse.ok) {
+    verifyExpectedArtifactSize(platform, url, expectedSizeBytes, headResponse.headers, false);
+    return;
+  }
+
+  if (headResponse.status !== 405 && headResponse.status !== 501) {
+    throw new Error(`Release artifact for ${platform} is not reachable at ${url}: HTTP ${headResponse.status}`);
+  }
+
+  const rangeResponse = await fetch(url, {
+    headers: {
+      range: "bytes=0-0",
+    },
+    redirect: "follow",
+  });
+  if (!(rangeResponse.ok || rangeResponse.status === 206)) {
+    throw new Error(`Release artifact for ${platform} is not reachable at ${url}: HTTP ${rangeResponse.status}`);
+  }
+
+  verifyExpectedArtifactSize(platform, url, expectedSizeBytes, rangeResponse.headers, true);
+}
+
+function verifyExpectedArtifactSize(
+  platform: string,
+  url: string,
+  expectedSizeBytes: number | undefined,
+  headers: Headers,
+  partialContent: boolean
+): void {
+  if (typeof expectedSizeBytes !== "number") {
+    return;
+  }
+
+  const contentRange = headers.get("content-range");
+  if (contentRange) {
+    const match = contentRange.match(/\/(\d+)$/u);
+    if (match) {
+      const actualSize = Number.parseInt(match[1] ?? "0", 10);
+      if (actualSize !== expectedSizeBytes) {
+        throw new Error(
+          `Release artifact size mismatch for ${platform} at ${url}: expected ${expectedSizeBytes}, got ${actualSize}`
+        );
+      }
+      return;
+    }
+  }
+
+  const contentLength = headers.get("content-length");
+  if (!contentLength) {
+    return;
+  }
+
+  const actualSize = Number.parseInt(contentLength, 10);
+  if (Number.isNaN(actualSize)) {
+    return;
+  }
+
+  if (partialContent) {
+    return;
+  }
+
+  if (actualSize !== expectedSizeBytes) {
+    throw new Error(
+      `Release artifact size mismatch for ${platform} at ${url}: expected ${expectedSizeBytes}, got ${actualSize}`
+    );
+  }
 }
 
 function resolveLocalBundleDir(source: string): string | null {

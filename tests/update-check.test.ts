@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -358,6 +359,78 @@ test("release installer rejects artifacts missing bundled worker payload", async
     expect(`${install.stdout}\n${install.stderr}`).toContain("missing bundled Bun worker entrypoint");
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("release verification rejects remote artifacts that are not reachable", async () => {
+  const platformKey = `${process.platform}-${process.arch}`;
+  const notesUrl = "https://example.com/releases/v0.1.0";
+  const artifactPath = "/missing-artifact.tgz";
+  let port = 0;
+
+  const server = http.createServer((request, response) => {
+    if (request.url === "/release.json") {
+      const manifest = createReleaseManifest({
+        platformKey,
+        artifactUrl: `http://127.0.0.1:${port}${artifactPath}`,
+        notesUrl,
+      });
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(`${JSON.stringify(manifest, null, 2)}\n`);
+      return;
+    }
+
+    if (request.url === "/install.sh") {
+      const manifest = createReleaseManifest({
+        platformKey,
+        artifactUrl: `http://127.0.0.1:${port}${artifactPath}`,
+        notesUrl,
+      });
+      response.writeHead(200, { "content-type": "text/x-shellscript; charset=utf-8" });
+      response.end(renderInstallScript(manifest));
+      return;
+    }
+
+    response.writeHead(404);
+    response.end("missing");
+  });
+
+  try {
+    port = await new Promise<number>((resolve, reject) => {
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        if (!address || typeof address === "string") {
+          reject(new Error("Failed to determine test server port"));
+          return;
+        }
+
+        resolve(address.port);
+      });
+      server.once("error", reject);
+    });
+
+    await expect(
+      verifyReleasePublication({
+        releaseManifestSource: `http://127.0.0.1:${port}/release.json`,
+        installerSource: `http://127.0.0.1:${port}/install.sh`,
+        channel: "stable",
+        expectedVersion: "0.1.0",
+        requiredPlatforms: [platformKey],
+        expectedArtifactUrlPrefix: `http://127.0.0.1:${port}/`,
+        expectedNotesUrl: notesUrl,
+      })
+    ).rejects.toThrow(`Release artifact for ${platformKey} is not reachable`);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
   }
 });
 
