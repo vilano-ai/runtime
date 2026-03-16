@@ -66,8 +66,8 @@ The generated installer installs the selected runtime into the managed layout de
 creates the stable launcher under `bin/`, and writes install state for `vilano update` /
 `vilano rollback`.
 
-The public installer defaults to the stable channel, just like `vilano update`. Preview installs are
-opt-in through `VILANO_RELEASE_CHANNEL=preview`.
+The public installer defaults to the stable channel, just like `vilano update`. Alternate release
+channels are selected with `VILANO_RELEASE_CHANNEL`.
 
 Each packaged runtime payload now includes a bundled Elixir kernel release, the bundled Bun
 runtime, CLI assets, worker assets, and an `install-manifest.json` describing the installed
@@ -104,8 +104,8 @@ That Worker serves:
 - `https://runtime.vilano.ai/install.sh`
 - `https://runtime.vilano.ai/release.json`
 
-It does not proxy the large runtime tarballs. The generated `release.json` points directly at
-GitHub Releases for artifact download.
+The Worker serves the installer script and release metadata. The generated `release.json` points
+directly at GitHub Releases for artifact download.
 
 Sync the generated assets into the Worker before deployment:
 
@@ -209,8 +209,7 @@ Current shape:
   "manifestVersion": 1,
   "latest": "0.1.0",
   "channels": {
-    "stable": "0.1.0",
-    "preview": "0.2.0-beta.1"
+    "stable": "0.1.0"
   },
   "releases": {
     "0.1.0": {

@@ -1,7 +1,7 @@
 # Architecture
 
 Vilano Runtime is a local-first BEAM-backed agent runtime with external JavaScript/TypeScript
-workers today.
+workers.
 
 ## Runtime Layers
 
@@ -60,12 +60,11 @@ The shared core lives in:
 - [worker/shared/src/runtime-utils.ts](../worker/shared/src/runtime-utils.ts)
 - [worker/shared/src/definitions.ts](../worker/shared/src/definitions.ts)
 
-The current shared core is runtime-neutral enough to run under Bun or Node through small runtime
-entry/adapters.
+The shared core runs under Bun or Node through small runtime entry/adapters.
 
 ### 4. Language SDK
 
-The public authoring model is currently TypeScript-first:
+The public authoring model is TypeScript-first:
 
 - [sdk/typescript/src/index.ts](../sdk/typescript/src/index.ts)
 
@@ -152,15 +151,14 @@ This is what makes services behave like durable keyed agents instead of plain re
 - kernel to CLI transport
 - managed worker runtime choice inside the JS/TS family
 
-### Tightly Coupled Today
+### Tightly Coupled
 
 - TypeScript/JavaScript definition execution
 - manifest generation, which still discovers definitions by scanning JS/TS source
 - JS/TS replay semantics in the worker core
 
-This is why the runtime is now JS-runtime-neutral enough for Bun and Node, but not yet polyglot at
-the language SDK level. The current manifest/runtime contract is still explicitly JS/TS execution
-oriented even though the long-term direction is broader.
+The current manifest/runtime contract is intentionally JS/TS execution oriented, with Bun and Node
+sharing the same worker core and protocol.
 
 ## Current Module Shape
 

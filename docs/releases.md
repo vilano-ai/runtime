@@ -18,14 +18,13 @@ Every release note should include a short compatibility section.
 ### Runtime
 
 - runtime version
-- release type (`preview`, `alpha`, etc.)
+- release type
 - supported operating systems for that release
 
-### Support Matrix
+### Runtime Surface
 
 - supported path
-- preview path(s)
-- anything intentionally unsupported
+- additional runtime lanes, if any
 
 ### Protocol
 
@@ -54,7 +53,6 @@ For the first OSS release, the expected language is:
 - TypeScript SDK: supported
 - BEAM kernel: supported
 - Bun worker: supported
-- Node worker: preview
 
 Do not ship release notes that imply broader support than the current support matrix.
 Do call out the agent-runtime primitives that are actually part of the release surface: workflows,
@@ -76,7 +74,7 @@ Before publishing a public OSS release:
    - supported platforms
    - supported worker runtimes
    - protocol/schema version
-   - known limitations
+   - runtime posture
 9. Confirm `runtime.vilano.ai/install.sh` and `runtime.vilano.ai/release.json` point at the tagged
    GitHub Release assets.
 
@@ -94,7 +92,8 @@ curl -fsSL https://runtime.vilano.ai/install.sh | bash
 ~/.vilano/bin/vilano update --check
 ```
 
-The public installer and `vilano update` both default to the stable channel. Preview is opt-in.
+The public installer and `vilano update` both default to the stable channel. Alternate channels
+are selected with `VILANO_RELEASE_CHANNEL`.
 
 The local pre-release gate should be:
 

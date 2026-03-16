@@ -3,8 +3,7 @@
 Tracked documentation in this directory is the stable, contributor-facing description of the
 runtime as it exists in git.
 
-Design exploration and longer product notes still live under `spec/`, which is intentionally
-ignored by git.
+Longer design notes still live under `spec/`, which is intentionally ignored by git.
 
 ## Index
 
@@ -13,8 +12,7 @@ ignored by git.
 - [First-Run Walkthrough](./first-run.md)
   - Canonical install-to-replay evaluation path for the repo and packaged runtime.
 - [Support Matrix](./support-matrix.md)
-  - What is supported today, what is preview/experimental, and what is intentionally out of
-    scope for the current OSS runtime.
+  - Supported path, worker runtimes, operating systems, and runtime model.
 - [Development Guide](./development.md)
   - Repo layout, local commands, manifest/protocol boundaries, and contributor expectations.
 - [Operations Guide](./operations.md)
@@ -22,10 +20,9 @@ ignored by git.
 - [Troubleshooting](./troubleshooting.md)
   - Likely first-release operator failures and the shortest recovery path for each.
 - [Trust Model](./trust-model.md)
-  - Canonical local-first OSS trust posture, current guarantees, and non-goals.
+  - Canonical local trust boundary and operator guidance.
 - [Manifest Guide](./manifests.md)
-  - Explicit project manifest contract, generated cache behavior, and the path away from source
-    scanning.
+  - Explicit project manifest contract and generated cache behavior.
 - [Distribution](./distribution.md)
   - Runtime install layout, mutable state layout, and the intended packaged install model.
 - [Protocol Guide](./protocol.md)

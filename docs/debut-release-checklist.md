@@ -6,15 +6,15 @@ Use this before cutting the first public Vilano Runtime release.
 
 - [ ] The one-line positioning is consistent across README, website, and release notes.
 - [ ] Public copy clearly says "BEAM-backed agent runtime" instead of generic workflow/job-runner language.
-- [ ] Supported, preview, and not-supported claims match the support matrix exactly.
-- [ ] No public copy implies cloud, multi-tenant, clustered, or sandbox guarantees.
+- [ ] Public copy matches the supported release path exactly.
+- [ ] Public copy stays aligned with the local-first runtime posture.
 
 ## Public Docs
 
 - [ ] The top-level README points to the first-run walkthrough, support matrix, troubleshooting, and trust model.
 - [ ] The first-run walkthrough has been executed exactly as written on a clean machine.
 - [ ] The troubleshooting page covers the most likely operator failures.
-- [ ] The release notes include supported platforms, worker runtimes, protocol/schema versions, and known limitations.
+- [ ] The release notes include supported platforms, worker runtimes, protocol/schema versions, and runtime posture.
 
 ## Verification
 

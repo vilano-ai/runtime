@@ -1,17 +1,10 @@
 # Support Matrix
 
-This document describes the current OSS runtime support posture. It is intentionally conservative.
+This document describes the supported OSS release path for Vilano Runtime.
 
-## Current Positioning
+## Canonical Release Path
 
-Vilano Runtime is currently a local-first BEAM-backed agent runtime for a single machine with
-external JavaScript/TypeScript workers.
-
-## Supported Today
-
-### Canonical OSS v1 Path
-
-The canonical path for the first OSS release is:
+Vilano Runtime `0.1` ships as:
 
 - Bun CLI
 - TypeScript SDK
@@ -19,10 +12,12 @@ The canonical path for the first OSS release is:
 - Bun managed worker
 - local SQLite-backed runtime home
 
+## Runtime Components
+
 ### Kernel
 
 - Elixir / BEAM kernel
-- SQLite-backed local durable state
+- SQLite-backed durable state
 - loopback-only HTTP coordination plane
 - per-runtime access token under `VILANO_HOME`
 
@@ -31,18 +26,14 @@ The canonical path for the first OSS release is:
 - TypeScript SDK in [sdk/typescript](../sdk/typescript)
 - workflows
 - services as durable keyed agents
-- durable `step`, `exec`, `sleep`, `waitForSignal`, `spawn`, `connect`
-- durable `monitor`, `link`, `trapExit`, `nextExit`
+- durable `step`, `exec`, `sleep`, `waitForSignal`, `spawn`, and `connect`
+- durable `monitor`, `link`, `trapExit`, and `nextExit`
 - workflow supervision groups
 - mailbox controls, passivation state, discovery, and pubsub
 
-### Worker Runtimes
+### Worker Runtime
 
-- Bun worker runtime: supported
-- Node worker runtime: preview
-
-Both currently share the same JS/TS worker core and protocol. Additional worker languages are not
-part of the current OSS support matrix.
+- Bun worker runtime
 
 ### CLI / Operations
 
@@ -53,78 +44,36 @@ part of the current OSS support matrix.
 
 ### Operating Systems
 
-Supported for the canonical OSS v1 path:
+Supported for the canonical release path:
 
 - macOS Apple Silicon (`darwin-arm64`)
 - Linux x86_64 (`linux-x64`)
 
-Windows is not part of the supported matrix today.
-
 ## CI Enforcement
 
-The repo CI is expected to enforce this matrix directly:
+The repo CI enforces the supported release path directly:
 
 - supported path jobs run on `ubuntu-latest` and `macos-latest`
 - Bun CLI + TypeScript SDK + BEAM kernel + Bun worker is the required passing path
-- Node worker coverage runs as a separate preview job
-- the heavier pre-release gate is `bun run check:launch`
-- the heavier GitHub Actions pre-release gate is `Launch Gate`
+- `bun run check:launch` is the local pre-release gate
+- `Launch Gate` is the heavier GitHub Actions pre-release gate
 
-If the support matrix changes, the CI matrix should change with it.
+If the supported release path changes, the CI matrix should change with it.
 
-## Preview / Evolving
+## Operational Model
 
-- Node worker support should still be treated as preview until it has the same release and support
-  posture as the Bun path.
-- Protocol artifacts exist and are versioned, but generated clients/types are not yet the primary
-  implementation path.
-- Explicit `vilano.manifest.json` files are the recommended project contract for OSS `0.1`.
-- Generated cache and regex fallback remain compatibility paths for TS/JS repos and should not be
-  treated as the preferred release path.
-
-## Not Supported Yet
-
-- hosted/cloud runtime
-- multi-node clustering
-- exact-once side-effect guarantees
-- language-native SDKs beyond TypeScript
-- unmanaged worker hard-stop guarantees
-- fully language-neutral manifest generation
-- permanent backwards-compatibility promises across pre-1.0 releases
-- pooled / replicated agent services
-
-## Operational Assumptions
+Vilano Runtime is documented and packaged as:
 
 - local-first
+- single-machine
 - single-user runtime home
-- the daemon is not a network service
-- local token auth reduces blind localhost access, but does not claim strong isolation against fully
-  trusted code running as the same user
+- loopback-only daemon
+- immutable installed runtime payloads plus mutable runtime state
 
-See [Trust Model](./trust-model.md) for the canonical description of these assumptions.
-
-## Release Guidance
-
-The correct OSS posture for the current codebase is:
-
-- `0.x`
-- preview/alpha language
-- explicit support matrix in release notes
-- no implied hosted or multi-tenant guarantees
-
-## What Needs to Change for Broader Runtime Support
-
-To support additional worker languages without weakening the current model:
-
-1. keep the BEAM kernel as the stable durable core
-2. keep the protocol artifacts authoritative
-3. make manifests fully language-neutral
-4. add per-language SDK + worker implementations that obey the same replay semantics
+See [Trust Model](./trust-model.md) for the canonical runtime boundary and operator guidance.
 
 ## Managed vs External Workers
 
-- managed workers supervised by the kernel get hard-stop fallback for blocking timed steps
-- external/manual workers only get cooperative in-process step cancellation today
-- that difference is intentional in the current `0.x` support posture
-
-That is different from simply adding another JS runtime adapter.
+- managed workers supervised by the kernel get hard-stop fallback for timed blocking steps
+- external/manual workers participate through the same protocol and rely on durable
+  failure/cancellation plus lease recovery
