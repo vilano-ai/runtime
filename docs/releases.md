@@ -68,15 +68,15 @@ Before publishing a public OSS release:
 3. Run `bun run build:release`.
 4. Merge platform artifacts with `VILANO_RELEASE_INPUT_DIR=/path/to/release-input bun run merge:release`.
 5. Run `bun run verify:release`.
-6. Run `bun run smoke:release-install`.
+6. Run `bun run smoke:release-install` against the current `dist/release/` bundle.
 7. Validate one clean-machine install path outside the repo checkout.
 8. Confirm the release notes match:
    - supported platforms
    - supported worker runtimes
    - protocol/schema version
    - runtime posture
-9. Confirm `runtime.vilano.ai/install.sh` and `runtime.vilano.ai/release.json` point at the tagged
-   GitHub Release assets.
+9. After deploy, confirm `runtime.vilano.ai/install.sh` and `runtime.vilano.ai/release.json` point at
+   the tagged GitHub Release assets.
 
 Release notes should live in `docs/release-notes/vX.Y.Z.md`, and the tag workflow publishes that
 file as the GitHub Release body.
@@ -103,6 +103,10 @@ bun run check:launch
 
 Then register a real project with an explicit `vilano.manifest.json`, start the daemon, run one
 workflow, and inspect/replay the result.
+
+`smoke:release-install` does not rebuild release artifacts. It validates whatever is currently in
+`dist/release/`, so run `build:release` for a fresh local bundle or `merge:release` for an
+assembled multi-platform bundle first.
 
 When `runtime.vilano.ai` is live, verify the public endpoints directly:
 

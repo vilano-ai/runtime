@@ -67,7 +67,7 @@ jobs:
         run: bun run smoke:install
 
       - name: Smoke release install
-        run: bun run smoke:release-install
+        run: bun run build:release && bun run smoke:release-install
 
   preview-node-worker:
     name: Launch gate preview Node worker

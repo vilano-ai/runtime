@@ -38,5 +38,5 @@ Cloudflare secrets expected by the workflow:
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
 
-The runtime route itself (`runtime.vilano.ai/*`) should be attached in Cloudflare for the deployed
-Worker.
+The production custom domain is codified in [`wrangler.jsonc`](/Users/mcl0vin/Documents/Code/runtime/deploy/cloudflare/runtime-installer/wrangler.jsonc).
+Cloudflare still needs to control the `runtime.vilano.ai` zone/hostname for that binding to work.

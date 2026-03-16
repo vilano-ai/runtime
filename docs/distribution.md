@@ -83,6 +83,9 @@ the launcher output and `PATH` guidance, runs `doctor`, checks `vilano update --
 bundled Bun worker can start without host Bun on `PATH`, starts the daemon, and completes a real
 workflow with inspect/replay coverage.
 
+`smoke:release-install` validates the current `dist/release/` directory as-is. Use `build:release`
+to prepare a fresh local bundle or `merge:release` to validate an assembled multi-platform bundle.
+
 For a multi-platform release bundle assembled from per-platform outputs, run:
 
 ```bash

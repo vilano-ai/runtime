@@ -70,7 +70,7 @@ jobs:
 
       - name: Smoke release install
         if: matrix.os == 'ubuntu-latest'
-        run: bun run smoke:release-install
+        run: bun run build:release && bun run smoke:release-install
 
   preview-node-worker:
     name: Preview Node worker

@@ -216,7 +216,8 @@ The release-distribution path goes one step further:
 - `bun run verify:release`
   - verifies the assembled `release.json` / `install.sh` pair and required supported platforms
 - `bun run smoke:release-install`
-  - installs that artifact into a clean root using the generated installer
+  - installs the current `dist/release/` bundle into a clean root using the generated installer
+  - use `bun run build:release` for a fresh local bundle or `bun run merge:release` for an assembled multi-platform bundle before running it
   - verifies the managed launcher output and `PATH` guidance
   - verifies bundled-worker startup, `doctor`, inspect, and replay from the installed runtime
 

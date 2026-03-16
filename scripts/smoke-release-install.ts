@@ -6,7 +6,9 @@ import { spawn } from "node:child_process";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 const SDK_DIR = path.join(ROOT, "sdk", "typescript");
-const RELEASE_DIR = path.join(ROOT, "dist", "release");
+const RELEASE_DIR = process.env.VILANO_RELEASE_DIR
+  ? path.resolve(process.env.VILANO_RELEASE_DIR)
+  : path.join(ROOT, "dist", "release");
 
 const installScriptPath = path.join(RELEASE_DIR, "install.sh");
 const releaseMetadataPath = path.join(RELEASE_DIR, "release.json");
