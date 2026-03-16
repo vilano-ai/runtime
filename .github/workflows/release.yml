@@ -9,6 +9,7 @@ on:
 permissions:
   contents: write
   actions: read
+  id-token: write
 
 jobs:
   build-release:
@@ -104,6 +105,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Setup Node
+        if: github.event_name == 'push'
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -149,6 +157,25 @@ jobs:
             dist/release/release.json
             dist/release/install.sh
 
+      - name: Build SDK package
+        if: github.event_name == 'push'
+        run: bun run build:sdk
+
+      - name: Check npm package availability
+        if: github.event_name == 'push'
+        id: npm_runtime
+        run: |
+          if npm view "@vilano/runtime@${GITHUB_REF_NAME#v}" version >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish @vilano/runtime to npm
+        if: github.event_name == 'push' && steps.npm_runtime.outputs.already_published != 'true'
+        working-directory: sdk/typescript
+        run: npm publish --provenance
+
       - name: Sync installer worker assets
         run: bun run sync:installer-worker
 
@@ -160,3 +187,26 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: deploy/cloudflare/runtime-installer
           command: deploy --config wrangler.jsonc
+
+      - name: Verify live runtime front door
+        if: github.event_name == 'push'
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if bun scripts/verify-release-publication.ts \
+              --release-manifest "https://runtime.vilano.ai/release.json" \
+              --installer "https://runtime.vilano.ai/install.sh" \
+              --channel stable \
+              --expected-version "${GITHUB_REF_NAME#v}" \
+              --platform darwin-arm64 \
+              --platform linux-x64 \
+              --artifact-url-prefix "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/" \
+              --expected-notes-url "https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/release-notes/${{ github.ref_name }}.md"; then
+              exit 0
+            fi
+
+            if [ "$attempt" -lt 6 ]; then
+              sleep 10
+            fi
+          done
+
+          exit 1

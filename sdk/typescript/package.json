@@ -29,6 +29,10 @@
     "url": "https://github.com/vilano-ai/runtime.git",
     "directory": "sdk/typescript"
   },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "homepage": "https://github.com/vilano-ai/runtime",
   "keywords": [
     "typescript",
