@@ -43,11 +43,31 @@ jobs:
           cd kernel
           mix deps.get
 
-      - name: Run supported runtime launch gate
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Protocol checks
+        run: bun run check:protocol
+
+      - name: Compile kernel
         run: |
-          bun run check
-          bun run smoke:install
-          bun run smoke:release-install
+          cd kernel
+          mix compile
+
+      - name: Manifest checks
+        run: bun run check:manifest
+
+      - name: Kernel invariant tests
+        run: bun run test:kernel
+
+      - name: Test supported runtime path
+        run: bun run test
+
+      - name: Smoke install
+        run: bun run smoke:install
+
+      - name: Smoke release install
+        run: bun run smoke:release-install
 
   preview-node-worker:
     name: Launch gate preview Node worker
