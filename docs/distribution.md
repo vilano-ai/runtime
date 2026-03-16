@@ -1,7 +1,6 @@
 # Distribution
 
-This document describes the current distribution model for the Vilano BEAM-backed agent runtime in
-`0.1`.
+This document describes the current distribution model for Vilano Runtime in `0.1`.
 
 ## Install Layout
 

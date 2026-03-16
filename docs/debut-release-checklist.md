@@ -5,7 +5,7 @@ Use this before cutting the first public Vilano Runtime release.
 ## Product Story
 
 - [ ] The one-line positioning is consistent across README, website, and release notes.
-- [ ] Public copy clearly says "BEAM-backed agent runtime" instead of generic workflow/job-runner language.
+- [ ] Public copy clearly says "durable runtime for building agent systems" instead of generic workflow/job-runner language.
 - [ ] Public copy matches the supported release path exactly.
 - [ ] Public copy stays aligned with the local-first runtime posture.
 

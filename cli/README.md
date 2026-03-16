@@ -14,7 +14,7 @@ It is responsible for:
 - packaging and smoke-install validation
 
 The CLI is intentionally a client of the kernel, not a second runtime authority. It should make
-the BEAM-backed agent-kernel model visible and operable, not hide it behind ad hoc client logic.
+the durable agent-system model visible and operable, not hide it behind ad hoc client logic.
 
 ## Runtime Assumptions
 
@@ -98,4 +98,5 @@ For OSS `0.1`, explicit `vilano.manifest.json` files are the recommended path. U
 `vilano init --starter` for a runnable new project, or plain `vilano init` to bootstrap a manifest
 for an existing TS/JS repo. Review generated manifests before relying on them for non-trivial
 export patterns. `vilano project add` and `vilano project sync` import the declared definitions
-from the pinned snapshot to validate export identity before the registration completes.
+from the pinned snapshot to validate export identity before the registration completes, so treat
+registration as a trusted local-code step.

@@ -8,8 +8,8 @@ Vilano releases should be explicit about compatibility. The runtime has multiple
 - manifest contract
 - protocol contract
 
-Release notes should also make the product thesis obvious: Vilano is a BEAM-backed agent runtime,
-not a generic background job runner.
+Release notes should also make the product thesis obvious: Vilano is a durable runtime for
+building agent systems, not a generic background job runner.
 
 Every release note should include a short compatibility section.
 

@@ -1,7 +1,7 @@
 # First-Run Walkthrough
 
-This is the fastest end-to-end path for evaluating Vilano Runtime as a local BEAM-backed agent
-runtime.
+This is the fastest end-to-end path for evaluating Vilano Runtime as a durable runtime for
+building agent systems.
 
 It proves six things in one pass:
 
@@ -38,6 +38,8 @@ cd vilano-starter
 - a `reviewCoordinator` workflow
 - a `reviewer` keyed service
 
+This starter path is the intended shortest route from install to a running agent system.
+
 ## 3. Install Project Dependencies
 
 ```bash
@@ -59,6 +61,10 @@ Copy the returned run id.
 
 `project add` and `run start` will start the local runtime automatically if it is not already
 running.
+
+`project add` validates the explicit manifest, snapshots the project, and imports the declared
+definitions from that snapshot to prove definition identity before registration completes. Treat
+project registration as a trusted local-code step.
 
 ## 5. Inspect And Replay The Run
 

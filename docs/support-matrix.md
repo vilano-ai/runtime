@@ -1,6 +1,6 @@
 # Support Matrix
 
-This document describes the supported OSS release path for Vilano Runtime.
+This document describes the supported OSS `0.1` release path for Vilano Runtime.
 
 ## Canonical Release Path
 
@@ -62,7 +62,7 @@ If the supported release path changes, the CI matrix should change with it.
 
 ## Operational Model
 
-Vilano Runtime is documented and packaged as:
+For OSS `0.1`, Vilano Runtime is documented and packaged as:
 
 - local-first
 - single-machine

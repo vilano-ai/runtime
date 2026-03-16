@@ -3,15 +3,15 @@
 [![CI](https://github.com/vilano-ai/runtime/actions/workflows/ci.yml/badge.svg)](https://github.com/vilano-ai/runtime/actions/workflows/ci.yml)
 [![Launch Gate](https://github.com/vilano-ai/runtime/actions/workflows/launch-gate.yml/badge.svg)](https://github.com/vilano-ai/runtime/actions/workflows/launch-gate.yml)
 
-Vilano Runtime is a local-first BEAM-backed agent runtime for durable workflows and long-lived
-agents.
+Vilano Runtime is a durable runtime for building agent systems.
 
 Vilano Runtime is a product by Vilano AI.
 
 Vilano Runtime `0.1` ships a TypeScript-first local runtime with a durable BEAM kernel,
 disposable JS/TS workers, and an operator CLI.
 
-It is built for workflows and long-lived agents that need:
+The current OSS release path is local-first and single-machine. It is built for agent systems that
+need:
 
 - durable replay instead of best-effort retries
 - long-lived keyed agents instead of ad hoc background processes
@@ -20,8 +20,7 @@ It is built for workflows and long-lived agents that need:
 - subprocess-heavy work with durable artifacts
 - inspectable execution timelines instead of opaque background jobs
 
-Vilano Runtime is a `0.x` release with a focused support path and a tested core
-execution model.
+Vilano Runtime is a `0.x` release with a focused support path and a tested core execution model.
 
 ## What It Is
 
@@ -45,7 +44,7 @@ The simplest mental model is:
 - services are durable keyed agents
 - workflows orchestrate and supervise them
 
-Vilano Runtime runs as a local daemon with:
+For OSS `0.1`, Vilano Runtime runs as a local daemon with:
 
 - single-machine
 - SQLite-backed
@@ -133,7 +132,8 @@ cd vilano-starter
 
 The starter writes an explicit `vilano.manifest.json`, a minimal TypeScript workflow/service pair,
 and a local `package.json`. `project add` and `run start` will start the runtime if it is not
-already running.
+already running. The starter path is the intended fastest route from install to a running agent
+system.
 
 Inspect the resulting run and service:
 
@@ -155,7 +155,7 @@ cd /path/to/project
 ~/.vilano/bin/vilano workflow list --project my-project
 ```
 
-`vilano init` without `--starter` scans an existing TS/JS project and writes a generated manifest
+`vilano init` without `--starter` scans an existing TS/JS project and writes an explicit manifest
 starting point. Review that manifest before relying on it, especially if your definitions use
 non-trivial export patterns.
 
@@ -164,6 +164,7 @@ declared definitions from the pinned snapshot to prove definition identity befor
 completes. Activation still re-validates the same identity when the worker imports the module.
 
 Because of that, treat `vilano project add` and `vilano project sync` as trusted local-code steps.
+If your project has top-level module side effects, registration can trigger them.
 
 ### From A Repo Checkout
 

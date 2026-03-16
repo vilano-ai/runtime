@@ -1,6 +1,6 @@
 # TypeScript SDK
 
-The TypeScript SDK is the primary authoring surface for Vilano Runtime's BEAM-backed agent kernel.
+The TypeScript SDK is the primary authoring surface for Vilano Runtime.
 
 It gives you two durable definition types:
 
@@ -27,6 +27,9 @@ For an existing repo, add the package and generate an explicit manifest:
 ```
 
 If you already have Bun and `vilano` on `PATH`, the bare commands work too.
+
+`vilano project add` and `vilano project sync` import the declared definitions from the pinned
+snapshot to validate export identity, so treat project registration as a trusted local-code step.
 
 ## Core APIs
 
