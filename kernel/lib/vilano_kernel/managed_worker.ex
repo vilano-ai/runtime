@@ -54,7 +54,7 @@ defmodule VilanoKernel.ManagedWorker do
     worker_source_dir = Path.join([worker_root_dir, worker_runtime, "src"])
     worker_entry = Path.join(worker_source_dir, "cli.ts")
     shared_source_dir = Path.join([worker_root_dir, "shared", "src"])
-    executable = runtime_executable(worker_runtime)
+    executable = runtime_executable(runtime, worker_runtime)
 
     case {executable, File.exists?(worker_entry), File.exists?(shared_source_dir)} do
       {nil, _, _} ->
@@ -388,9 +388,18 @@ defmodule VilanoKernel.ManagedWorker do
     _ -> []
   end
 
-  defp runtime_executable("bun"), do: System.find_executable("bun")
-  defp runtime_executable("node"), do: System.find_executable("node")
-  defp runtime_executable(_runtime), do: nil
+  defp runtime_executable(runtime, "bun") do
+    bundled_bun = Path.join([runtime.install_root_dir, "current", "bun", "bun"])
+
+    if File.regular?(bundled_bun) do
+      bundled_bun
+    else
+      System.find_executable("bun")
+    end
+  end
+
+  defp runtime_executable(_runtime, "node"), do: System.find_executable("node")
+  defp runtime_executable(_runtime, _worker_runtime), do: nil
 
   defp normalize_managed_worker_mode("pooled"), do: "pooled"
   defp normalize_managed_worker_mode(_mode), do: "per_activation"

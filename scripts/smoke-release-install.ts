@@ -40,6 +40,7 @@ try {
   });
 
   const installedCli = path.join(installRoot, "bin", "vilano");
+  const bundledBun = path.join(installRoot, "current", "bun", "bun");
   const installState = JSON.parse(
     await fs.readFile(path.join(installRoot, "install-state.json"), "utf8")
   ) as {
@@ -92,23 +93,24 @@ try {
 
   await fs.mkdir(projectDir, { recursive: true });
   await run(installedCli, ["init", ".", "--starter"], projectDir);
-  await run("bun", ["add", sdkTarball], projectDir);
+  await run(bundledBun, ["add", sdkTarball], projectDir);
 
   const daemonPort = await reservePort();
-  await run(installedCli, ["daemon", "start", "--port", String(daemonPort)], projectDir, {
+  const packagedRuntimeEnv = {
     ...baseEnv,
+    PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
     VILANO_KERNEL_PORT: String(daemonPort),
+  };
+
+  await run(installedCli, ["daemon", "start", "--port", String(daemonPort)], projectDir, {
+    ...packagedRuntimeEnv,
   });
 
   const workerWithoutHostBun = await run(
     installedCli,
     ["worker", "start", "--runtime", "bun", "--once"],
     projectDir,
-    {
-      ...baseEnv,
-      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
-      VILANO_KERNEL_PORT: String(daemonPort),
-    }
+    packagedRuntimeEnv
   );
   if (workerWithoutHostBun.exitCode !== 0) {
     throw new Error(
@@ -120,11 +122,7 @@ try {
     installedCli,
     ["worker", "start", "--runtime", "node", "--once"],
     projectDir,
-    {
-      ...baseEnv,
-      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
-      VILANO_KERNEL_PORT: String(daemonPort),
-    },
+    packagedRuntimeEnv,
     { allowFailure: true }
   );
   if (
@@ -138,7 +136,7 @@ try {
     );
   }
 
-  await run(installedCli, ["project", "add", ".", "--name", "smoke"], projectDir);
+  await run(installedCli, ["project", "add", ".", "--name", "smoke"], projectDir, packagedRuntimeEnv);
   const started = JSON.parse(
     (
       await run(
@@ -152,10 +150,7 @@ try {
           "--json",
         ],
         projectDir,
-        {
-          ...process.env,
-          VILANO_KERNEL_PORT: String(daemonPort),
-        }
+        packagedRuntimeEnv
       )
     ).stdout
   ) as { run: { id: string } };
@@ -183,20 +178,39 @@ try {
 
   const replay = JSON.parse(
     (
-      await run(installedCli, ["run", "replay", started.run.id, "--json"], projectDir, {
-        ...baseEnv,
-        VILANO_KERNEL_PORT: String(daemonPort),
-      })
+      await run(
+        installedCli,
+        ["run", "replay", started.run.id, "--json"],
+        projectDir,
+        packagedRuntimeEnv
+      )
     ).stdout
   ) as { timeline: unknown[] };
   if (!Array.isArray(replay.timeline) || replay.timeline.length === 0) {
     throw new Error(`Release install smoke replay did not return a durable timeline:\n${JSON.stringify(replay, null, 2)}`);
   }
 
-  await run(installedCli, ["daemon", "stop"], projectDir, {
-    ...baseEnv,
-    VILANO_KERNEL_PORT: String(daemonPort),
-  });
+  const serviceAsk = await run(
+    installedCli,
+    ["service", "ask", "smoke/reviewer", "status", "--service-key", "repo_123", "--wait-timeout", "30s"],
+    projectDir,
+    packagedRuntimeEnv
+  );
+  if (!serviceAsk.stdout.includes('"noteCount":1') || !serviceAsk.stdout.includes('"repoId":"repo_123"')) {
+    throw new Error(`Release install smoke service ask returned unexpected output:\n${serviceAsk.stdout}`);
+  }
+
+  const serviceInspect = await run(
+    installedCli,
+    ["service", "inspect", "smoke/reviewer", "--service-key", "repo_123"],
+    projectDir,
+    packagedRuntimeEnv
+  );
+  if (!serviceInspect.stdout.includes("state: {\"notes\":[\"release-install\"],\"repoId\":\"repo_123\"}")) {
+    throw new Error(`Release install smoke service inspect returned unexpected output:\n${serviceInspect.stdout}`);
+  }
+
+  await run(installedCli, ["daemon", "stop"], projectDir, packagedRuntimeEnv);
 
   process.stdout.write(
     `${JSON.stringify(

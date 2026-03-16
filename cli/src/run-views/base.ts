@@ -27,8 +27,17 @@ export function renderRun(run: RunRecord): string {
       lines.push(`passivation_reason: ${run.passivation.reason}`);
     }
 
-    lines.push(`wake_on: ${run.passivation.wakeOn.join(",") || "none"}`);
-    lines.push(`queued_messages: ${run.passivation.queuedMessages}`);
+    if (run.passivation.wakeReason) {
+      lines.push(`wake_reason: ${run.passivation.wakeReason}`);
+    }
+
+    if (Array.isArray(run.passivation.wakeOn)) {
+      lines.push(`wake_on: ${run.passivation.wakeOn.join(",") || "none"}`);
+    }
+
+    if (typeof run.passivation.queuedMessages === "number") {
+      lines.push(`queued_messages: ${run.passivation.queuedMessages}`);
+    }
 
     if (run.passivation.nextWakeAt) {
       lines.push(`next_wake_at: ${run.passivation.nextWakeAt}`);
