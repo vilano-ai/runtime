@@ -451,14 +451,7 @@ defmodule VilanoKernel.Storage.Infrastructure do
       []
     )
 
-    SQL.query!(
-      Repo,
-      """
-      create index if not exists service_envelopes_run_status_wake_created_idx
-      on service_envelopes(service_run_id, status, wake_at, created_at)
-      """,
-      []
-    )
+    maybe_create_service_envelope_wake_index!()
 
     SQL.query!(
       Repo,
@@ -504,5 +497,32 @@ defmodule VilanoKernel.Storage.Infrastructure do
       """,
       []
     )
+  end
+
+  defp maybe_create_service_envelope_wake_index! do
+    %{rows: rows} =
+      SQL.query!(
+        Repo,
+        """
+        pragma table_info(service_envelopes)
+        """,
+        []
+      )
+
+    has_wake_at? =
+      Enum.any?(rows, fn row ->
+        Enum.at(row, 1) == "wake_at"
+      end)
+
+    if has_wake_at? do
+      SQL.query!(
+        Repo,
+        """
+        create index if not exists service_envelopes_run_status_wake_created_idx
+        on service_envelopes(service_run_id, status, wake_at, created_at)
+        """,
+        []
+      )
+    end
   end
 end
