@@ -1,6 +1,6 @@
 ## Summary
 
-- release type: `0.x preview`
+- release type: `0.x OSS release`
 - runtime version:
 - release date:
 
@@ -8,7 +8,7 @@
 
 - supported operating systems:
 - supported worker runtimes:
-- preview worker runtimes:
+- additional runtime lanes:
 
 ## Compatibility
 
@@ -31,6 +31,6 @@
 
 ```bash
 curl -fsSL https://runtime.vilano.ai/install.sh | bash
-vilano version
-vilano doctor
+~/.vilano/bin/vilano version
+~/.vilano/bin/vilano doctor
 ```

@@ -12,19 +12,21 @@ It gives you two durable definition types:
 Generate a runnable starter project with the CLI:
 
 ```bash
-vilano init ./my-agent --starter
+~/.vilano/bin/vilano init ./my-agent --starter
 cd my-agent
-bun add @vilano/runtime
-vilano project add . --name my-agent
-vilano run start my-agent/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
+~/.vilano/current/bun/bun add @vilano/runtime
+~/.vilano/bin/vilano project add . --name my-agent
+~/.vilano/bin/vilano run start my-agent/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
 ```
 
 For an existing repo, add the package and generate an explicit manifest:
 
 ```bash
-bun add @vilano/runtime
-vilano init .
+~/.vilano/current/bun/bun add @vilano/runtime
+~/.vilano/bin/vilano init .
 ```
+
+If you already have Bun and `vilano` on `PATH`, the bare commands work too.
 
 ## Core APIs
 

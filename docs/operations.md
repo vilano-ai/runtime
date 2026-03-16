@@ -2,6 +2,10 @@
 
 Vilano Runtime is a local BEAM-backed agent runtime on a single machine.
 
+If you are using the packaged install and have not added `~/.vilano/bin` to `PATH`, use
+`~/.vilano/bin/vilano` for CLI commands below. For starter or manifest setup without a host Bun
+install, use `~/.vilano/current/bun/bun`.
+
 ## Runtime Home
 
 Vilano Runtime stores mutable runtime state under `VILANO_HOME`.
@@ -64,12 +68,12 @@ vilano daemon stop
 Projects are registered locally:
 
 ```bash
-vilano init /path/to/project --starter
+~/.vilano/bin/vilano init /path/to/project --starter
 cd /path/to/project
-bun add @vilano/runtime
-vilano project add . --name demo
-vilano project sync demo
-vilano project inspect demo
+~/.vilano/current/bun/bun add @vilano/runtime
+~/.vilano/bin/vilano project add . --name demo
+~/.vilano/bin/vilano project sync demo
+~/.vilano/bin/vilano project inspect demo
 ```
 
 The registry is machine-local. It is not a remote catalog or package index.

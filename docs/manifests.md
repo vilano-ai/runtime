@@ -10,6 +10,10 @@ Vilano Runtime uses two manifest forms:
   - `.vilano/project-manifest.json`
   - local cache derived from project source when no explicit manifest is present
 
+If you are using the packaged install and have not added `~/.vilano/bin` to `PATH`, use
+`~/.vilano/bin/vilano` for CLI commands below. For starter or manifest setup without a host Bun
+install, use `~/.vilano/current/bun/bun`.
+
 ## Manifest Contract
 
 The tracked contract is:
@@ -50,15 +54,15 @@ Vilano prefers explicit manifests over discovery. For the canonical OSS release 
 To scaffold a runnable new project:
 
 ```bash
-vilano init /path/to/project --starter
+~/.vilano/bin/vilano init /path/to/project --starter
 cd /path/to/project
-bun add @vilano/runtime
+~/.vilano/current/bun/bun add @vilano/runtime
 ```
 
 To bootstrap an explicit manifest for an existing TS/JS repo:
 
 ```bash
-vilano init /path/to/project
+~/.vilano/bin/vilano init /path/to/project
 ```
 
 That command writes `vilano.manifest.json` from the current definition set. Review the generated

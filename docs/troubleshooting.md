@@ -2,6 +2,9 @@
 
 This page is the short operator-facing path for the most likely first-release issues.
 
+If you are using the packaged install and have not added `~/.vilano/bin` to `PATH`, use
+`~/.vilano/bin/vilano` for the commands below.
+
 ## `vilano` Is Not Found
 
 If you installed through `install.sh`, the launcher lives at:
