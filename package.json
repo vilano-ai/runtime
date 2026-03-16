@@ -21,7 +21,7 @@
     "test:preview-node": "bun run build:sdk && bun test tests/node-worker.test.ts --timeout 60000 --max-concurrency 1",
     "test:integration": "bun run test",
     "test:kernel": "bash -lc 'export VILANO_HOME=\"$(mktemp -d)\"; trap \"rm -rf \\\"$VILANO_HOME\\\"\" EXIT; cd kernel && VILANO_KERNEL_PORT=0 VILANO_MANAGED_WORKERS=0 VILANO_REPO_POOL_SIZE=1 mix test'",
-    "test:soak": "bun test tests/soak.test.ts --timeout 360000 --max-concurrency 1",
+    "test:soak": "bun run build:sdk && bun test tests/soak.test.ts --timeout 360000 --max-concurrency 1",
     "prepare:cli-package": "bun scripts/prepare-cli-runtime-dist.ts",
     "build:release": "bun run build:sdk && bun run prepare:cli-package && bun scripts/build-release-distribution.ts",
     "merge:release": "bun scripts/merge-release-artifacts.ts",
