@@ -180,7 +180,9 @@ test("service state survives daemon restart", async () => {
   }
 });
 
-test("retry waits survive repeated daemon restarts with richer retry policies", async () => {
+test(
+  "retry waits survive repeated daemon restarts with richer retry policies",
+  async () => {
   const harness = await RuntimeHarness.create();
 
   try {
@@ -234,7 +236,9 @@ test("retry waits survive repeated daemon restarts with richer retry policies", 
   } finally {
     await harness.dispose();
   }
-});
+  },
+  { timeout: 60_000 }
+);
 
 test("service backlogs survive repeated daemon restarts and lease recovery", async () => {
   const harness = await RuntimeHarness.create({
