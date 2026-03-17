@@ -68,7 +68,7 @@ vilano service ask my-agent/reviewer status --service-key repo_123 --wait-timeou
 - [src/runtime-materializer.ts](./src/runtime-materializer.ts)
   - packaged runtime bundle materialization
 
-## Release Notes
+## Managed Updates
 
 The CLI targets the canonical local release path built around the managed install layout.
 
@@ -86,12 +86,8 @@ The current release-management surface is intentionally small:
 `vilano update` and `vilano rollback` operate on the managed install layout under `~/.vilano`
 and are designed around the same install metadata contract used by the packaged smoke path.
 
-For release-prep and distribution work, the repo also provides:
-
-- `bun run build:release`
-  - build a versioned runtime tarball, `release.json`, and `install.sh`
-- `bun run smoke:release-install`
-  - install the built artifact into a clean root and prove the installed launcher can run a real workflow
+Release-prep and distribution work is documented in [docs/releases.md](../docs/releases.md) and
+[docs/distribution.md](../docs/distribution.md).
 
 For OSS `0.1`, explicit `vilano.manifest.json` files are the recommended path. Use
 `vilano init --starter` for a runnable new project, or plain `vilano init` to bootstrap a manifest

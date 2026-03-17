@@ -50,14 +50,13 @@ Supported for the canonical release path:
 - macOS Apple Silicon (`darwin-arm64`)
 - Linux x86_64 (`linux-x64`)
 
-## CI Enforcement
+## Validation
 
-The repo CI enforces the supported release path directly:
+The supported release path is exercised in CI on the supported operating systems:
 
 - supported path jobs run on `ubuntu-latest` and `macos-latest`
 - Bun CLI + TypeScript SDK + BEAM kernel + Bun worker is the required passing path
-- `bun run check:launch` is the local pre-release gate
-- `Launch Gate` is the heavier GitHub Actions pre-release gate
+- release candidates should be validated on both supported operating systems before announcement
 
 If the supported release path changes, the CI matrix should change with it.
 

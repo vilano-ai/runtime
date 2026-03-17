@@ -167,34 +167,16 @@ completes. Activation still re-validates the same identity when the worker impor
 Because of that, treat `vilano project add` and `vilano project sync` as trusted local-code steps.
 If your project has top-level module side effects, registration can trigger them.
 
-### From A Repo Checkout
+### Repo Checkout And Examples
 
-```bash
-direnv allow
-bun install
-./cli/bin/vilano.ts doctor --fix
-./cli/bin/vilano.ts project add ./examples/bootstrap-demo --name demo
-./cli/bin/vilano.ts run start demo/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
-```
-
-`bootstrap-demo` is the canonical repo-checkout demo plus the richer fixture source for the test
-suite. For smaller reference projects, see [`examples/multi-agent-demo`](./examples/multi-agent-demo),
+For contributor and repo-checkout workflows, see [docs/development.md](./docs/development.md).
+`bootstrap-demo` is the canonical richer example in the repo. For smaller reference projects, see
+[`examples/multi-agent-demo`](./examples/multi-agent-demo),
 [`examples/approval-loop-demo`](./examples/approval-loop-demo), and
 [`examples/fanout-demo`](./examples/fanout-demo).
 
-### Maintainer Validation
-
-For release-prep and distribution work, the repo includes packaged install validation:
-
-```bash
-bun run check
-bun run build:release
-bun run smoke:release-install
-bun run check:launch
-```
-
-See [docs/releases.md](./docs/releases.md) for the full release checklist and
-[docs/distribution.md](./docs/distribution.md) for the packaged distribution contract.
+Release-prep and distribution work is documented in [docs/releases.md](./docs/releases.md) and
+[docs/distribution.md](./docs/distribution.md).
 
 ## Programming Model
 

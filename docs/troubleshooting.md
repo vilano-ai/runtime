@@ -105,4 +105,3 @@ Use these in order:
 - [Support Matrix](./support-matrix.md)
 - [Trust Model](./trust-model.md)
 - [Operations Guide](./operations.md)
-- [Release Notes Guide](./releases.md)
