@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Runtime | Vilano</title>
+    <meta
+      name="description"
+      content="Runtime is a durable runtime for building agent systems."
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --background: #ffffff;
+        --foreground: #000000;
+        --muted: #666666;
+        --border: #d4d4d4;
+        --surface: #f5f5f5;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+      }
+
+      body {
+        background: var(--background);
+        color: var(--foreground);
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+      }
+
+      .page {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .nav {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        padding: 1.25rem 1.5rem;
+      }
+
+      .nav a {
+        color: var(--foreground);
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .nav a:hover {
+        color: var(--muted);
+      }
+
+      .nav svg {
+        width: 1.125rem;
+        height: 1.125rem;
+        display: block;
+      }
+
+      .main {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem 1rem 4rem;
+      }
+
+      .hero {
+        width: 100%;
+        max-width: 52rem;
+        text-align: center;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(2.9rem, 9vw, 5.85rem);
+        line-height: 0.94;
+        letter-spacing: -0.06em;
+      }
+
+      .lede {
+        margin: 1.25rem auto 0;
+        max-width: 36rem;
+        color: var(--muted);
+        font-size: clamp(1rem, 2.5vw, 1.25rem);
+        line-height: 1.75;
+      }
+
+      .links {
+        margin-top: 1.75rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        justify-content: center;
+        font-size: 0.95rem;
+      }
+
+      .links a {
+        color: var(--foreground);
+        text-decoration: none;
+      }
+
+      .links a:hover {
+        color: var(--muted);
+      }
+
+      .divider {
+        color: var(--border);
+      }
+
+      .panel {
+        margin: 2.5rem auto 0;
+        width: min(100%, 40rem);
+        padding: 1rem 1.1rem;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        text-align: left;
+      }
+
+      .panel-title {
+        margin: 0 0 0.75rem;
+        font-size: 0.8rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 0.92rem;
+        line-height: 1.75;
+      }
+
+      .footer {
+        padding: 0 1.5rem 1.5rem;
+        text-align: center;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+
+      .footer code {
+        color: var(--foreground);
+      }
+
+      @media (max-width: 640px) {
+        .nav {
+          justify-content: center;
+        }
+
+        .links {
+          gap: 0.5rem;
+        }
+
+        .divider {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="nav">
+        <a href="https://x.com/vilano_ai" target="_blank" rel="noreferrer" aria-label="Vilano on X">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+          </svg>
+        </a>
+      </header>
+
+      <main class="main">
+        <section class="hero">
+          <h1>runtime</h1>
+          <p class="lede">
+            A durable runtime for building agent systems with state, history, and recovery.
+          </p>
+
+          <div class="links">
+            <a href="/install.sh">install</a>
+            <span class="divider">/</span>
+            <a href="https://github.com/vilano-ai/runtime">github</a>
+            <span class="divider">/</span>
+            <a href="https://github.com/vilano-ai/runtime/blob/main/docs/first-run.md">first run</a>
+          </div>
+
+          <div class="panel">
+            <p class="panel-title">quick start</p>
+            <pre>curl -fsSL https://runtime.vilano.ai/install.sh | bash
+export PATH="$HOME/.vilano/bin:$PATH"
+vilano version
+vilano doctor</pre>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        Bun 1.3.10+ is required for <code>bun add @vilano/runtime</code>.
+      </footer>
+    </div>
+  </body>
+</html>

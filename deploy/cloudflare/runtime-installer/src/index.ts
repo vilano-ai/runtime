@@ -13,10 +13,6 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname === "/") {
-      return Response.redirect("https://github.com/vilano-ai/runtime", 302);
-    }
-
     if (url.pathname === "/install") {
       url.pathname = "/install.sh";
       return Response.redirect(url.toString(), 302);
