@@ -26,7 +26,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/vilano-ai/runtime.git",
+    "url": "git+https://github.com/vilano-ai/runtime.git",
     "directory": "sdk/typescript"
   },
   "publishConfig": {
