@@ -170,8 +170,8 @@ test("service turns can defer an envelope and let later mail run first", async (
   try {
     const run = await harness.startWorkflow("demo/mailboxDeferWorkflow", {
       sessionId: keyInput.sessionId,
-      delay: "200ms",
-      followupDelay: "50ms",
+      delay: "500ms",
+      followupDelay: "20ms",
       followupValue: "after-defer",
     });
 
