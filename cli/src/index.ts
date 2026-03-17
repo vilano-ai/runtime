@@ -226,9 +226,14 @@ function renderWorkerHelp(command?: string): string {
         "Usage: vilano worker start [--runtime <bun|node>] [--once] [--worker-id <id>] [--server <url>] [--json]",
         "",
         "Start an external worker process and connect it to the local kernel.",
+        "Bun is the supported worker path; Node remains preview.",
       ].join("\n");
     default:
-      return ["Usage: vilano worker start [--runtime <bun|node>] [--once] [--worker-id <id>] [--server <url>] [--json]", "", "Start an external worker."].join("\n");
+      return [
+        "Usage: vilano worker start [--runtime <bun|node>] [--once] [--worker-id <id>] [--server <url>] [--json]",
+        "",
+        "Start an external worker. Bun is the supported path; Node remains preview.",
+      ].join("\n");
   }
 }
 

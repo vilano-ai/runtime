@@ -147,6 +147,8 @@ function renderStarterReadme(projectName: string): string {
     "- `reviewCoordinator` connects to `reviewer`, sends a note, then asks for status.",
     "- `reviewer` stores notes durably per `repoId`.",
     "",
+    "Install Bun 1.3.10+ from https://bun.sh/ before running the commands below.",
+    "",
     "## Try It",
     "",
     "```bash",

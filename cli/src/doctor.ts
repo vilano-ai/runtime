@@ -144,7 +144,7 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
       required: false,
       detail: nodeTool.found
         ? `${nodeTool.path} (${nodeTool.version ?? "unknown"})`
-        : "node not found on PATH (optional for preview Node workers)",
+        : "node not found on PATH (optional)",
     },
     {
       name: "mix",

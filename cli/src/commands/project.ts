@@ -147,7 +147,8 @@ export async function handleInitCommand(
           "",
           "Next steps:",
           ...(relativeProjectPath === "." ? [] : [`  cd ${relativeProjectPath}`]),
-          "  ~/.vilano/current/bun/bun add @vilano/runtime  # or bun add @vilano/runtime",
+          "  # Bun 1.3.10+ required: https://bun.sh/",
+          "  bun add @vilano/runtime",
           `  vilano project add . --name ${body.starter.projectName}`,
           `  vilano run start ${body.starter.projectName}/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'`,
           "  vilano run inspect <run-id>",
@@ -173,6 +174,7 @@ export async function handleInitCommand(
         "Review the generated manifest before relying on it; non-trivial export patterns may need manual edits.",
         "",
         "Next steps:",
+        "  # Bun 1.3.10+ required for `bun add @vilano/runtime`: https://bun.sh/",
         `  vilano project add ${projectPath === "." ? "." : projectPath} --name <project>`,
       ].join("\n")
   );

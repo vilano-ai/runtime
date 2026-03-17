@@ -31,14 +31,9 @@ export function renderDaemonStatus(body: DaemonStatusResponse): string {
     `pid: ${body.pid}`,
     `port: ${body.port}`,
     `started_at: ${body.startedAt}`,
-    `home_dir: ${body.homeDir}`,
-    `execution_home: ${body.executionHomeDir}`,
-    `project_root: ${body.projectRoot}`,
-    `runtime_db: ${body.runtimeDbPath}`,
     `managed_workers: ${body.managedWorkerCount}`,
     `managed_worker_runtime: ${body.managedWorkerRuntime}`,
     `lease_duration_seconds: ${body.leaseDurationSeconds}`,
-    `applied_migrations: ${body.appliedMigrations.length}`,
     `projects: ${body.projectCount}`,
   ].join("\n");
 }
@@ -75,10 +70,8 @@ export function renderVersionInfo(body: {
   return [
     `cli_version: ${body.cliVersion}`,
     `protocol_version: ${body.protocolVersion}`,
-    `runtime_bundle: ${body.runtimeBundle.root}${body.runtimeBundle.bundled ? " (packaged)" : " (repo)"}`,
-    body.runtimeBundle.bundled ? `runtime_bundle_source: ${body.runtimeBundle.sourceRoot}` : null,
+    `runtime_bundle: ${body.runtimeBundle.bundled ? "packaged" : "repo"}`,
     `runtime_bundle_version: ${body.runtimeBundle.bundleVersion}`,
-    `runtime_install_manifest: ${body.runtimeBundle.installManifestFile}`,
     body.runtimeBundle.installManifest
       ? `runtime_install: runtime=${body.runtimeBundle.installManifest.runtimeVersion} protocol=${body.runtimeBundle.installManifest.protocolVersion} schema=${body.runtimeBundle.installManifest.schemaVersion} worker_runtimes=${body.runtimeBundle.installManifest.supportedWorkerRuntimes.join(",")} platform=${body.runtimeBundle.installManifest.platform.os}/${body.runtimeBundle.installManifest.platform.arch}`
       : null,
@@ -236,32 +229,28 @@ export function renderDoctorReport(body: {
   appliedFixes: string[];
   checks: Array<{ name: string; ok: boolean; required: boolean; detail: string }>;
 }): string {
+  const reportedChecks = body.checks.filter(
+    (check) => !check.ok && (check.required || check.name === "runtime_portability")
+  );
+
   return [
     `doctor: ${body.ok ? "ok" : "needs attention"}`,
     `cli_version: ${body.cliVersion}`,
     `protocol_version: ${body.protocolVersion}`,
-    `runtime_home: ${body.runtimeHome}`,
-    body.kernel.status ? `execution_home: ${body.kernel.status.executionHomeDir}` : null,
-    `runtime_bundle: ${body.runtimeBundle.root}${body.runtimeBundle.bundled ? " (packaged)" : " (repo)"}`,
-    body.runtimeBundle.bundled ? `runtime_bundle_source: ${body.runtimeBundle.sourceRoot}` : null,
-    `runtime_bundle_materialized: ${body.runtimeBundle.materialized}`,
+    `runtime_bundle: ${body.runtimeBundle.bundled ? "packaged" : "repo"}`,
     `runtime_bundle_version: ${body.runtimeBundle.bundleVersion}`,
-    `kernel_dir: ${body.runtimeBundle.kernelDir}`,
-    `worker_dir: ${body.runtimeBundle.workerDir}`,
     `bun: ${renderDoctorTool(body.tools.bun)}`,
     `node: ${renderDoctorTool(body.tools.node)}`,
     `mix: ${renderDoctorTool(body.tools.mix)}`,
     `elixir: ${renderDoctorTool(body.tools.elixir)}`,
-    `kernel_deps_ready: ${body.kernel.depsReady}`,
-    `kernel_build_ready: ${body.kernel.buildReady}`,
     body.kernel.error ? `kernel_error: ${body.kernel.error}` : null,
     body.kernel.running && body.kernel.status
       ? `kernel_status: running runtime=${body.kernel.status.runtimeVersion} protocol=${body.kernel.status.protocolVersion} schema=${body.kernel.status.schemaVersion}`
       : "kernel_status: not running",
     ...(body.appliedFixes.length > 0 ? [`applied_fixes: ${body.appliedFixes.join(", ")}`] : []),
-    "checks:",
-    ...body.checks.map((check) =>
-      `  [${check.ok ? "ok" : "fail"}${check.required ? "" : "/optional"}] ${check.name}: ${check.detail}`
+    reportedChecks.length === 0 ? "checks: all required checks passed" : "checks:",
+    ...reportedChecks.map((check) =>
+      `  [${check.required ? "fail" : "warn"}] ${check.name}: ${check.detail}`
     ),
   ]
     .filter((line): line is string => Boolean(line))
@@ -277,7 +266,7 @@ export function renderDoctorTool(tool: {
     return "missing";
   }
 
-  return `${tool.path ?? "unknown"}${tool.version ? ` (${tool.version})` : ""}`;
+  return tool.version ?? "found";
 }
 
 export function renderProject(project: ProjectRecord): string {
