@@ -2,18 +2,15 @@
 
 This page is the short operator-facing path for the most likely first-release issues.
 
-If you are using the packaged install and have not added `~/.vilano/bin` to `PATH`, use
-`~/.vilano/bin/vilano` for the commands below.
-
 ## `vilano` Is Not Found
 
-If you installed through `install.sh`, the launcher lives at:
+If you installed through `install.sh`, add the managed launcher to your shell:
 
 ```bash
-~/.vilano/bin/vilano
+export PATH="$HOME/.vilano/bin:$PATH"
 ```
 
-Either use that full path or add `~/.vilano/bin` to your `PATH`.
+The launcher itself lives at `~/.vilano/bin/vilano`.
 
 ## `doctor` Reports Missing Local State
 
@@ -62,6 +59,7 @@ vilano project add /path/to/project --name <project>
 ```
 
 If you are starting from an empty directory, use `vilano init /path/to/project --starter` instead.
+Make sure Bun `1.3.10+` is installed before running `bun add @vilano/runtime`.
 
 Then review [Manifest Guide](./manifests.md) if the project uses non-trivial exports.
 

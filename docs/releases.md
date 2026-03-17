@@ -8,7 +8,7 @@ Vilano releases should be explicit about compatibility. The runtime has multiple
 - manifest contract
 - protocol contract
 
-Release notes should also make the product thesis obvious: Vilano is a durable runtime for
+Release notes should also make the product thesis obvious: Vilano Runtime is a durable runtime for
 building agent systems, not a generic background job runner.
 
 Every release note should include a short compatibility section.
@@ -87,13 +87,15 @@ The minimum pre-release validation on a machine without a repo checkout should b
 
 ```bash
 curl -fsSL https://runtime.vilano.ai/install.sh | bash
-~/.vilano/bin/vilano version
-~/.vilano/bin/vilano doctor
-~/.vilano/bin/vilano update --check
+export PATH="$HOME/.vilano/bin:$PATH"
+vilano version
+vilano doctor
+vilano update --check
 ```
 
 The public installer and `vilano update` both default to the stable channel. Alternate channels
-are selected with `VILANO_RELEASE_CHANNEL`.
+are selected with `VILANO_RELEASE_CHANNEL`. Bun `1.3.10+` is required for project authoring and
+for `bun add @vilano/runtime`.
 
 The local pre-release gate should be:
 

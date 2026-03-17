@@ -2,7 +2,7 @@
 
 `vilano` is the local operator surface for Vilano Runtime.
 
-Vilano Runtime is a product by Vilano AI.
+Vilano Runtime is built by Vilano.
 
 It is responsible for:
 
@@ -33,8 +33,8 @@ Vilano Runtime uses a local single-user trust model. See
 
 ## Important Commands
 
-If you are following these from a fresh packaged install before adding `~/.vilano/bin` to `PATH`,
-use `~/.vilano/bin/vilano` and `~/.vilano/current/bun/bun` in place of the bare commands below.
+These examples assume `vilano` is on `PATH` and Bun `1.3.10+` is installed. Install Bun from
+[bun.sh](https://bun.sh/) before running the starter path.
 
 ```bash
 vilano version
@@ -70,8 +70,7 @@ vilano service ask my-agent/reviewer status --service-key repo_123 --wait-timeou
 
 ## Release Notes
 
-The CLI targets the canonical local release path built around the managed install layout and the
-bundled runtime payload.
+The CLI targets the canonical local release path built around the managed install layout.
 
 The current release-management surface is intentionally small:
 

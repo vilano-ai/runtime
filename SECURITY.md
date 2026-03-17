@@ -24,10 +24,10 @@ We will acknowledge receipt and follow up with next steps.
 
 ## Scope Notes
 
-For the current OSS preview:
+For the current OSS release:
 
 - the daemon is loopback-only
 - the runtime does not claim strong isolation against arbitrary code running as the same OS user
-- stronger sandboxing/isolation is future work, not a current guarantee
+- local token auth is part of the local runtime boundary, not a sandbox boundary
 
 Please keep that trust model in mind when reporting issues.

@@ -31,6 +31,7 @@
 
 ```bash
 curl -fsSL https://runtime.vilano.ai/install.sh | bash
-~/.vilano/bin/vilano version
-~/.vilano/bin/vilano doctor
+export PATH="$HOME/.vilano/bin:$PATH"
+vilano version
+vilano doctor
 ```

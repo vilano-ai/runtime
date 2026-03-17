@@ -5,7 +5,7 @@
 
 Vilano Runtime is a durable runtime for building agent systems.
 
-Vilano Runtime is a product by Vilano AI.
+Vilano Runtime is built by Vilano.
 
 Vilano Runtime `0.1` ships a TypeScript-first local runtime with a durable BEAM kernel,
 disposable JS/TS workers, and an operator CLI.
@@ -107,27 +107,28 @@ The current support posture is documented in [docs/support-matrix.md](./docs/sup
 
 ```bash
 curl -fsSL https://runtime.vilano.ai/install.sh | bash
-~/.vilano/bin/vilano version
-~/.vilano/bin/vilano doctor
+export PATH="$HOME/.vilano/bin:$PATH"
+vilano version
+vilano doctor
 ```
 
 The installer writes the managed launcher to `~/.vilano/bin/vilano`. Add `~/.vilano/bin` to your
-`PATH` if you want to use bare `vilano`. The quick-start commands below use the fully qualified
-launcher path plus the bundled Bun binary so they work on a clean machine without extra shell
-setup. `install.sh` and `vilano update` both default to the stable channel. Alternate release
-channels can be selected with `VILANO_RELEASE_CHANNEL`.
+`PATH` once, then use bare `vilano`. Install Bun `1.3.10+` from [bun.sh](https://bun.sh/) before
+running `bun add @vilano/runtime` or authoring Vilano Runtime projects. `install.sh` and
+`vilano update` both default to the stable channel. Alternate release channels can be selected
+with `VILANO_RELEASE_CHANNEL`.
 
 ### Create A Runnable Starter
 
 ```bash
 mkdir vilano-starter
 cd vilano-starter
-~/.vilano/bin/vilano init . --starter
-~/.vilano/current/bun/bun add @vilano/runtime
-~/.vilano/bin/vilano project add . --name vilano-starter
-~/.vilano/bin/vilano workflow list --project vilano-starter
-~/.vilano/bin/vilano service list --project vilano-starter
-~/.vilano/bin/vilano run start vilano-starter/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
+vilano init . --starter
+bun add @vilano/runtime
+vilano project add . --name vilano-starter
+vilano workflow list --project vilano-starter
+vilano service list --project vilano-starter
+vilano run start vilano-starter/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
 ```
 
 The starter writes an explicit `vilano.manifest.json`, a minimal TypeScript workflow/service pair,
@@ -138,21 +139,21 @@ system.
 Inspect the resulting run and service:
 
 ```bash
-~/.vilano/bin/vilano run inspect <run-id>
-~/.vilano/bin/vilano run replay <run-id>
-~/.vilano/bin/vilano service ask vilano-starter/reviewer status --service-key repo_123 --wait-timeout 30s
+vilano run inspect <run-id>
+vilano run replay <run-id>
+vilano service ask vilano-starter/reviewer status --service-key repo_123 --wait-timeout 30s
 ```
 
-### Bring An Existing Repo Under Vilano
+### Bring An Existing Repo Under Vilano Runtime
 
 Add the SDK, then generate and review an explicit manifest:
 
 ```bash
 cd /path/to/project
-~/.vilano/current/bun/bun add @vilano/runtime
-~/.vilano/bin/vilano init .
-~/.vilano/bin/vilano project add . --name my-project
-~/.vilano/bin/vilano workflow list --project my-project
+bun add @vilano/runtime
+vilano init .
+vilano project add . --name my-project
+vilano workflow list --project my-project
 ```
 
 `vilano init` without `--starter` scans an existing TS/JS project and writes an explicit manifest
@@ -181,53 +182,19 @@ suite. For smaller reference projects, see [`examples/multi-agent-demo`](./examp
 [`examples/approval-loop-demo`](./examples/approval-loop-demo), and
 [`examples/fanout-demo`](./examples/fanout-demo).
 
-### Packaged Smoke Path
+### Maintainer Validation
 
-The repo includes a packaged install smoke check:
+For release-prep and distribution work, the repo includes packaged install validation:
 
 ```bash
 bun run check
-bun run pack
-bun run smoke:install
 bun run build:release
 bun run smoke:release-install
-```
-
-For the heavier pre-release gate, run:
-
-```bash
 bun run check:launch
 ```
 
-That path packs `vilano`, installs it into a temporary directory, verifies that read-only commands
-do not mutate the vendored bundle, verifies `doctor --fix` does not rewrite packaged runtime
-contents when a bundled kernel release is already present, checks release metadata through
-`vilano update --check`, applies an update into the managed install root, rolls back, starts the
-daemon through the managed launcher, and confirms that runtime state is written under `VILANO_HOME`.
-
-The release-distribution path goes one step further:
-
-- `bun run build:release`
-  - builds a versioned runtime tarball under `dist/release/`
-  - emits `dist/release/release.json`
-  - emits `dist/release/install.sh`
-- `bun run merge:release`
-  - combines per-platform `release.json` fragments into one assembled bundle
-- `bun run verify:release`
-  - verifies the assembled `release.json` / `install.sh` pair and required supported platforms
-- `bun run smoke:release-install`
-  - installs the current `dist/release/` bundle into a clean root using the generated installer
-  - use `bun run build:release` for a fresh local bundle or `bun run merge:release` for an assembled multi-platform bundle before running it
-  - verifies the managed launcher output and `PATH` guidance
-  - verifies bundled-worker startup, `doctor`, inspect, and replay from the installed runtime
-
-The public installer/update front door lives at:
-
-- `https://runtime.vilano.ai/install.sh`
-- `https://runtime.vilano.ai/release.json`
-
-This repo includes the thin Cloudflare Worker used to serve those endpoints under
-[`deploy/cloudflare/runtime-installer`](./deploy/cloudflare/runtime-installer).
+See [docs/releases.md](./docs/releases.md) for the full release checklist and
+[docs/distribution.md](./docs/distribution.md) for the packaged distribution contract.
 
 ## Programming Model
 

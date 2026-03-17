@@ -16,20 +16,21 @@ It proves six things in one pass:
 
 ```bash
 curl -fsSL https://runtime.vilano.ai/install.sh | bash
-~/.vilano/bin/vilano version
-~/.vilano/bin/vilano doctor
+export PATH="$HOME/.vilano/bin:$PATH"
+vilano version
+vilano doctor
 ```
 
-This walkthrough keeps commands fully qualified so it works on a clean machine without editing
-`PATH` or requiring a separate Bun install. If you want bare `vilano`, add `~/.vilano/bin` to
-your `PATH`.
+This walkthrough assumes you add `~/.vilano/bin` to `PATH` once up front. Install Bun `1.3.10+`
+from [bun.sh](https://bun.sh/) before running `bun add @vilano/runtime` or authoring Vilano
+Runtime projects.
 
 ## 2. Create A Starter Project
 
 ```bash
 mkdir vilano-starter
 cd vilano-starter
-~/.vilano/bin/vilano init . --starter
+vilano init . --starter
 ```
 
 `vilano init --starter` writes a minimal TypeScript project with:
@@ -43,18 +44,16 @@ This starter path is the intended shortest route from install to a running agent
 ## 3. Install Project Dependencies
 
 ```bash
-~/.vilano/current/bun/bun add @vilano/runtime
+bun add @vilano/runtime
 ```
-
-If you already have Bun on `PATH`, `bun add @vilano/runtime` works too.
 
 ## 4. Register The Project And Start A Run
 
 ```bash
-~/.vilano/bin/vilano project add . --name vilano-starter
-~/.vilano/bin/vilano workflow list --project vilano-starter
-~/.vilano/bin/vilano service list --project vilano-starter
-~/.vilano/bin/vilano run start vilano-starter/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
+vilano project add . --name vilano-starter
+vilano workflow list --project vilano-starter
+vilano service list --project vilano-starter
+vilano run start vilano-starter/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
 ```
 
 Copy the returned run id.
@@ -69,8 +68,8 @@ project registration as a trusted local-code step.
 ## 5. Inspect And Replay The Run
 
 ```bash
-~/.vilano/bin/vilano run inspect <run-id>
-~/.vilano/bin/vilano run replay <run-id>
+vilano run inspect <run-id>
+vilano run replay <run-id>
 ```
 
 `run inspect` shows the current durable state. `run replay` renders the durable timeline for the
@@ -81,8 +80,8 @@ workflow and service interaction.
 The workflow writes one note into the `reviewer` service keyed by `repo_123`.
 
 ```bash
-~/.vilano/bin/vilano service ask vilano-starter/reviewer status --service-key repo_123 --wait-timeout 30s
-~/.vilano/bin/vilano service inspect vilano-starter/reviewer --service-key repo_123
+vilano service ask vilano-starter/reviewer status --service-key repo_123 --wait-timeout 30s
+vilano service inspect vilano-starter/reviewer --service-key repo_123
 ```
 
 You should see a reply that includes `repoId`, `noteCount`, and the stored notes.
@@ -90,7 +89,7 @@ You should see a reply that includes `repoId`, `noteCount`, and the stored notes
 ## 7. Clean Up
 
 ```bash
-~/.vilano/bin/vilano daemon stop
+vilano daemon stop
 ```
 
 ## Next Steps
@@ -105,8 +104,8 @@ For smaller focused references, use [`examples/multi-agent-demo`](../examples/mu
 Start with:
 
 ```bash
-~/.vilano/bin/vilano doctor
-~/.vilano/bin/vilano daemon status
+vilano doctor
+vilano daemon status
 ```
 
 Then use [Troubleshooting](./troubleshooting.md) and [Operations Guide](./operations.md).

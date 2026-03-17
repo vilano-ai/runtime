@@ -24,6 +24,7 @@ Vilano Runtime `0.1` ships as:
 ### Authoring
 
 - TypeScript SDK in [sdk/typescript](../sdk/typescript)
+- Bun `1.3.10+` required for package installation and authoring
 - workflows
 - services as durable keyed agents
 - durable `step`, `exec`, `sleep`, `waitForSignal`, `spawn`, and `connect`

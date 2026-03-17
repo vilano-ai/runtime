@@ -363,12 +363,13 @@ else
   echo "To use 'vilano' directly in this shell, run:"
   printf '  export PATH="%s:$PATH"\n' "$BIN_DIR"
 fi
-echo "Create a runnable starter project with:"
+echo "Bun 1.3.10+ is required for 'bun add @vilano/runtime' and for authoring Vilano Runtime projects."
+echo "After Bun is installed and 'vilano' is on PATH, create a runnable starter project with:"
 echo "  mkdir vilano-starter && cd vilano-starter"
-echo "  $LAUNCHER_CMD init . --starter"
-echo "  $BUNDLED_BUN add @vilano/runtime"
-echo "  $LAUNCHER_CMD project add . --name vilano-starter"
-echo "  $LAUNCHER_CMD run start vilano-starter/reviewCoordinator --input '{\"repoId\":\"repo_123\",\"note\":\"Ship 0.1\"}'"
+echo "  vilano init . --starter"
+echo "  bun add @vilano/runtime"
+echo "  vilano project add . --name vilano-starter"
+echo "  vilano run start vilano-starter/reviewCoordinator --input '{\"repoId\":\"repo_123\",\"note\":\"Ship 0.1\"}'"
 `;
 }
 

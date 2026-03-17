@@ -7,26 +7,27 @@ It gives you two durable definition types:
 - `workflow()` for orchestration and supervision
 - `service()` for durable keyed, inbox-driven agent execution
 
+These examples assume `vilano` is on `PATH` and Bun `1.3.10+` is installed. Install Bun from
+[bun.sh](https://bun.sh/) before running the starter path.
+
 ## Fastest Start
 
 Generate a runnable starter project with the CLI:
 
 ```bash
-~/.vilano/bin/vilano init ./my-agent --starter
+vilano init ./my-agent --starter
 cd my-agent
-~/.vilano/current/bun/bun add @vilano/runtime
-~/.vilano/bin/vilano project add . --name my-agent
-~/.vilano/bin/vilano run start my-agent/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
+bun add @vilano/runtime
+vilano project add . --name my-agent
+vilano run start my-agent/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
 ```
 
 For an existing repo, add the package and generate an explicit manifest:
 
 ```bash
-~/.vilano/current/bun/bun add @vilano/runtime
-~/.vilano/bin/vilano init .
+bun add @vilano/runtime
+vilano init .
 ```
-
-If you already have Bun and `vilano` on `PATH`, the bare commands work too.
 
 `vilano project add` and `vilano project sync` import the declared definitions from the pinned
 snapshot to validate export identity, so treat project registration as a trusted local-code step.
