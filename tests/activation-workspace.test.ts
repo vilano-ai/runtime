@@ -4,11 +4,10 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  ensureActivationImportRoot,
   ensureActivationWorkspace,
 } from "../worker/shared/src/activation-workspace.ts";
 
-test("activation import roots are cached by snapshot path", async () => {
+test("activation workspaces share snapshot node_modules without an import cache", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-activation-workspace-"));
   const projectPath = path.join(root, "project");
   const workerHome = path.join(root, "worker-home");
@@ -32,22 +31,16 @@ test("activation import roots are cached by snapshot path", async () => {
       project: { path: projectPath },
     } as any;
 
-    const firstImportRoot = await ensureActivationImportRoot(workerHome, firstActivation);
-    const secondImportRoot = await ensureActivationImportRoot(workerHome, secondActivation);
-
-    expect(secondImportRoot).toBe(firstImportRoot);
-
-    const firstWorkspace = await ensureActivationWorkspace(workerHome, firstActivation, firstImportRoot);
-    const secondWorkspace = await ensureActivationWorkspace(workerHome, secondActivation, secondImportRoot);
-
-    const cachedImports = await fs.readdir(path.join(workerHome, "import-cache"));
-    expect(cachedImports).toHaveLength(1);
+    const firstWorkspace = await ensureActivationWorkspace(workerHome, firstActivation, projectPath);
+    const secondWorkspace = await ensureActivationWorkspace(workerHome, secondActivation, projectPath);
 
     const firstNodeModulesLink = await fs.realpath(path.join(firstWorkspace, "node_modules"));
     const secondNodeModulesLink = await fs.realpath(path.join(secondWorkspace, "node_modules"));
 
-    expect(firstNodeModulesLink).toBe(await fs.realpath(path.join(firstImportRoot, "node_modules")));
-    expect(secondNodeModulesLink).toBe(await fs.realpath(path.join(secondImportRoot, "node_modules")));
+    expect(firstNodeModulesLink).toBe(await fs.realpath(path.join(projectPath, "node_modules")));
+    expect(secondNodeModulesLink).toBe(await fs.realpath(path.join(projectPath, "node_modules")));
+
+    await expect(fs.access(path.join(workerHome, "import-cache"))).rejects.toThrow();
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
