@@ -198,12 +198,11 @@ jobs:
 
       - name: Deploy installer worker
         if: github.event_name == 'push'
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: deploy/cloudflare/runtime-installer
-          command: deploy --config wrangler.jsonc
+        working-directory: deploy/cloudflare/runtime-installer
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npm exec --yes wrangler@4.74.0 -- deploy --config wrangler.jsonc
 
       - name: Verify live runtime front door
         if: github.event_name == 'push'
