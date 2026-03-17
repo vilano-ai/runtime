@@ -110,16 +110,9 @@ workflow, and inspect/replay the result.
 `dist/release/`, so run `build:release` for a fresh local bundle or `merge:release` for an
 assembled multi-platform bundle first.
 
-When `runtime.vilano.ai` is live, verify the public endpoints directly:
+When `runtime.vilano.ai` is live, verify that:
 
-```bash
-bun scripts/verify-release-publication.ts \
-  --release-manifest https://runtime.vilano.ai/release.json \
-  --installer https://runtime.vilano.ai/install.sh \
-  --channel stable \
-  --expected-version 0.1.0 \
-  --platform darwin-arm64 \
-  --platform linux-x64 \
-  --artifact-url-prefix https://github.com/vilano-ai/runtime/releases/download/v0.1.0/ \
-  --expected-notes-url https://github.com/vilano-ai/runtime/blob/v0.1.0/docs/release-notes/v0.1.0.md
-```
+- `install.sh` downloads and installs the tagged release cleanly
+- `release.json` points at the tagged GitHub Release assets
+- `vilano update --check` reports the tagged release on a clean machine
+- the published release notes URL matches the tag and notes file

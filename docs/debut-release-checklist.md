@@ -36,7 +36,7 @@ Use this before cutting the first public Vilano Runtime release.
 
 - [ ] Save links to the green CI run and Launch Gate run.
 - [x] Save the exact release notes file used for the release body.
-- [x] Save the public `release.json` and `install.sh` verification command and result.
+- [x] Save the public installer and release-metadata verification result.
 
 Current evidence:
 - [`docs/release-evidence/v0.1.0.md`](/Users/mcl0vin/Documents/Code/runtime/docs/release-evidence/v0.1.0.md)
