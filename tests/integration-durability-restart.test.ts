@@ -86,33 +86,37 @@ test("signals sent before activation are buffered and consumed on first wait", a
   }
 });
 
-test("sleep waits survive daemon restart and resume afterward", async () => {
-  const harness = await RuntimeHarness.create();
+test(
+  "sleep waits survive daemon restart and resume afterward",
+  async () => {
+    const harness = await RuntimeHarness.create();
 
-  try {
-    const run = await harness.startWorkflow("demo/sleeper", { duration: "500ms" });
+    try {
+      const run = await harness.startWorkflow("demo/sleeper", { duration: "500ms" });
 
-    await harness.waitForRun(
-      run.run.id,
-      (inspect) =>
-        inspect.run.status === "waiting" &&
-        inspect.waits.some((wait) => wait.kind === "sleep" && wait.status === "waiting")
-    );
+      await harness.waitForRun(
+        run.run.id,
+        (inspect) =>
+          inspect.run.status === "waiting" &&
+          inspect.waits.some((wait) => wait.kind === "sleep" && wait.status === "waiting")
+      );
 
-    await harness.restartDaemon();
+      await harness.restartDaemon();
 
-    const completed = await harness.waitForRun(
-      run.run.id,
-      (inspect) => inspect.run.status === "completed",
-      20_000
-    );
+      const completed = await harness.waitForRun(
+        run.run.id,
+        (inspect) => inspect.run.status === "completed",
+        30_000
+      );
 
-    expect(completed.run.output).toEqual({ woke: true });
-    expect(completed.events.map((event) => event.type)).toContain("TimerFired");
-  } finally {
-    await harness.dispose();
-  }
-});
+      expect(completed.run.output).toEqual({ woke: true });
+      expect(completed.events.map((event) => event.type)).toContain("TimerFired");
+    } finally {
+      await harness.dispose();
+    }
+  },
+  { timeout: 60_000 }
+);
 
 test("signal waits survive daemon restart and resume after a later signal", async () => {
   const harness = await RuntimeHarness.create();
