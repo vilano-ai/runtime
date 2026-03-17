@@ -5,7 +5,16 @@
 
 Vilano Runtime is a durable runtime for building agent systems.
 
-Vilano Runtime is built by Vilano.
+It replaces retry-based execution with deterministic replay over durable state, allowing
+workflows and agents to recover correctly from failure.
+
+In Vilano Runtime:
+
+- the code reruns
+- the state does not
+
+The system is built around a BEAM-based kernel for coordination and durability, with
+disposable TypeScript workers executing agent behavior.
 
 Vilano Runtime `0.1` ships a TypeScript-first local runtime with a durable BEAM kernel,
 disposable JS/TS workers, and an operator CLI.
