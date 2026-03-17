@@ -405,8 +405,8 @@ test("activations execute from writable workspaces while snapshots stay read-onl
     expect(output.dependencyWriteErrorCode).toBeTruthy();
     expect(output.workspaceNodeModulesSymlink).toBe(true);
     expect(output.workspaceNodeModulesRealPath).toBeTruthy();
-    expect(output.workspaceNodeModulesRealPath).not.toBe(
-      path.join(completed.run.projectSnapshotPath ?? "", "node_modules")
+    expect(output.workspaceNodeModulesRealPath).toBe(
+      await fs.realpath(path.join(completed.run.projectSnapshotPath ?? "", "node_modules"))
     );
     expect(output.cwd).not.toBe(completed.run.projectSnapshotPath);
     await expect(fs.access(path.join(output.cwd, "tmp", "workspace-marker.txt"))).rejects.toThrow();

@@ -11,7 +11,6 @@ import {
   type WorkflowActivation,
 } from "./client.ts";
 import {
-  ensureActivationImportRoot,
   ensureActivationWorkspace,
 } from "./activation-workspace.ts";
 import { executeServiceTurn } from "./service-turn.ts";
@@ -112,7 +111,6 @@ export async function executeActivation(
   workerHomePath: string
 ): Promise<void> {
   let heartbeat: ReturnType<typeof setInterval> | null = null;
-  let activationImportRoot: string | null = null;
   let activationWorkspace: string | null = null;
   let serviceDefinition: ServiceDefinition<any, any, any, any, any> | null = null;
   let serviceRetry: ServiceDefinition<any, any, any, any, any>["retry"] | undefined;
@@ -121,23 +119,21 @@ export async function executeActivation(
     heartbeat = setInterval(() => {
       void client.heartbeat(activation.leaseId).catch(() => undefined);
     }, heartbeatIntervalMs);
-    activationImportRoot = await ensureActivationImportRoot(workerHomePath, activation);
     activationWorkspace = await ensureActivationWorkspace(
       workerHomePath,
       activation,
-      activationImportRoot
+      activation.project.path
     );
-    if (!activationImportRoot || !activationWorkspace) {
-      throw new Error("Activation staging did not produce execution roots");
+    if (!activationWorkspace) {
+      throw new Error("Activation staging did not produce an execution workspace");
     }
 
     if (activation.kind === "workflow") {
-      const importRoot = activationImportRoot;
       const workspace = activationWorkspace;
-      const definition = await withActivationCwd(activationImportRoot, async () =>
+      const definition = await withActivationCwd(activation.project.path, async () =>
         await loadWorkflowDefinition(activation, {
           cacheKey: activation.leaseId,
-          importRoot,
+          importRoot: activation.project.path,
         })
       );
 
@@ -149,12 +145,11 @@ export async function executeActivation(
       return;
     }
 
-    const importRoot = activationImportRoot;
     const workspace = activationWorkspace;
-    serviceDefinition = await withActivationCwd(importRoot, async () =>
+    serviceDefinition = await withActivationCwd(activation.project.path, async () =>
       await loadServiceDefinition(activation, {
         cacheKey: activation.leaseId,
-        importRoot,
+        importRoot: activation.project.path,
       })
     );
     serviceRetry = serviceDefinition.retry;

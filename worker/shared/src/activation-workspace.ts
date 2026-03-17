@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -9,7 +8,7 @@ type Activation = WorkflowActivation | ServiceTurnActivation;
 export async function ensureActivationWorkspace(
   workerHome: string,
   activation: Activation,
-  activationImportRoot: string
+  projectRoot: string
 ): Promise<string> {
   const workspacesRoot = path.join(workerHome, "run-workspaces");
   const workspacePath = path.join(workspacesRoot, activation.leaseId);
@@ -19,7 +18,7 @@ export async function ensureActivationWorkspace(
   const tempWorkspacePath = `${workspacePath}.tmp-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 
   try {
-    await fs.cp(activationImportRoot, tempWorkspacePath, {
+    await fs.cp(projectRoot, tempWorkspacePath, {
       recursive: true,
       force: true,
       dereference: true,
@@ -27,7 +26,7 @@ export async function ensureActivationWorkspace(
     });
 
     await makeWorkspaceWritable(tempWorkspacePath);
-    await linkActivationNodeModules(activationImportRoot, tempWorkspacePath);
+    await linkActivationNodeModules(projectRoot, tempWorkspacePath);
 
     try {
       await fs.rename(tempWorkspacePath, workspacePath);
@@ -44,48 +43,6 @@ export async function ensureActivationWorkspace(
     await removeTree(tempWorkspacePath);
     throw error;
   }
-}
-
-export async function ensureActivationImportRoot(
-  workerHome: string,
-  activation: Activation
-): Promise<string> {
-  const importsRoot = path.join(workerHome, "import-cache");
-  const importRoot = path.join(importsRoot, await importCacheKey(activation.project.path));
-
-  await fs.mkdir(importsRoot, { recursive: true });
-  const tempImportRoot = `${importRoot}.tmp-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-
-  try {
-    await copyActivationTree(activation.project.path, tempImportRoot);
-    const importRootStat = await fs.stat(tempImportRoot);
-    await fs.chmod(tempImportRoot, importRootStat.mode | 0o200);
-
-    try {
-      await fs.rename(tempImportRoot, importRoot);
-    } catch (error) {
-      if (!(await shouldReuseExistingPath(error, importRoot))) {
-        throw error;
-      }
-
-      await removeTree(tempImportRoot);
-    }
-
-    await fs.chmod(importRoot, importRootStat.mode);
-
-    return importRoot;
-  } catch (error) {
-    await removeTree(tempImportRoot);
-    throw error;
-  }
-}
-
-async function copyActivationTree(sourcePath: string, destinationPath: string): Promise<void> {
-  await fs.cp(sourcePath, destinationPath, {
-    recursive: true,
-    force: true,
-    dereference: true,
-  });
 }
 
 async function makeWorkspaceWritable(rootPath: string, rootRelativePath = ""): Promise<void> {
@@ -117,11 +74,11 @@ async function makeWorkspaceWritable(rootPath: string, rootRelativePath = ""): P
   await fs.chmod(rootPath, rootStat.mode | 0o200);
 }
 
-async function linkActivationNodeModules(importRoot: string, workspacePath: string): Promise<void> {
-  const importNodeModules = path.join(importRoot, "node_modules");
+async function linkActivationNodeModules(projectRoot: string, workspacePath: string): Promise<void> {
+  const sharedNodeModules = path.join(projectRoot, "node_modules");
 
   try {
-    const stat = await fs.stat(importNodeModules);
+    const stat = await fs.stat(sharedNodeModules);
     if (!stat.isDirectory()) {
       return;
     }
@@ -134,12 +91,7 @@ async function linkActivationNodeModules(importRoot: string, workspacePath: stri
   }
 
   const workspaceNodeModules = path.join(workspacePath, "node_modules");
-  await fs.symlink(importNodeModules, workspaceNodeModules, "dir");
-}
-
-async function importCacheKey(projectPath: string): Promise<string> {
-  const resolvedPath = await fs.realpath(projectPath);
-  return crypto.createHash("sha256").update(resolvedPath).digest("hex").slice(0, 16);
+  await fs.symlink(sharedNodeModules, workspaceNodeModules, "dir");
 }
 
 async function shouldReuseExistingPath(
