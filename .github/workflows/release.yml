@@ -42,6 +42,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Prepare Mix
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          cd kernel
+          mix deps.get
+
       - name: Verify repo versions match tag
         if: github.event_name == 'push'
         run: bun scripts/check-release-versions.ts
@@ -51,6 +58,11 @@ jobs:
           bun run typecheck
           bun run check:manifest
           bun run check:protocol
+
+      - name: Compile kernel
+        run: |
+          cd kernel
+          mix compile
 
       - name: Run kernel tests
         run: bun run test:kernel
