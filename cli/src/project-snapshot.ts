@@ -60,7 +60,7 @@ export async function pruneProjectSnapshots(
 
       const snapshotPath = path.join(projectSnapshotRoot, entry.name);
       if (!retained.has(snapshotPath)) {
-        await fs.rm(snapshotPath, { recursive: true, force: true });
+        await removeProjectSnapshot(snapshotPath);
       }
     })
   );
@@ -179,4 +179,37 @@ async function sealSnapshot(rootPath: string): Promise<void> {
   }
 
   await fs.chmod(rootPath, 0o555);
+}
+
+export async function removeProjectSnapshot(snapshotPath: string): Promise<void> {
+  await makeSnapshotDirectoriesWritable(snapshotPath);
+  await fs.rm(snapshotPath, { recursive: true, force: true });
+}
+
+async function makeSnapshotDirectoriesWritable(rootPath: string): Promise<void> {
+  let stat;
+  try {
+    stat = await fs.lstat(rootPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+
+    throw error;
+  }
+
+  if (!stat.isDirectory()) {
+    return;
+  }
+
+  const entries = await fs.readdir(rootPath, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    await makeSnapshotDirectoriesWritable(path.join(rootPath, entry.name));
+  }
+
+  await fs.chmod(rootPath, stat.mode | 0o200);
 }
