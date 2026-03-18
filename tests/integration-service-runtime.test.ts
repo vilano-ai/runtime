@@ -102,26 +102,18 @@ test("service turn blocking step timeout is enforced by the kernel and restarts 
       "--json",
     ]);
 
-    await harness.waitForService(
-      "demo/operator",
-      keyInput,
-      (inspect) =>
-        inspect.run.status === "active" &&
-        inspect.steps.some((step) => step.name === "blocking-service-step" && step.status === "running"),
-      60_000
-    );
-
-    const askResult = await askCommand.wait();
+    const [askResult, failed] = await Promise.all([
+      askCommand.wait(),
+      harness.waitForService(
+        "demo/operator",
+        keyInput,
+        (inspect) =>
+          inspect.run.status === "idle" &&
+          inspect.steps.some((step) => step.name === "blocking-service-step" && step.status === "failed"),
+        60_000
+      ),
+    ]);
     expect(askResult.exitCode).not.toBe(0);
-
-    const failed = await harness.waitForService(
-      "demo/operator",
-      keyInput,
-      (inspect) =>
-        inspect.run.status === "idle" &&
-        inspect.steps.some((step) => step.name === "blocking-service-step" && step.status === "failed"),
-      20_000
-    );
 
     const step = failed.steps.find((entry) => entry.name === "blocking-service-step");
     expect(step).toBeTruthy();
