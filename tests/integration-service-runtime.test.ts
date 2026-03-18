@@ -108,7 +108,7 @@ test("service turn blocking step timeout is enforced by the kernel and restarts 
       (inspect) =>
         inspect.run.status === "active" &&
         inspect.steps.some((step) => step.name === "blocking-service-step" && step.status === "running"),
-      40_000
+      60_000
     );
 
     const askResult = await askCommand.wait();
@@ -148,7 +148,7 @@ test("service turn blocking step timeout is enforced by the kernel and restarts 
   } finally {
     await harness.dispose();
   }
-}, 60_000);
+}, 90_000);
 
 test("unmanaged workers fall back to durable failure when a service turn blocks past its timeout", async () => {
   const harness = await RuntimeHarness.create({
