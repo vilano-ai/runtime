@@ -115,6 +115,41 @@ test("run replay renders wait and signal lifecycle for workflows", async () => {
   }
 });
 
+test("run explain json reports the current wait and critical path", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/gate", {});
+
+    await harness.waitForRun(
+      run.run.id,
+      (inspect) =>
+        inspect.run.status === "waiting" &&
+        inspect.waits.some((wait) => wait.kind === "signal" && wait.status === "waiting")
+    );
+
+    const explainCommand = harness.spawnCliCommand(["run", "explain", run.run.id, "--json"]);
+    const result = await explainCommand.wait();
+
+    expect(result.exitCode).toBe(0);
+    const body = JSON.parse(result.stdout) as {
+      ok: true;
+      run: { id: string };
+      explain: {
+        summary: string;
+        criticalPath: string;
+        waitingTurn: string | null;
+      };
+    };
+
+    expect(body.run.id).toBe(run.run.id);
+    expect(body.explain.summary).toContain("active wait");
+    expect(body.explain.criticalPath).toContain("signal");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("run replay renders retry backoff lifecycle for workflows", async () => {
   const harness = await RuntimeHarness.create();
 
@@ -224,6 +259,37 @@ test("run replay json includes service turn timelines", async () => {
     expect(replayTypes).toContain("TurnStarted");
     expect(replayTypes).toContain("TurnCompleted");
     expect(replay.turns?.some((turn) => turn.phase === "completed")).toBe(true);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("service history replays the keyed service timeline", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const repoId = "service-history";
+    const run = await harness.startWorkflow("demo/reviewCoordinator", {
+      repoId,
+      note: "Focus on history output",
+    });
+
+    await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed");
+
+    const historyCommand = harness.spawnCliCommand([
+      "service",
+      "history",
+      "demo/reviewer",
+      "--service-key",
+      repoId,
+    ]);
+    const result = await historyCommand.wait();
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("timeline:");
+    expect(result.stdout).toContain("InboundEnqueued");
+    expect(result.stdout).toContain("TurnStarted");
+    expect(result.stdout).toContain("TurnCompleted");
   } finally {
     await harness.dispose();
   }

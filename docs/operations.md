@@ -123,6 +123,7 @@ vilano run cancel <run-id>
 ```bash
 vilano service ensure demo/reviewer --service-key repo_123 --key-json '{"repoId":"repo_123"}'
 vilano service inspect demo/reviewer --service-key repo_123
+vilano service history demo/reviewer --service-key repo_123
 vilano service ask demo/reviewer status --service-key repo_123 --wait-timeout 30s
 vilano service send demo/reviewer hint --service-key repo_123 --input '{"note":"Focus on migrations"}'
 vilano service signal demo/reviewer reset --service-key repo_123

@@ -38,6 +38,7 @@ import {
 import { applyProjectConfigForCwd } from "./project-config.ts";
 import { findDefinition, resolveProjectForCwd } from "./registry.ts";
 import {
+  buildRunExplain,
   decorateRunInspect,
   renderRunExplain,
   renderRun,
@@ -123,7 +124,7 @@ function renderTopLevelHelp(): string {
     "  vilano workflow list|inspect",
     "  vilano run start|list|inspect|explain|replay|cancel",
     "  vilano worker start",
-    "  vilano service list|ensure|inspect|send|ask|signal|stop",
+    "  vilano service list|ensure|inspect|history|send|ask|signal|stop",
     "  vilano signal send",
     "",
     "Use `vilano help <group> [command]` or `vilano <group> [command] --help` for details.",
@@ -261,6 +262,12 @@ function renderServiceHelp(command?: string): string {
         "",
         "Inspect a keyed service run.",
       ].join("\n");
+    case "history":
+      return [
+        "Usage: vilano service history <service-ref> --service-key <key> [--key-json '{...}'] [--project <project>] [--json]",
+        "",
+        "Render the durable replay timeline for a keyed service run.",
+      ].join("\n");
     case "send":
       return [
         "Usage: vilano service send <service-ref> <message-name> --service-key <key> [--input '{...}'] [--key-json '{...}'] [--project <project>] [--json]",
@@ -286,7 +293,7 @@ function renderServiceHelp(command?: string): string {
         "Stop a keyed service instance.",
       ].join("\n");
     default:
-      return ["Usage: vilano service <list|ensure|inspect|send|ask|signal|stop> [--json]", "", "Operate on durable keyed services."].join("\n");
+      return ["Usage: vilano service <list|ensure|inspect|history|send|ask|signal|stop> [--json]", "", "Operate on durable keyed services."].join("\n");
   }
 }
 
@@ -433,15 +440,28 @@ async function handleRun(args: string[], flags: Record<string, string | boolean>
       }
 
       const response = decorateRunInspect(await inspectRun(runId));
-      writeOutput(flags, response, (body) =>
+      const body = {
+        ok: true as const,
+        run: response.run,
+        explain: buildRunExplain(
+          response.run,
+          response.steps,
+          response.execs,
+          response.waits,
+          response.children,
+          response.envelopes,
+          response.turns
+        ),
+      };
+      writeOutput(flags, body, () =>
         renderRunExplain(
-          body.run,
-          body.steps,
-          body.execs,
-          body.waits,
-          body.children,
-          body.envelopes,
-          body.turns
+          response.run,
+          response.steps,
+          response.execs,
+          response.waits,
+          response.children,
+          response.envelopes,
+          response.turns
         )
       );
       return 0;
@@ -548,6 +568,24 @@ async function handleService(
           body.turns,
           body.retrySeries ?? []
         )
+      );
+      return 0;
+    }
+    case "history": {
+      const reference = args[1];
+      if (!reference) {
+        throw new CliError("Usage: vilano service history <service-ref> --service-key <key>");
+      }
+
+      const target = await resolveServiceTarget(reference, flags, { autoStart: true });
+      const inspected = await inspectServiceRun(
+        target.project.name,
+        target.definition.name,
+        target.serviceKey
+      );
+      const response = decorateRunInspect(await replayRun(inspected.run.id));
+      writeOutput(flags, response, (body) =>
+        renderRunReplay(body.run, body.timeline, body.retrySeries ?? [])
       );
       return 0;
     }
@@ -688,7 +726,7 @@ async function handleService(
       return 0;
     }
     default:
-      throw new CliError("Usage: vilano service list|ensure|inspect|send|ask|signal|stop");
+      throw new CliError("Usage: vilano service list|ensure|inspect|history|send|ask|signal|stop");
   }
 }
 

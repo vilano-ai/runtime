@@ -11,7 +11,7 @@ import type {
   RunWaitRecord,
 } from "../types.ts";
 import { renderRun } from "./base.ts";
-import { renderRunExplainSummary } from "./explain.ts";
+import { buildRunExplain, renderRunExplainSummary } from "./explain.ts";
 import { deriveRetrySeries, renderRetrySeries } from "./retry.ts";
 import { asRecord, renderEventSummary, retryFieldsFromEventBody } from "./shared.ts";
 
@@ -249,7 +249,7 @@ export function renderRunInspect(
 
   return [
     renderRun(run),
-    ...renderRunExplainSummary(run, steps, execs, waits, children, envelopes, turns),
+    ...renderRunExplainSummary(buildRunExplain(run, steps, execs, waits, children, envelopes, turns)),
     ...eventLines,
     ...turnLines,
     ...retrySeriesLines,

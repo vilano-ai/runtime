@@ -153,6 +153,7 @@ vilano run explain <run-id>
 vilano run inspect <run-id>
 vilano run replay <run-id>
 vilano service ask vilano-starter/reviewer status --service-key repo_123 --wait-timeout 30s
+vilano service history vilano-starter/reviewer --service-key repo_123
 ```
 
 ### Bring An Existing Repo Under Vilano Runtime

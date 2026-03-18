@@ -18,6 +18,23 @@ const TERMINAL_STATUSES = new Set([
   "succeeded",
 ]);
 
+export interface RunExplainRecord {
+  summary: string;
+  criticalPath: string;
+  waitingTurn: string | null;
+  activeTurn: string | null;
+  activeSteps: string[];
+  activeExecs: string[];
+  waits: string[];
+  activeChildren: string[];
+  mailbox:
+    | {
+        processing: number;
+        queued: number;
+      }
+    | null;
+}
+
 export function renderRunExplain(
   run: RunRecord,
   steps: RunStepRecord[],
@@ -27,13 +44,14 @@ export function renderRunExplain(
   envelopes: RunEnvelopeRecord[],
   turns: RunTurnRecord[]
 ): string {
+  const explain = buildRunExplain(run, steps, execs, waits, children, envelopes, turns);
   return [
     renderRun(run),
-    ...renderRunExplainSummary(run, steps, execs, waits, children, envelopes, turns),
+    ...renderRunExplainSummary(explain),
   ].join("\n");
 }
 
-export function renderRunExplainSummary(
+export function buildRunExplain(
   run: RunRecord,
   steps: RunStepRecord[],
   execs: RunExecRecord[],
@@ -41,7 +59,7 @@ export function renderRunExplainSummary(
   children: RunChildRecord[],
   envelopes: RunEnvelopeRecord[],
   turns: RunTurnRecord[]
-): string[] {
+): RunExplainRecord {
   const activeSteps = steps.filter((step) => isActiveStatus(step.status));
   const activeExecs = execs.filter((exec) => isActiveStatus(exec.status));
   const activeWaits = waits.filter((wait) => isActiveStatus(wait.status));
@@ -69,57 +87,77 @@ export function renderRunExplainSummary(
     queuedEnvelopes
   );
 
+  const waitingTurn = activeTurns.find((turn) => turn.phase === "waiting");
+  const activeTurn = activeTurns.find((turn) => turn.phase === "running");
+  return {
+    summary,
+    criticalPath,
+    waitingTurn: waitingTurn ? describeTurn(waitingTurn) : null,
+    activeTurn: activeTurn ? describeTurn(activeTurn) : null,
+    activeSteps: activeSteps.slice(0, 3).map(describeStep),
+    activeExecs: activeExecs.slice(0, 3).map(describeExec),
+    waits: activeWaits.slice(0, 3).map(describeWait),
+    activeChildren: activeChildren.slice(0, 5).map(describeChild),
+    mailbox:
+      processingEnvelopes.length > 0 || queuedEnvelopes.length > 0
+        ? {
+            processing: processingEnvelopes.length,
+            queued: queuedEnvelopes.length,
+          }
+        : null,
+  };
+}
+
+export function renderRunExplainSummary(explain: RunExplainRecord): string[] {
   const lines = [
     "explain:",
-    `  summary: ${summary}`,
-    `  critical_path: ${criticalPath}`,
+    `  summary: ${explain.summary}`,
+    `  critical_path: ${explain.criticalPath}`,
   ];
 
-  const waitingTurn = activeTurns.find((turn) => turn.phase === "waiting");
-  if (waitingTurn) {
-    lines.push(`  waiting_turn: ${describeTurn(waitingTurn)}`);
+  if (explain.waitingTurn) {
+    lines.push(`  waiting_turn: ${explain.waitingTurn}`);
   }
 
-  const activeTurn = activeTurns.find((turn) => turn.phase === "running");
-  if (activeTurn) {
-    lines.push(`  active_turn: ${describeTurn(activeTurn)}`);
+  if (explain.activeTurn) {
+    lines.push(`  active_turn: ${explain.activeTurn}`);
   }
 
-  if (activeSteps.length > 0) {
-    for (const step of activeSteps.slice(0, 3)) {
-      lines.push(`  active_step: ${describeStep(step)}`);
+  if (explain.activeSteps.length > 0) {
+    for (const step of explain.activeSteps) {
+      lines.push(`  active_step: ${step}`);
     }
   } else {
     lines.push("  active_step: none");
   }
 
-  if (activeExecs.length > 0) {
-    for (const exec of activeExecs.slice(0, 3)) {
-      lines.push(`  active_exec: ${describeExec(exec)}`);
+  if (explain.activeExecs.length > 0) {
+    for (const exec of explain.activeExecs) {
+      lines.push(`  active_exec: ${exec}`);
     }
   } else {
     lines.push("  active_exec: none");
   }
 
-  if (activeWaits.length > 0) {
-    for (const wait of activeWaits.slice(0, 3)) {
-      lines.push(`  waiting_on: ${describeWait(wait)}`);
+  if (explain.waits.length > 0) {
+    for (const wait of explain.waits) {
+      lines.push(`  waiting_on: ${wait}`);
     }
   } else {
     lines.push("  waiting_on: none");
   }
 
-  if (activeChildren.length > 0) {
-    for (const child of activeChildren.slice(0, 5)) {
-      lines.push(`  active_child: ${describeChild(child)}`);
+  if (explain.activeChildren.length > 0) {
+    for (const child of explain.activeChildren) {
+      lines.push(`  active_child: ${child}`);
     }
   } else {
     lines.push("  active_child: none");
   }
 
-  if (processingEnvelopes.length > 0 || queuedEnvelopes.length > 0) {
+  if (explain.mailbox) {
     lines.push(
-      `  mailbox: processing=${processingEnvelopes.length} queued=${queuedEnvelopes.length}`
+      `  mailbox: processing=${explain.mailbox.processing} queued=${explain.mailbox.queued}`
     );
   }
 

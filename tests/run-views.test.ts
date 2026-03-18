@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { renderRun } from "../cli/src/run-views/base.ts";
-import { renderRunExplain } from "../cli/src/run-views/explain.ts";
+import { buildRunExplain, renderRunExplain } from "../cli/src/run-views/explain.ts";
 import { renderRunInspect } from "../cli/src/run-views/inspect.ts";
 import type {
   RunChildRecord,
@@ -66,6 +66,55 @@ test("renderRunExplain summarizes waiting parents and active child runs", () => 
   expect(output).toContain("summary: run has 1 active wait");
   expect(output).toContain("critical_path: child_result key=spawn:writer status=waiting");
   expect(output).toContain("active_child: writer run=run_writer_1 key=spawn:writer status=running");
+});
+
+test("buildRunExplain returns structured wait and mailbox summary", () => {
+  const run = baseRun({ definitionKind: "service", definitionName: "reviewer", status: "active" });
+  const envelopes = [
+    {
+      id: "env_1",
+      serviceRunId: run.id,
+      kind: "ask",
+      name: "review",
+      payload: null,
+      correlationId: "corr_1",
+      senderRunId: "run_parent",
+      status: "processing",
+      reply: null,
+      error: null,
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+    } satisfies RunEnvelopeRecord,
+  ];
+  const turns = [
+    {
+      envelopeId: "env_1",
+      kind: "ask",
+      name: "review",
+      status: "processing",
+      phase: "waiting",
+      attempts: 1,
+      correlationId: "corr_1",
+      senderRunId: "run_parent",
+      waitKind: "signal",
+      waitKey: "approved",
+      waitName: "approved",
+      lastResumeReason: null,
+      lastEventType: "TurnWaiting",
+      lastEventAt: run.updatedAt,
+      reply: null,
+      error: null,
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+    } satisfies RunTurnRecord,
+  ];
+
+  const explain = buildRunExplain(run, [], [], [], [], envelopes, turns);
+
+  expect(explain.summary).toBe("run is waiting on signal:approved");
+  expect(explain.criticalPath).toContain("ask review envelope=env_1");
+  expect(explain.waitingTurn).toContain("waiting_on=signal:approved");
+  expect(explain.mailbox).toEqual({ processing: 1, queued: 0 });
 });
 
 test("renderRunInspect includes explain summary for waiting service turns", () => {
