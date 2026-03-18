@@ -46,10 +46,26 @@ vilano init ./my-agent --starter
 cd my-agent && bun add @vilano/runtime
 vilano project add . --name my-agent
 vilano run start my-agent/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
+vilano run explain <run-id>
 vilano run inspect <run-id>
 vilano run replay <run-id>
 vilano service ask my-agent/reviewer status --service-key repo_123 --wait-timeout 30s
+vilano service history my-agent/reviewer --service-key repo_123
 ```
+
+Project-local defaults can live in `vilano.toml`:
+
+```toml
+[runtime]
+port = 4141
+execution_home = ".vilano/execution"
+
+[project]
+env_file = ".env"
+```
+
+The CLI discovers the nearest `vilano.toml` from the current working directory upward and maps it
+into the existing runtime env knobs before command execution. Shell env vars still win.
 
 ## Code Layout
 

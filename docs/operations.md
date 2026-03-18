@@ -87,6 +87,24 @@ when the worker imports the module later.
 Treat `project add` and `project sync` as trusted local-code steps. If a project module has
 top-level side effects, registration can trigger them. See [Trust Model](./trust-model.md).
 
+## Project Config
+
+Project-local runtime defaults can live in `vilano.toml`:
+
+```toml
+[runtime]
+port = 4141
+execution_home = ".vilano/execution"
+managed_workers = 2
+repo_pool_size = 5
+
+[project]
+env_file = ".env"
+```
+
+Vilano walks up from the current working directory to find the nearest `vilano.toml`. Use it for
+project-owned defaults that you want teammates to share. Shell env vars still take precedence.
+
 ## Operator Commands
 
 ### Runs
@@ -94,6 +112,7 @@ top-level side effects, registration can trigger them. See [Trust Model](./trust
 ```bash
 vilano run start demo/reviewCoordinator --input '{"repoId":"repo_123","note":"Ship 0.1"}'
 vilano run list
+vilano run explain <run-id>
 vilano run inspect <run-id>
 vilano run replay <run-id>
 vilano run cancel <run-id>
@@ -104,6 +123,7 @@ vilano run cancel <run-id>
 ```bash
 vilano service ensure demo/reviewer --service-key repo_123 --key-json '{"repoId":"repo_123"}'
 vilano service inspect demo/reviewer --service-key repo_123
+vilano service history demo/reviewer --service-key repo_123
 vilano service ask demo/reviewer status --service-key repo_123 --wait-timeout 30s
 vilano service send demo/reviewer hint --service-key repo_123 --input '{"note":"Focus on migrations"}'
 vilano service signal demo/reviewer reset --service-key repo_123
@@ -117,6 +137,9 @@ vilano signal send <run-id> approved --input '{"by":"operator"}'
 ```
 
 ## Inspect and Replay
+
+Use `run explain` when you want a quick answer about what the run is waiting on, which child work
+is still active, and what the current critical path looks like.
 
 Use `run inspect` when you want current state.
 

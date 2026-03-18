@@ -49,6 +49,7 @@ import { createStepController } from "./step-controller.ts";
 import {
   type Activation,
   nextImplicitActivationOpKey,
+  nextSpawnOpKey,
   nextImplicitSupervisionMemberKey,
   scopeActivationOpKey,
 } from "./turn-context-helpers.ts";
@@ -71,12 +72,7 @@ export function createTurnContext(
     ): WorkflowHandle<TOutput> {
       const key = scopeActivationOpKey(
         activation,
-        nextImplicitActivationOpKey(
-          implicitActivationOpCounters,
-          "spawn",
-          definition.name,
-          options.key
-        )
+        nextSpawnOpKey(implicitActivationOpCounters, definition.name, options)
       );
       const childRunId = deterministicChildRunId(activation.run.id, key);
       const spawnPromise = client.resolveSpawn(activation.leaseId, {

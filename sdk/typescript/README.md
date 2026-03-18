@@ -92,6 +92,18 @@ Use `exec()` for subprocess-heavy work that should be:
 - retryable as a process boundary
 - observable through stdout/stderr/artifacts
 
+### `spawn()`
+
+`ctx.spawn()` reuses child runs by key. If you want deterministic fresh children without hand-rolled
+namespacing, pass `policy: "fresh"`:
+
+```ts
+const child = ctx.spawn(workerTask, input, {
+  key: `job:${input.jobId}`,
+  policy: "fresh",
+});
+```
+
 ### Retries
 
 Preferred retry shape:

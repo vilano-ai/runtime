@@ -35,9 +35,12 @@ import {
   renderDefinitionList,
   writeOutput,
 } from "./output.ts";
+import { applyProjectConfigForCwd } from "./project-config.ts";
 import { findDefinition, resolveProjectForCwd } from "./registry.ts";
 import {
+  buildRunExplain,
   decorateRunInspect,
+  renderRunExplain,
   renderRun,
   renderRunInspect,
   renderRunList,
@@ -119,9 +122,9 @@ function renderTopLevelHelp(): string {
     "  vilano daemon start|status|stop",
     "  vilano project add|list|inspect|sync|remove",
     "  vilano workflow list|inspect",
-    "  vilano run start|list|inspect|replay|cancel",
+    "  vilano run start|list|inspect|explain|replay|cancel",
     "  vilano worker start",
-    "  vilano service list|ensure|inspect|send|ask|signal|stop",
+    "  vilano service list|ensure|inspect|history|send|ask|signal|stop",
     "  vilano signal send",
     "",
     "Use `vilano help <group> [command]` or `vilano <group> [command] --help` for details.",
@@ -210,12 +213,14 @@ function renderRunHelp(command?: string): string {
       return ["Usage: vilano run list [--project <project>] [--json]", "", "List workflow and service runs for the selected project scope."].join("\n");
     case "inspect":
       return ["Usage: vilano run inspect <run-id> [--json]", "", "Show the current durable state for a run."].join("\n");
+    case "explain":
+      return ["Usage: vilano run explain <run-id> [--json]", "", "Summarize what a run is doing, waiting on, and which child work is still active."].join("\n");
     case "replay":
       return ["Usage: vilano run replay <run-id> [--json]", "", "Render the durable event timeline for a run."].join("\n");
     case "cancel":
       return ["Usage: vilano run cancel <run-id> [--json]", "", "Cancel a running workflow or service run."].join("\n");
     default:
-      return ["Usage: vilano run <start|list|inspect|replay|cancel> [--json]", "", "Operate on workflow and service runs."].join("\n");
+      return ["Usage: vilano run <start|list|inspect|explain|replay|cancel> [--json]", "", "Operate on workflow and service runs."].join("\n");
   }
 }
 
@@ -257,6 +262,12 @@ function renderServiceHelp(command?: string): string {
         "",
         "Inspect a keyed service run.",
       ].join("\n");
+    case "history":
+      return [
+        "Usage: vilano service history <service-ref> --service-key <key> [--key-json '{...}'] [--project <project>] [--json]",
+        "",
+        "Render the durable replay timeline for a keyed service run.",
+      ].join("\n");
     case "send":
       return [
         "Usage: vilano service send <service-ref> <message-name> --service-key <key> [--input '{...}'] [--key-json '{...}'] [--project <project>] [--json]",
@@ -282,7 +293,7 @@ function renderServiceHelp(command?: string): string {
         "Stop a keyed service instance.",
       ].join("\n");
     default:
-      return ["Usage: vilano service <list|ensure|inspect|send|ask|signal|stop> [--json]", "", "Operate on durable keyed services."].join("\n");
+      return ["Usage: vilano service <list|ensure|inspect|history|send|ask|signal|stop> [--json]", "", "Operate on durable keyed services."].join("\n");
   }
 }
 
@@ -298,6 +309,9 @@ function renderSignalHelp(command?: string): string {
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   try {
     const parsed = parseArgs(argv);
+    if (shouldApplyProjectConfig(parsed)) {
+      await applyProjectConfigForCwd();
+    }
     if (parsed.positionals[0] === "help") {
       writeOutput(parsed.flags, renderHelp(parsed.positionals.slice(1)));
       return 0;
@@ -421,6 +435,39 @@ async function handleRun(args: string[], flags: Record<string, string | boolean>
       );
       return 0;
     }
+    case "explain": {
+      const runId = args[1];
+      if (!runId) {
+        throw new CliError("Usage: vilano run explain <run-id>");
+      }
+
+      const response = decorateRunInspect(await inspectRun(runId));
+      const body = {
+        ok: true as const,
+        run: response.run,
+        explain: buildRunExplain(
+          response.run,
+          response.steps,
+          response.execs,
+          response.waits,
+          response.children,
+          response.envelopes,
+          response.turns
+        ),
+      };
+      writeOutput(flags, body, () =>
+        renderRunExplain(
+          response.run,
+          response.steps,
+          response.execs,
+          response.waits,
+          response.children,
+          response.envelopes,
+          response.turns
+        )
+      );
+      return 0;
+    }
     case "replay": {
       const runId = args[1];
       if (!runId) {
@@ -454,7 +501,7 @@ async function handleRun(args: string[], flags: Record<string, string | boolean>
       return 0;
     }
     default:
-      throw new CliError("Usage: vilano run start|list|inspect|replay|cancel");
+      throw new CliError("Usage: vilano run start|list|inspect|explain|replay|cancel");
   }
 }
 
@@ -523,6 +570,24 @@ async function handleService(
           body.turns,
           body.retrySeries ?? []
         )
+      );
+      return 0;
+    }
+    case "history": {
+      const reference = args[1];
+      if (!reference) {
+        throw new CliError("Usage: vilano service history <service-ref> --service-key <key>");
+      }
+
+      const target = await resolveServiceTarget(reference, flags, { autoStart: true });
+      const inspected = await inspectServiceRun(
+        target.project.name,
+        target.definition.name,
+        target.serviceKey
+      );
+      const response = decorateRunInspect(await replayRun(inspected.run.id));
+      writeOutput(flags, response, (body) =>
+        renderRunReplay(body.run, body.timeline, body.retrySeries ?? [])
       );
       return 0;
     }
@@ -663,7 +728,7 @@ async function handleService(
       return 0;
     }
     default:
-      throw new CliError("Usage: vilano service list|ensure|inspect|send|ask|signal|stop");
+      throw new CliError("Usage: vilano service list|ensure|inspect|history|send|ask|signal|stop");
   }
 }
 
@@ -728,6 +793,19 @@ function parseArgs(argv: string[]): ParsedArgs {
   }
 
   return { positionals, flags };
+}
+
+function shouldApplyProjectConfig(parsed: ParsedArgs): boolean {
+  if (parsed.positionals[0] === "help") {
+    return false;
+  }
+
+  if (parsed.positionals.length === 0 || parsed.flags.help || parsed.flags.h) {
+    return false;
+  }
+
+  const [group] = parsed.positionals;
+  return !["version", "update", "rollback", "doctor"].includes(group ?? "");
 }
 
 async function resolveProjectScope(
