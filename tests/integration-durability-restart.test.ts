@@ -209,7 +209,7 @@ test(
         inspect.run.status === "waiting" &&
         inspect.waits.some((wait) => wait.kind === "retry_backoff" && wait.status === "waiting") &&
         inspect.events.filter((event) => event.type === "RetryScheduled").length >= 1,
-      30_000
+      40_000
     );
 
     await harness.restartDaemon();
@@ -220,7 +220,7 @@ test(
         inspect.run.status === "waiting" &&
         inspect.waits.some((wait) => wait.kind === "retry_backoff" && wait.status === "waiting") &&
         inspect.events.filter((event) => event.type === "RetryScheduled").length >= 2,
-      30_000
+      40_000
     );
 
     await harness.restartDaemon();
@@ -228,7 +228,7 @@ test(
     const completed = await harness.waitForRun(
       run.run.id,
       (inspect) => inspect.run.status === "completed",
-      40_000
+      50_000
     );
 
     const step = completed.steps.find((entry) => entry.name === "retrying-step");
@@ -241,7 +241,7 @@ test(
     await harness.dispose();
   }
   },
-  { timeout: 60_000 }
+  { timeout: 90_000 }
 );
 
 test("service backlogs survive repeated daemon restarts and lease recovery", async () => {

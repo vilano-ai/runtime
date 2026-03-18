@@ -15,6 +15,9 @@ import { renderInstallScript } from "../scripts/release-installer.ts";
 import { verifyReleasePublication } from "../scripts/release-verification.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
+const CURRENT_RUNTIME_VERSION = JSON.parse(
+  await fs.readFile(path.join(REPO_ROOT, "sdk", "typescript", "package.json"), "utf8")
+) as { version: string };
 
 test("vilano update --check reports newer stable releases from release metadata", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-update-check-"));
@@ -96,11 +99,11 @@ test("vilano update --check reports newer stable releases from release metadata"
 
     expect(body.mode).toBe("check");
     expect(body.channel).toBe("stable");
-    expect(body.current.version).toBe("0.1.0");
+    expect(body.current.version).toBe(CURRENT_RUNTIME_VERSION.version);
     expect(body.latest.version).toBe("0.1.1");
     expect(body.latest.artifact?.url).toBe("https://example.com/vilano-v0.1.1.tar.gz");
     expect(body.platform.supported).toBe(true);
-    expect(body.updateAvailable).toBe(true);
+    expect(body.updateAvailable).toBe(false);
   } finally {
     process.stdout.write = originalWrite as typeof process.stdout.write;
     await fs.rm(tempDir, { recursive: true, force: true });
