@@ -13,7 +13,6 @@ export interface VilanoProjectConfig {
     managed_worker_mode?: "per_activation" | "pooled";
     repo_pool_size?: number;
     lease_duration_seconds?: number;
-    release_channel?: string;
   };
   project?: {
     env_file?: string | string[];
@@ -34,7 +33,6 @@ const RUNTIME_ENV_MAP = {
   managed_worker_mode: "VILANO_MANAGED_WORKER_MODE",
   repo_pool_size: "VILANO_REPO_POOL_SIZE",
   lease_duration_seconds: "VILANO_LEASE_DURATION_SECONDS",
-  release_channel: "VILANO_RELEASE_CHANNEL",
 } as const;
 
 export async function loadProjectConfigForCwd(
@@ -165,7 +163,6 @@ function normalizeRuntimeConfig(
     { min: 1 }
   );
   runtime.execution_home = readOptionalString(record.execution_home, "runtime.execution_home", configPath);
-  runtime.release_channel = readOptionalString(record.release_channel, "runtime.release_channel", configPath);
   runtime.managed_worker_runtime = readOptionalEnum(
     record.managed_worker_runtime,
     "runtime.managed_worker_runtime",

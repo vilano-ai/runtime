@@ -42,7 +42,6 @@ test("applyProjectConfigForCwd maps runtime config into env defaults", async () 
         'managed_worker_mode = "pooled"',
         "repo_pool_size = 7",
         "lease_duration_seconds = 45",
-        'release_channel = "preview"',
       ].join("\n"),
       "utf8"
     );
@@ -57,7 +56,6 @@ test("applyProjectConfigForCwd maps runtime config into env defaults", async () 
     expect(env.VILANO_MANAGED_WORKER_MODE).toBe("pooled");
     expect(env.VILANO_REPO_POOL_SIZE).toBe("7");
     expect(env.VILANO_LEASE_DURATION_SECONDS).toBe("45");
-    expect(env.VILANO_RELEASE_CHANNEL).toBe("preview");
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

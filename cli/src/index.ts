@@ -308,8 +308,10 @@ function renderSignalHelp(command?: string): string {
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   try {
-    await applyProjectConfigForCwd();
     const parsed = parseArgs(argv);
+    if (shouldApplyProjectConfig(parsed)) {
+      await applyProjectConfigForCwd();
+    }
     if (parsed.positionals[0] === "help") {
       writeOutput(parsed.flags, renderHelp(parsed.positionals.slice(1)));
       return 0;
@@ -791,6 +793,19 @@ function parseArgs(argv: string[]): ParsedArgs {
   }
 
   return { positionals, flags };
+}
+
+function shouldApplyProjectConfig(parsed: ParsedArgs): boolean {
+  if (parsed.positionals[0] === "help") {
+    return false;
+  }
+
+  if (parsed.positionals.length === 0 || parsed.flags.help || parsed.flags.h) {
+    return false;
+  }
+
+  const [group] = parsed.positionals;
+  return !["version", "update", "rollback", "doctor"].includes(group ?? "");
 }
 
 async function resolveProjectScope(
