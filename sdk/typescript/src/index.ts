@@ -11,6 +11,7 @@ export type RunStatus =
 
 export interface SpawnOptions {
   key?: string;
+  policy?: "reuse" | "fresh";
 }
 
 export interface ConnectOptions {

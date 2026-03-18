@@ -2,6 +2,7 @@ import type {
   AskOptions,
   MessageOptions,
   SignalOptions,
+  SpawnOptions,
 } from "./runtime-sdk.ts";
 import type {
   ServiceTurnActivation,
@@ -105,6 +106,22 @@ export function nextImplicitActivationOpKey(
   const nextCount = (counters.get(counterKey) ?? 0) + 1;
   counters.set(counterKey, nextCount);
   return `${opKind}:${name}:${nextCount}`;
+}
+
+export function nextSpawnOpKey(
+  counters: Map<string, number>,
+  definitionName: string,
+  options: SpawnOptions = {}
+): string {
+  if (options.policy === "fresh") {
+    return nextImplicitActivationOpKey(
+      counters,
+      "spawn",
+      options.key && options.key.trim() !== "" ? options.key : definitionName
+    );
+  }
+
+  return nextImplicitActivationOpKey(counters, "spawn", definitionName, options.key);
 }
 
 export function nextImplicitSupervisionMemberKey(
