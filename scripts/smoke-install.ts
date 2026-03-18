@@ -12,6 +12,11 @@ import { deriveExecutionHomeDir } from "../cli/src/runtime-home.ts";
 const ROOT = path.resolve(import.meta.dir, "..");
 const CLI_DIR = path.join(ROOT, "cli");
 const SDK_DIR = path.join(ROOT, "sdk", "typescript");
+const CURRENT_VERSION = JSON.parse(
+  await fs.readFile(path.join(SDK_DIR, "package.json"), "utf8")
+) as { version: string };
+const CURRENT_RUNTIME_VERSION = CURRENT_VERSION.version;
+const NEXT_PATCH_VERSION = incrementPatchVersion(CURRENT_RUNTIME_VERSION);
 
 await run("bun", ["run", "prepare:cli-package"], ROOT);
 
@@ -51,7 +56,7 @@ try {
     VILANO_INSTALL_ROOT: installRoot,
   };
   const packagedBundleHashBefore = await hashDirectoryContents(packagedRuntimeDist);
-  updateArtifact = await buildUpdateArtifact(installDir, "0.1.1");
+  updateArtifact = await buildUpdateArtifact(installDir, NEXT_PATCH_VERSION);
 
   const manifestProjectDir = path.join(installDir, "manifest-project");
   await fs.mkdir(manifestProjectDir, { recursive: true });
@@ -112,13 +117,13 @@ try {
     `${JSON.stringify(
       {
         manifestVersion: 1,
-        latest: "0.1.1",
+        latest: NEXT_PATCH_VERSION,
         channels: {
-          stable: "0.1.1",
+          stable: NEXT_PATCH_VERSION,
         },
         releases: {
-          "0.1.1": {
-            version: "0.1.1",
+          [NEXT_PATCH_VERSION]: {
+            version: NEXT_PATCH_VERSION,
             channel: "stable",
             protocolVersion: version.protocolVersion,
             schemaMin: version.runtimeBundle.installManifest?.schemaVersion ?? 0,
@@ -145,13 +150,13 @@ try {
     `${JSON.stringify(
       {
         manifestVersion: 1,
-        latest: "0.1.1",
+        latest: NEXT_PATCH_VERSION,
         channels: {
-          stable: "0.1.1",
+          stable: NEXT_PATCH_VERSION,
         },
         releases: {
-          "0.1.1": {
-            version: "0.1.1",
+          [NEXT_PATCH_VERSION]: {
+            version: NEXT_PATCH_VERSION,
             channel: "stable",
             protocolVersion: version.protocolVersion,
             schemaMin: (version.runtimeBundle.installManifest?.schemaVersion ?? 0) + 1,
@@ -178,13 +183,13 @@ try {
     `${JSON.stringify(
       {
         manifestVersion: 1,
-        latest: "0.1.1",
+        latest: NEXT_PATCH_VERSION,
         channels: {
-          stable: "0.1.1",
+          stable: NEXT_PATCH_VERSION,
         },
         releases: {
-          "0.1.1": {
-            version: "0.1.1",
+          [NEXT_PATCH_VERSION]: {
+            version: NEXT_PATCH_VERSION,
             channel: "stable",
             protocolVersion: version.protocolVersion,
             schemaMin: version.runtimeBundle.installManifest?.schemaVersion ?? 0,
@@ -220,6 +225,7 @@ try {
 
   await seedRuntimeSchemaVersion(
     path.join(runtimeHome, "runtime.sqlite"),
+    CURRENT_RUNTIME_VERSION,
     version.runtimeBundle.installManifest?.schemaVersion ?? 0
   );
 
@@ -242,7 +248,7 @@ try {
     };
   };
 
-  if (!updateCheck.updateAvailable || updateCheck.latest.version !== "0.1.1") {
+  if (!updateCheck.updateAvailable || updateCheck.latest.version !== NEXT_PATCH_VERSION) {
     throw new Error(
       `Packaged CLI update --check did not report the expected release metadata:\n${JSON.stringify(updateCheck, null, 2)}`
     );
@@ -297,11 +303,16 @@ try {
       )
     ).stdout
   ) as {
+    previousVersion: string | null;
     currentVersion: string;
     installedVersion: string;
   };
 
-  if (updateApply.currentVersion !== "0.1.1" || updateApply.installedVersion !== "0.1.1") {
+  if (
+    updateApply.previousVersion !== CURRENT_RUNTIME_VERSION ||
+    updateApply.currentVersion !== NEXT_PATCH_VERSION ||
+    updateApply.installedVersion !== NEXT_PATCH_VERSION
+  ) {
     throw new Error(
       `Packaged CLI update did not install the expected version:\n${JSON.stringify(updateApply, null, 2)}`
     );
@@ -322,7 +333,7 @@ try {
     };
   };
 
-  if (managedVersion.runtimeBundle.installManifest?.runtimeVersion !== "0.1.1") {
+  if (managedVersion.runtimeBundle.installManifest?.runtimeVersion !== NEXT_PATCH_VERSION) {
     throw new Error(
       `Managed Vilano launcher did not switch to the updated runtime:\n${JSON.stringify(managedVersion, null, 2)}`
     );
@@ -334,7 +345,7 @@ try {
     rolledBackTo: string;
   };
 
-  if (rollback.rolledBackTo !== "0.1.0") {
+  if (rollback.rolledBackTo !== CURRENT_RUNTIME_VERSION) {
     throw new Error(
       `Managed Vilano rollback did not return to the previous runtime:\n${JSON.stringify(rollback, null, 2)}`
     );
@@ -350,7 +361,7 @@ try {
     };
   };
 
-  if (rolledBackVersion.runtimeBundle.installManifest?.runtimeVersion !== "0.1.0") {
+  if (rolledBackVersion.runtimeBundle.installManifest?.runtimeVersion !== CURRENT_RUNTIME_VERSION) {
     throw new Error(
       `Managed Vilano launcher did not return to the rolled back runtime:\n${JSON.stringify(rolledBackVersion, null, 2)}`
     );
@@ -583,6 +594,7 @@ async function buildUpdateArtifact(
   const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8")) as {
     version?: string;
   };
+  const currentVersion = packageJson.version ?? CURRENT_RUNTIME_VERSION;
   packageJson.version = targetVersion;
   await fs.writeFile(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
 
@@ -594,7 +606,7 @@ async function buildUpdateArtifact(
   installManifest.cliVersion = targetVersion;
   installManifest.runtimeVersion = targetVersion;
   if (typeof installManifest.bundleVersion === "string") {
-    installManifest.bundleVersion = installManifest.bundleVersion.replace("0.1.0", targetVersion);
+    installManifest.bundleVersion = installManifest.bundleVersion.replace(currentVersion, targetVersion);
   }
   await fs.writeFile(runtimeInstallManifestPath, `${JSON.stringify(installManifest, null, 2)}\n`);
 
@@ -712,7 +724,11 @@ async function hashDirectoryContents(rootPath: string): Promise<string> {
   return digest.digest("hex");
 }
 
-async function seedRuntimeSchemaVersion(databasePath: string, schemaVersion: number): Promise<void> {
+async function seedRuntimeSchemaVersion(
+  databasePath: string,
+  runtimeVersion: string,
+  schemaVersion: number
+): Promise<void> {
   await fs.mkdir(path.dirname(databasePath), { recursive: true });
   await fs.rm(databasePath, { force: true });
 
@@ -740,10 +756,20 @@ async function seedRuntimeSchemaVersion(databasePath: string, schemaVersion: num
           ) values (?, ?, ?, ?, ?)
         `
       )
-      .run("0.1.0", 1, schemaVersion, "[]", new Date().toISOString());
+      .run(runtimeVersion, 1, schemaVersion, "[]", new Date().toISOString());
   } finally {
     database.close(false);
   }
+}
+
+function incrementPatchVersion(version: string): string {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  if (!match) {
+    throw new Error(`Expected a plain semver version, received: ${version}`);
+  }
+
+  const [, major, minor, patch] = match;
+  return `${major}.${minor}.${Number.parseInt(patch, 10) + 1}`;
 }
 
 async function hashFileSha256(filePath: string): Promise<string> {
