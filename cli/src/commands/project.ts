@@ -9,7 +9,11 @@ import {
   syncProject,
 } from "../daemon-client.ts";
 import { renderProject, renderProjectSummary, writeOutput } from "../output.ts";
-import { materializeProjectSnapshot, pruneAllProjectSnapshots } from "../project-snapshot.ts";
+import {
+  materializeProjectSnapshot,
+  pruneAllProjectSnapshots,
+  removeProjectSnapshot,
+} from "../project-snapshot.ts";
 import { writeStarterProject } from "../project-starter.ts";
 import { validateProjectDefinitionsIdentity } from "../project-definition-validation.ts";
 import {
@@ -208,7 +212,7 @@ async function materializeValidatedProjectSnapshot(
       definitionsManifestHash: hashDefinitions(definitions),
     };
   } catch (error) {
-    await fs.rm(snapshotPath, { recursive: true, force: true }).catch(() => undefined);
+    await removeProjectSnapshot(snapshotPath).catch(() => undefined);
     const message = error instanceof Error ? error.message : String(error);
     throw new CliError(`Project registration failed definition validation: ${message}`);
   }
