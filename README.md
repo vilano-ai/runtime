@@ -85,6 +85,7 @@ Vilano Runtime is released under the [Apache-2.0 License](./LICENSE).
 - cancellation propagation across waits, child runs, service asks, and subprocesses
 - managed-worker hard-stop fallback for timed blocking steps
 - `run inspect` and `run replay` for durable operator visibility
+- `run explain` for quick wait/child-path diagnosis
 - packaged local install flow with immutable runtime payloads under the managed install root
   and mutable state under `VILANO_HOME`
 
@@ -148,6 +149,7 @@ system.
 Inspect the resulting run and service:
 
 ```bash
+vilano run explain <run-id>
 vilano run inspect <run-id>
 vilano run replay <run-id>
 vilano service ask vilano-starter/reviewer status --service-key repo_123 --wait-timeout 30s
@@ -175,6 +177,22 @@ completes. Activation still re-validates the same identity when the worker impor
 
 Because of that, treat `vilano project add` and `vilano project sync` as trusted local-code steps.
 If your project has top-level module side effects, registration can trigger them.
+
+Project-local runtime defaults can live in `vilano.toml` at the repo root:
+
+```toml
+[runtime]
+port = 4141
+execution_home = ".vilano/execution"
+managed_workers = 2
+repo_pool_size = 5
+
+[project]
+env_file = ".env"
+```
+
+Vilano walks up from the current working directory to find the nearest `vilano.toml`. Shell env
+vars still win when both are set.
 
 ### Repo Checkout And Examples
 

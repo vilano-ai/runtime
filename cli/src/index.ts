@@ -35,9 +35,11 @@ import {
   renderDefinitionList,
   writeOutput,
 } from "./output.ts";
+import { applyProjectConfigForCwd } from "./project-config.ts";
 import { findDefinition, resolveProjectForCwd } from "./registry.ts";
 import {
   decorateRunInspect,
+  renderRunExplain,
   renderRun,
   renderRunInspect,
   renderRunList,
@@ -119,7 +121,7 @@ function renderTopLevelHelp(): string {
     "  vilano daemon start|status|stop",
     "  vilano project add|list|inspect|sync|remove",
     "  vilano workflow list|inspect",
-    "  vilano run start|list|inspect|replay|cancel",
+    "  vilano run start|list|inspect|explain|replay|cancel",
     "  vilano worker start",
     "  vilano service list|ensure|inspect|send|ask|signal|stop",
     "  vilano signal send",
@@ -210,12 +212,14 @@ function renderRunHelp(command?: string): string {
       return ["Usage: vilano run list [--project <project>] [--json]", "", "List workflow and service runs for the selected project scope."].join("\n");
     case "inspect":
       return ["Usage: vilano run inspect <run-id> [--json]", "", "Show the current durable state for a run."].join("\n");
+    case "explain":
+      return ["Usage: vilano run explain <run-id> [--json]", "", "Summarize what a run is doing, waiting on, and which child work is still active."].join("\n");
     case "replay":
       return ["Usage: vilano run replay <run-id> [--json]", "", "Render the durable event timeline for a run."].join("\n");
     case "cancel":
       return ["Usage: vilano run cancel <run-id> [--json]", "", "Cancel a running workflow or service run."].join("\n");
     default:
-      return ["Usage: vilano run <start|list|inspect|replay|cancel> [--json]", "", "Operate on workflow and service runs."].join("\n");
+      return ["Usage: vilano run <start|list|inspect|explain|replay|cancel> [--json]", "", "Operate on workflow and service runs."].join("\n");
   }
 }
 
@@ -297,6 +301,7 @@ function renderSignalHelp(command?: string): string {
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   try {
+    await applyProjectConfigForCwd();
     const parsed = parseArgs(argv);
     if (parsed.positionals[0] === "help") {
       writeOutput(parsed.flags, renderHelp(parsed.positionals.slice(1)));
@@ -421,6 +426,26 @@ async function handleRun(args: string[], flags: Record<string, string | boolean>
       );
       return 0;
     }
+    case "explain": {
+      const runId = args[1];
+      if (!runId) {
+        throw new CliError("Usage: vilano run explain <run-id>");
+      }
+
+      const response = decorateRunInspect(await inspectRun(runId));
+      writeOutput(flags, response, (body) =>
+        renderRunExplain(
+          body.run,
+          body.steps,
+          body.execs,
+          body.waits,
+          body.children,
+          body.envelopes,
+          body.turns
+        )
+      );
+      return 0;
+    }
     case "replay": {
       const runId = args[1];
       if (!runId) {
@@ -454,7 +479,7 @@ async function handleRun(args: string[], flags: Record<string, string | boolean>
       return 0;
     }
     default:
-      throw new CliError("Usage: vilano run start|list|inspect|replay|cancel");
+      throw new CliError("Usage: vilano run start|list|inspect|explain|replay|cancel");
   }
 }
 
