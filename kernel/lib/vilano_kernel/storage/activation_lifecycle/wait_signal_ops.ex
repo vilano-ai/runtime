@@ -51,22 +51,17 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.WaitSignalOps do
                 [run["id"], op_key, wake_at, now, now]
               )
 
-              RunControl.ensure_fenced_run_write!(
+              RunControl.update_fenced_run!(
                 run["id"],
                 lease_id,
                 now,
                 """
-                update runs
-                set
-                  status = 'waiting',
-                  lease_id = null,
-                  lease_auth_token = null,
-                  lease_worker_id = null,
-                  lease_expires_at = null,
-                  updated_at = ?
-                where id = ?
-                """,
-                [now, run["id"]]
+                status = 'waiting',
+                lease_id = null,
+                lease_auth_token = null,
+                lease_worker_id = null,
+                lease_expires_at = null
+                """
               )
 
               append_event!(
@@ -270,22 +265,17 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.WaitSignalOps do
                 true ->
                   case get_pending_signal(run["id"], name) do
                     nil ->
-                      RunControl.ensure_fenced_run_write!(
+                      RunControl.update_fenced_run!(
                         run["id"],
                         lease_id,
                         now,
                         """
-                        update runs
-                        set
-                          status = 'waiting',
-                          lease_id = null,
-                          lease_auth_token = null,
-                          lease_worker_id = null,
-                          lease_expires_at = null,
-                          updated_at = ?
-                        where id = ?
-                        """,
-                        [now, run["id"]]
+                        status = 'waiting',
+                        lease_id = null,
+                        lease_auth_token = null,
+                        lease_worker_id = null,
+                        lease_expires_at = null
+                        """
                       )
 
                       append_event!(

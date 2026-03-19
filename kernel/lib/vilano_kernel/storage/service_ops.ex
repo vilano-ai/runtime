@@ -401,22 +401,17 @@ defmodule VilanoKernel.Storage.ServiceOps do
                     now
                   )
 
-                  RunControl.ensure_fenced_run_write!(
+                  RunControl.update_fenced_run!(
                     caller_run["id"],
                     lease_id,
                     now,
                     """
-                    update runs
-                    set
-                      status = 'waiting',
-                      lease_id = null,
-                      lease_auth_token = null,
-                      lease_worker_id = null,
-                      lease_expires_at = null,
-                      updated_at = ?
-                    where id = ?
-                    """,
-                    [now, caller_run["id"]]
+                    status = 'waiting',
+                    lease_id = null,
+                    lease_auth_token = null,
+                    lease_worker_id = null,
+                    lease_expires_at = null
+                    """
                   )
 
                   %{
@@ -554,22 +549,18 @@ defmodule VilanoKernel.Storage.ServiceOps do
             else
               next_status = service_next_status(service_run["id"], false)
 
-              RunControl.ensure_fenced_run_write!(
+              RunControl.update_fenced_run!(
                 service_run["id"],
                 lease_id,
                 now,
                 """
-                update runs
-                set
-                  status = ?,
-                  lease_id = null,
-                  lease_auth_token = null,
-                  lease_worker_id = null,
-                  lease_expires_at = null,
-                  updated_at = ?
-                where id = ?
+                status = ?,
+                lease_id = null,
+                lease_auth_token = null,
+                lease_worker_id = null,
+                lease_expires_at = null
                 """,
-                [next_status, now, service_run["id"]]
+                [next_status]
               )
             end
 
@@ -648,22 +639,18 @@ defmodule VilanoKernel.Storage.ServiceOps do
 
             next_status = service_next_status(service_run["id"], false)
 
-            RunControl.ensure_fenced_run_write!(
+            RunControl.update_fenced_run!(
               service_run["id"],
               lease_id,
               now,
               """
-              update runs
-              set
-                status = ?,
-                lease_id = null,
-                lease_auth_token = null,
-                lease_worker_id = null,
-                lease_expires_at = null,
-                updated_at = ?
-              where id = ?
+              status = ?,
+              lease_id = null,
+              lease_auth_token = null,
+              lease_worker_id = null,
+              lease_expires_at = null
               """,
-              [next_status, now, service_run["id"]]
+              [next_status]
             )
 
             append_event!(
@@ -745,22 +732,18 @@ defmodule VilanoKernel.Storage.ServiceOps do
 
             next_status = service_next_status(service_run["id"], false)
 
-            RunControl.ensure_fenced_run_write!(
+            RunControl.update_fenced_run!(
               service_run["id"],
               lease_id,
               now,
               """
-              update runs
-              set
-                status = ?,
-                lease_id = null,
-                lease_auth_token = null,
-                lease_worker_id = null,
-                lease_expires_at = null,
-                updated_at = ?
-              where id = ?
+              status = ?,
+              lease_id = null,
+              lease_auth_token = null,
+              lease_worker_id = null,
+              lease_expires_at = null
               """,
-              [next_status, now, service_run["id"]]
+              [next_status]
             )
 
             VilanoKernel.Storage.get_run(service_run["id"])

@@ -169,39 +169,59 @@ defmodule VilanoKernel.Storage.RunControl do
     end
   end
 
-  def get_fenced_run_by_lease(lease_id, now) do
-    case get_run_by_lease(lease_id) do
-      nil ->
-        nil
-
-      run ->
-        if acquire_lease_write_fence(run["id"], lease_id, now) do
-          run
-        else
-          nil
-        end
-    end
-  end
+  def get_fenced_run_by_lease(lease_id, _now), do: get_run_by_lease(lease_id)
 
   def acquire_lease_write_fence(run_id, lease_id, now) do
-    write_changes!(
-      """
-      update runs
-      set updated_at = updated_at
-      where
-        id = ?
-        and lease_id = ?
-        and status in ('running', 'active')
-        and lease_expires_at is not null
-        and lease_expires_at >= ?
-      """,
-      [run_id, lease_id, now]
-    ) == 1
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        fence_now = max(now, Infrastructure.now_iso8601())
+
+        write_changes!(
+          """
+          update runs
+          set updated_at = updated_at
+          where
+            id = ?
+            and lease_id = ?
+            and status in ('running', 'active')
+            and lease_expires_at is not null
+            and lease_expires_at >= ?
+          """,
+          [run_id, lease_id, fence_now]
+        ) == 1
+      end,
+      :lease_maintenance
+    )
   end
 
   def ensure_fenced_run_write!(run_id, lease_id, now, query, params) do
     if acquire_lease_write_fence(run_id, lease_id, now) do
       SQL.query!(Repo, query, params)
+      :ok
+    else
+      Repo.rollback(:stale_candidate)
+    end
+  end
+
+  def update_fenced_run!(run_id, lease_id, now, set_sql, params \\ [], expected_rows \\ 1) do
+    changed_rows =
+      write_changes!(
+        """
+        update runs
+        set
+          #{set_sql},
+          updated_at = ?
+        where
+          id = ?
+          and lease_id = ?
+          and status in ('running', 'active')
+          and lease_expires_at is not null
+          and lease_expires_at >= ?
+        """,
+        params ++ [now, run_id, lease_id, now]
+      )
+
+    if changed_rows == expected_rows do
       :ok
     else
       Repo.rollback(:stale_candidate)
@@ -313,6 +333,7 @@ defmodule VilanoKernel.Storage.RunControl do
     )
 
     append_event!(run["id"], "RunFailed", %{"error" => legacy_run_error()}, now)
+
     VilanoKernel.Storage.AgentRelationships.wake_waiting_parents_for_child!(
       run["id"],
       "failed",
@@ -321,7 +342,12 @@ defmodule VilanoKernel.Storage.RunControl do
     )
 
     VilanoKernel.Storage.Supervision.maybe_apply_supervision_for_terminal_run!(run["id"], now)
-    VilanoKernel.Storage.AgentRelationships.maybe_trigger_relationships_for_terminal_run!(run["id"], now)
+
+    VilanoKernel.Storage.AgentRelationships.maybe_trigger_relationships_for_terminal_run!(
+      run["id"],
+      now
+    )
+
     :ok
   end
 

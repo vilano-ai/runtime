@@ -257,22 +257,17 @@ defmodule VilanoKernel.Storage.WorkflowOps do
                                   %{"status" => "failed", "error" => rechecked_child_run["error"]}
 
                                 true ->
-                                  RunControl.ensure_fenced_run_write!(
+                                  RunControl.update_fenced_run!(
                                     parent_run["id"],
                                     lease_id,
                                     now,
                                     """
-                                    update runs
-                                    set
-                                      status = 'waiting',
-                                      lease_id = null,
-                                      lease_auth_token = null,
-                                      lease_worker_id = null,
-                                      lease_expires_at = null,
-                                      updated_at = ?
-                                    where id = ?
-                                    """,
-                                    [now, parent_run["id"]]
+                                    status = 'waiting',
+                                    lease_id = null,
+                                    lease_auth_token = null,
+                                    lease_worker_id = null,
+                                    lease_expires_at = null
+                                    """
                                   )
 
                                   append_event!(
