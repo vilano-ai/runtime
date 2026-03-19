@@ -93,7 +93,7 @@ defmodule VilanoKernel.Storage do
     now = Infrastructure.now_iso8601()
     run_id = "run_" <> Ecto.UUID.generate()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       insert_workflow_run!(run_id, project, definition, input || %{}, now)
     end)
 
