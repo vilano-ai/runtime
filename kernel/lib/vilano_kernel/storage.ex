@@ -36,9 +36,16 @@ defmodule VilanoKernel.Storage do
   def create_project!(project), do: Projects.create_project(project)
   def upsert_project!(project), do: Projects.upsert_project!(project)
   def remove_project(name), do: Projects.remove_project(name)
-  def valid_lease_auth_token?(lease_id, lease_auth_token), do: RunControl.lease_auth_token_valid?(lease_id, lease_auth_token)
-  def list_definitions(kind, project_name \\ nil), do: Projects.list_definitions(kind, project_name)
-  def get_definition(project_name, kind, definition_name), do: Projects.get_definition(project_name, kind, definition_name)
+
+  def valid_lease_auth_token?(lease_id, lease_auth_token),
+    do: RunControl.lease_auth_token_valid?(lease_id, lease_auth_token)
+
+  def list_definitions(kind, project_name \\ nil),
+    do: Projects.list_definitions(kind, project_name)
+
+  def get_definition(project_name, kind, definition_name),
+    do: Projects.get_definition(project_name, kind, definition_name)
+
   def get_active_run_by_lease(lease_id), do: RunControl.get_run_by_lease(lease_id)
 
   def list_referenced_snapshot_paths(project_name \\ nil) do
@@ -93,9 +100,12 @@ defmodule VilanoKernel.Storage do
     now = Infrastructure.now_iso8601()
     run_id = "run_" <> Ecto.UUID.generate()
 
-    Infrastructure.transaction_with_busy_retry(fn ->
-      insert_workflow_run!(run_id, project, definition, input || %{}, now)
-    end)
+    Infrastructure.transaction_with_busy_retry(
+      fn ->
+        insert_workflow_run!(run_id, project, definition, input || %{}, now)
+      end,
+      :run_creation
+    )
 
     get_run(run_id)
   end
@@ -110,31 +120,34 @@ defmodule VilanoKernel.Storage do
       ) do
     now = Infrastructure.now_iso8601()
 
-    Infrastructure.transaction_with_busy_retry(fn ->
-      caller_run =
-        case lease_id do
-          value when is_binary(value) and value != "" ->
-            RunControl.get_fenced_run_by_lease(value, now)
+    Infrastructure.transaction_with_busy_retry(
+      fn ->
+        caller_run =
+          case lease_id do
+            value when is_binary(value) and value != "" ->
+              RunControl.get_fenced_run_by_lease(value, now)
 
-          _ ->
-            nil
+            _ ->
+              nil
+          end
+
+        if is_binary(lease_id) and lease_id != "" and is_nil(caller_run) do
+          nil
+        else
+          RunControl.ensure_service_run_in_tx!(
+            project,
+            definition,
+            service_key,
+            key_input,
+            now,
+            caller_run && caller_run["id"],
+            lease_id,
+            must_exist
+          )
         end
-
-      if is_binary(lease_id) and lease_id != "" and is_nil(caller_run) do
-        nil
-      else
-        RunControl.ensure_service_run_in_tx!(
-          project,
-          definition,
-          service_key,
-          key_input,
-          now,
-          caller_run && caller_run["id"],
-          lease_id,
-          must_exist
-        )
-      end
-    end)
+      end,
+      :run_creation
+    )
     |> unwrap_transaction_result()
   end
 
@@ -145,7 +158,8 @@ defmodule VilanoKernel.Storage do
   def get_related_run_status(lease_id, run_id) do
     now = Infrastructure.now_iso8601()
 
-    with caller_run when not is_nil(caller_run) <- RunControl.get_fenced_run_by_lease(lease_id, now),
+    with caller_run when not is_nil(caller_run) <-
+           RunControl.get_fenced_run_by_lease(lease_id, now),
          true <- related_run?(caller_run["id"], run_id),
          run when not is_nil(run) <- get_run(run_id) do
       %{"status" => run["status"]}
@@ -158,7 +172,8 @@ defmodule VilanoKernel.Storage do
     now = Infrastructure.now_iso8601()
 
     Infrastructure.transaction_with_busy_retry(fn ->
-      with caller_run when not is_nil(caller_run) <- RunControl.get_fenced_run_by_lease(lease_id, now),
+      with caller_run when not is_nil(caller_run) <-
+             RunControl.get_fenced_run_by_lease(lease_id, now),
            child_ref when not is_nil(child_ref) <-
              get_run_child_by_child(caller_run["id"], child_run_id) do
         _ = child_ref
@@ -308,31 +323,53 @@ defmodule VilanoKernel.Storage do
     |> Enum.map(&decorate_service_passivation/1)
   end
 
-  defdelegate resolve_spawn(lease_id, definition_name, op_key, child_run_id, input), to: WorkflowOps
+  defdelegate resolve_spawn(lease_id, definition_name, op_key, child_run_id, input),
+    to: WorkflowOps
+
   defdelegate resolve_child_result_wait(lease_id, child_run_id, op_key), to: WorkflowOps
-  defdelegate resolve_service_send(lease_id, service_run_id, name, op_key, payload), to: ServiceOps
-  defdelegate resolve_service_signal(lease_id, service_run_id, name, op_key, payload), to: ServiceOps
+
+  defdelegate resolve_service_send(lease_id, service_run_id, name, op_key, payload),
+    to: ServiceOps
+
+  defdelegate resolve_service_signal(lease_id, service_run_id, name, op_key, payload),
+    to: ServiceOps
+
   def resolve_service_ask(lease_id, service_run_id, name, op_key, payload, timeout_ms \\ nil),
-    do: ServiceOps.resolve_service_ask(lease_id, service_run_id, name, op_key, payload, timeout_ms)
+    do:
+      ServiceOps.resolve_service_ask(lease_id, service_run_id, name, op_key, payload, timeout_ms)
+
   defdelegate complete_service_turn(lease_id, envelope_id, body), to: ServiceOps
   defdelegate get_service_turn_mailbox(lease_id, envelope_id), to: ServiceOps
+
   def defer_service_turn(lease_id, envelope_id, delay_ms, reason \\ nil),
     do: ServiceOps.defer_service_turn(lease_id, envelope_id, delay_ms, reason)
+
   defdelegate reject_service_turn(lease_id, envelope_id, error_body), to: ServiceOps
+
   def fail_service_turn(lease_id, envelope_id, error_body, retry_options \\ %{}),
     do: ServiceOps.fail_service_turn(lease_id, envelope_id, error_body, retry_options)
+
   defdelegate lease_next_run(worker_id), to: ActivationLifecycle
   defdelegate heartbeat_lease(lease_id, worker_id), to: ActivationLifecycle
   defdelegate lease_status(lease_id), to: ActivationLifecycle
   defdelegate complete_run_lease(lease_id, result), to: ActivationLifecycle
   defdelegate fail_run_lease(lease_id, error_body), to: ActivationLifecycle
-  def resolve_step(lease_id, name, op_key), do: ActivationLifecycle.resolve_step(lease_id, name, op_key)
-  def resolve_step(lease_id, name, op_key, timeout_ms), do: ActivationLifecycle.resolve_step(lease_id, name, op_key, timeout_ms)
+
+  def resolve_step(lease_id, name, op_key),
+    do: ActivationLifecycle.resolve_step(lease_id, name, op_key)
+
+  def resolve_step(lease_id, name, op_key, timeout_ms),
+    do: ActivationLifecycle.resolve_step(lease_id, name, op_key, timeout_ms)
+
   def resolve_step(lease_id, name, op_key, timeout_ms, retry_policy),
     do: ActivationLifecycle.resolve_step(lease_id, name, op_key, timeout_ms, retry_policy)
+
   defdelegate complete_step(lease_id, name, op_key, output), to: ActivationLifecycle
   defdelegate fail_step(lease_id, name, op_key, error_body), to: ActivationLifecycle
-  defdelegate timeout_step(lease_id, op_key, expected_attempt, error_body), to: ActivationLifecycle
+
+  defdelegate timeout_step(lease_id, op_key, expected_attempt, error_body),
+    to: ActivationLifecycle
+
   defdelegate resolve_exec(lease_id, name, op_key, exec_spec), to: ActivationLifecycle
   defdelegate complete_exec(lease_id, name, op_key, body), to: ActivationLifecycle
   defdelegate fail_exec(lease_id, name, op_key, body), to: ActivationLifecycle
@@ -341,13 +378,29 @@ defmodule VilanoKernel.Storage do
   defdelegate list_waiting_timed_waits(), to: ActivationLifecycle
   defdelegate resolve_signal_wait(lease_id, name, op_key), to: ActivationLifecycle
   defdelegate resolve_run_monitor(lease_id, target_run_id, op_key), to: AgentRelationships
+
   def resolve_run_link(lease_id, target_run_id, op_key, propagate \\ "abnormal"),
     do: AgentRelationships.resolve_run_link(lease_id, target_run_id, op_key, propagate)
+
   defdelegate set_trap_exits(lease_id, enabled), to: AgentRelationships
   defdelegate resolve_exit_wait(lease_id, op_key), to: AgentRelationships
-  defdelegate resolve_supervision_group(lease_id, op_key, strategy, max_restarts, window_ms, on_exhausted), to: Supervision
-  defdelegate resolve_supervised_spawn(lease_id, group_id, definition_name, member_key, input), to: Supervision
-  defdelegate resolve_supervision_member_result_wait(lease_id, group_id, member_key, op_key), to: Supervision
+
+  defdelegate resolve_supervision_group(
+                lease_id,
+                op_key,
+                strategy,
+                max_restarts,
+                window_ms,
+                on_exhausted
+              ),
+              to: Supervision
+
+  defdelegate resolve_supervised_spawn(lease_id, group_id, definition_name, member_key, input),
+    to: Supervision
+
+  defdelegate resolve_supervision_member_result_wait(lease_id, group_id, member_key, op_key),
+    to: Supervision
+
   defdelegate get_supervision_member_status(lease_id, group_id, member_key), to: Supervision
   defdelegate list_supervision_members(lease_id, group_id), to: Supervision
   defdelegate lookup_singleton_service(lease_id, role, key_input), to: AgentTopology
@@ -383,8 +436,12 @@ defmodule VilanoKernel.Storage do
   def list_run_waits(run_id), do: ReadModels.list_run_waits(run_id)
   def list_run_signals(run_id), do: ReadModels.list_run_signals(run_id)
   def list_run_children(run_id), do: ReadModels.list_run_children(run_id)
-  def list_service_envelopes(service_run_id), do: ReadModels.list_service_envelopes(service_run_id)
-  def ensure_column!(table_name, column_name, definition), do: Support.ensure_column!(table_name, column_name, definition)
+
+  def list_service_envelopes(service_run_id),
+    do: ReadModels.list_service_envelopes(service_run_id)
+
+  def ensure_column!(table_name, column_name, definition),
+    do: Support.ensure_column!(table_name, column_name, definition)
 
   defp decorate_service_passivation(nil), do: nil
 
