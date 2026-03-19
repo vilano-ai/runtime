@@ -15,6 +15,7 @@ defmodule VilanoKernel.RuntimeSupervisor do
 
     core_children = [
       VilanoKernel.Repo,
+      VilanoKernel.Diagnostics,
       VilanoKernel.StorageBootstrap,
       VilanoKernel.WaitManager,
       VilanoKernel.StepDeadlineManager,

@@ -328,6 +328,86 @@ defmodule VilanoKernel.Storage.ReadModels do
     |> Enum.map(&service_envelope_from_row/1)
   end
 
+  def list_active_leases do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        id,
+        project_name,
+        definition_kind,
+        definition_name,
+        status,
+        lease_id,
+        lease_worker_id,
+        lease_expires_at,
+        updated_at
+      from runs
+      where
+        lease_id is not null
+        and lease_expires_at is not null
+        and status in ('running', 'active')
+      order by lease_expires_at asc, updated_at asc
+      """,
+      []
+    )
+    |> rows_to_maps()
+    |> Enum.map(fn row ->
+      %{
+        "runId" => row["id"],
+        "project" => row["project_name"],
+        "definitionKind" => row["definition_kind"],
+        "definitionName" => row["definition_name"],
+        "status" => row["status"],
+        "leaseId" => row["lease_id"],
+        "leaseWorkerId" => row["lease_worker_id"],
+        "leaseExpiresAt" => row["lease_expires_at"],
+        "updatedAt" => row["updated_at"]
+      }
+    end)
+  end
+
+  def count_runs_by_status do
+    Repo
+    |> SQL.query!(
+      """
+      select status, count(*) as count
+      from runs
+      group by status
+      order by status asc
+      """,
+      []
+    )
+    |> rows_to_maps()
+    |> Enum.map(fn row ->
+      %{
+        "status" => row["status"],
+        "count" => row["count"]
+      }
+    end)
+  end
+
+  def count_runs_by_project_and_status do
+    Repo
+    |> SQL.query!(
+      """
+      select project_name, status, count(*) as count
+      from runs
+      group by project_name, status
+      order by project_name asc, status asc
+      """,
+      []
+    )
+    |> rows_to_maps()
+    |> Enum.map(fn row ->
+      %{
+        "project" => row["project_name"],
+        "status" => row["status"],
+        "count" => row["count"]
+      }
+    end)
+  end
+
   defp run_from_row(row) do
     %{
       "id" => row["id"],

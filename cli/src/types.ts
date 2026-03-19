@@ -75,6 +75,68 @@ export interface DaemonStatusResponse {
   projectCount: number;
 }
 
+export interface RuntimeBusyRetryProfileRecord {
+  retries: number;
+  exhausted: number;
+  lastRetryAt: string | null;
+  lastExhaustedAt: string | null;
+  lastReason: string | null;
+  lastDelayMs: number | null;
+}
+
+export interface RuntimeDebugResponse {
+  ok: true;
+  busyRetries: {
+    profiles: Record<string, RuntimeBusyRetryProfileRecord>;
+    recentExhausted: Array<{
+      profile: string;
+      reason: string;
+      at: string;
+    }>;
+  };
+  activeLeases: Array<{
+    runId: string;
+    project: string;
+    definitionKind: DefinitionKind;
+    definitionName: string;
+    status: RunStatus;
+    leaseId: string;
+    leaseWorkerId: string | null;
+    leaseExpiresAt: string;
+    updatedAt: string;
+  }>;
+  managedWorkers: Array<{
+    workerId: string;
+    activeLeaseCount: number;
+    leases: Array<{
+      leaseId: string;
+      runId: string;
+      definitionName: string;
+      status: RunStatus;
+      leaseExpiresAt: string;
+    }>;
+  }>;
+  activeTimedSteps: Array<{
+    runId: string;
+    key: string;
+    name: string;
+    attempt: number | null;
+    timeoutMs: number | null;
+    startedAt: string;
+    leaseId: string;
+    leaseWorkerId: string | null;
+  }>;
+  runStatusCounts: Array<{
+    status: RunStatus;
+    count: number;
+  }>;
+  projectRunStatusCounts: Array<{
+    project: string;
+    status: RunStatus;
+    count: number;
+  }>;
+}
+
 export interface ProjectListResponse {
   ok: true;
   projects: ProjectRecord[];

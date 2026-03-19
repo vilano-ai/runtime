@@ -26,6 +26,10 @@ defmodule VilanoKernel.Router do
     PublicHandlers.status(conn)
   end
 
+  get "/v1/admin/runtime-debug" do
+    PublicHandlers.runtime_debug(conn)
+  end
+
   defp authenticate_request(conn, _opts) do
     runtime = Application.fetch_env!(:vilano_kernel, :runtime)
 

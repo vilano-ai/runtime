@@ -1,6 +1,7 @@
 defmodule VilanoKernel.Storage.Infrastructure do
   @moduledoc false
 
+  alias VilanoKernel.Diagnostics
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
   alias VilanoKernel.Storage.Migrations
@@ -48,9 +49,15 @@ defmodule VilanoKernel.Storage.Infrastructure do
     case fun.() do
       {:error, reason} = result ->
         if attempts_left > 1 and busy_reason?(reason) do
-          Process.sleep(busy_retry_delay_ms(policy, attempts_left))
+          delay_ms = busy_retry_delay_ms(policy, attempts_left)
+          Diagnostics.record_busy_retry(policy.name, reason, delay_ms)
+          Process.sleep(delay_ms)
           do_run_with_busy_retry(fun, policy, attempts_left - 1)
         else
+          if busy_reason?(reason) do
+            Diagnostics.record_busy_retry_exhausted(policy.name, reason)
+          end
+
           result
         end
 
@@ -60,9 +67,15 @@ defmodule VilanoKernel.Storage.Infrastructure do
   rescue
     error ->
       if attempts_left > 1 and busy_reason?(error) do
-        Process.sleep(busy_retry_delay_ms(policy, attempts_left))
+        delay_ms = busy_retry_delay_ms(policy, attempts_left)
+        Diagnostics.record_busy_retry(policy.name, error, delay_ms)
+        Process.sleep(delay_ms)
         do_run_with_busy_retry(fun, policy, attempts_left - 1)
       else
+        if busy_reason?(error) do
+          Diagnostics.record_busy_retry_exhausted(policy.name, error)
+        end
+
         reraise error, __STACKTRACE__
       end
   end
@@ -109,11 +122,12 @@ defmodule VilanoKernel.Storage.Infrastructure do
 
   defp busy_retry_policy(retry) when is_integer(retry) and retry > 0 do
     default = Map.fetch!(@busy_retry_profiles, :default)
-    %{default | attempts: retry}
+    %{default | attempts: retry, name: :default}
   end
 
   defp busy_retry_policy(retry) when is_atom(retry) do
-    Map.get(@busy_retry_profiles, retry) ||
+    (Map.get(@busy_retry_profiles, retry) &&
+       Map.put(Map.fetch!(@busy_retry_profiles, retry), :name, retry)) ||
       raise ArgumentError, "unknown busy retry profile: #{inspect(retry)}"
   end
 
@@ -121,6 +135,7 @@ defmodule VilanoKernel.Storage.Infrastructure do
     @busy_retry_profiles
     |> Map.fetch!(:default)
     |> Map.merge(retry)
+    |> Map.put_new(:name, :custom)
     |> normalize_busy_retry_policy()
   end
 
@@ -143,6 +158,7 @@ defmodule VilanoKernel.Storage.Infrastructure do
       max(base_delay_ms, round_numeric(Map.get(policy, :max_delay_ms), base_delay_ms))
 
     %{
+      name: Map.get(policy, :name, :custom),
       attempts: attempts,
       base_delay_ms: base_delay_ms,
       multiplier: multiplier,

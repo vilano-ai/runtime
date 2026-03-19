@@ -13,6 +13,7 @@ import { getRuntimePaths } from "./runtime-home.ts";
 import type {
   DaemonAuthState,
   DaemonState,
+  RuntimeDebugResponse,
   DaemonStatusResponse,
   DefinitionInspectResponse,
   DefinitionListResponse,
@@ -325,12 +326,23 @@ export async function getRunningDaemonStatus(): Promise<DaemonStatusResponse | n
     }
 
     if (await isProcessAlive(daemonState.pid)) {
-      throw new Error("Vilano Runtime kernel process is still running but the status probe failed");
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Vilano Runtime kernel process is still running but the status probe failed: ${reason}`
+      );
     }
 
     await clearDaemonStateFiles();
     return null;
   }
+}
+
+export async function getRuntimeDebug(): Promise<RuntimeDebugResponse> {
+  return requestJson<RuntimeDebugResponse>({
+    method: "GET",
+    pathname: "/v1/admin/runtime-debug",
+    autoStart: false,
+  });
 }
 
 export async function readDaemonState(): Promise<DaemonState | null> {

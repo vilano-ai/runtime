@@ -29,12 +29,105 @@ defmodule VilanoKernel.Router.PublicHandlers do
     })
   end
 
+  def runtime_debug(conn) do
+    runtime = Application.fetch_env!(:vilano_kernel, :runtime)
+    active_leases = Storage.list_active_leases()
+
+    busy_retries =
+      get_in(Storage.runtime_diagnostics(), [:busyRetries]) ||
+        %{profiles: %{}, recentExhausted: []}
+
+    send_json(conn, 200, %{
+      ok: true,
+      busyRetries: busy_retries,
+      activeLeases: active_leases,
+      managedWorkers: managed_worker_snapshot(runtime.managed_worker_count, active_leases),
+      activeTimedSteps: Storage.list_active_timed_steps(),
+      runStatusCounts: Storage.count_runs_by_status(),
+      projectRunStatusCounts: Storage.count_runs_by_project_and_status()
+    })
+  end
+
   def shutdown(conn) do
     send_json(conn, 200, %{ok: true, shuttingDown: true})
 
     Task.start(fn ->
       Process.sleep(50)
       System.stop(0)
+    end)
+  end
+
+  defp managed_worker_snapshot(count, active_leases) when is_integer(count) and count > 0 do
+    leases_by_worker = Enum.group_by(active_leases, &(&1["leaseWorkerId"] || "unknown"))
+
+    Enum.map(1..count, fn index ->
+      worker_id_prefix = "managed-local-#{index}-"
+
+      current_leases =
+        active_leases
+        |> Enum.filter(fn lease ->
+          lease["leaseWorkerId"] == "managed-local-#{index}" or
+            String.starts_with?(lease["leaseWorkerId"] || "", worker_id_prefix)
+        end)
+
+      %{
+        "workerId" => "managed-local-#{index}",
+        "activeLeaseCount" => length(current_leases),
+        "leases" =>
+          Enum.map(current_leases, fn lease ->
+            %{
+              "leaseId" => lease["leaseId"],
+              "runId" => lease["runId"],
+              "definitionName" => lease["definitionName"],
+              "status" => lease["status"],
+              "leaseExpiresAt" => lease["leaseExpiresAt"]
+            }
+          end)
+      }
+    end) ++
+      Enum.reduce(leases_by_worker, [], fn {worker_id, leases}, acc ->
+        if is_binary(worker_id) and String.starts_with?(worker_id, "managed-local-") do
+          acc
+        else
+          [
+            %{
+              "workerId" => worker_id,
+              "activeLeaseCount" => length(leases),
+              "leases" =>
+                Enum.map(leases, fn lease ->
+                  %{
+                    "leaseId" => lease["leaseId"],
+                    "runId" => lease["runId"],
+                    "definitionName" => lease["definitionName"],
+                    "status" => lease["status"],
+                    "leaseExpiresAt" => lease["leaseExpiresAt"]
+                  }
+                end)
+            }
+            | acc
+          ]
+        end
+      end)
+  end
+
+  defp managed_worker_snapshot(_count, active_leases) do
+    active_leases
+    |> Enum.group_by(&(&1["leaseWorkerId"] || "unknown"))
+    |> Enum.map(fn {worker_id, leases} ->
+      %{
+        "workerId" => worker_id,
+        "activeLeaseCount" => length(leases),
+        "leases" =>
+          Enum.map(leases, fn lease ->
+            %{
+              "leaseId" => lease["leaseId"],
+              "runId" => lease["runId"],
+              "definitionName" => lease["definitionName"],
+              "status" => lease["status"],
+              "leaseExpiresAt" => lease["leaseExpiresAt"]
+            }
+          end)
+      }
     end)
   end
 

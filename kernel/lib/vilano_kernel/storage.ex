@@ -2,6 +2,7 @@ defmodule VilanoKernel.Storage do
   @moduledoc false
 
   alias Ecto.Adapters.SQL
+  alias VilanoKernel.Diagnostics
   alias VilanoKernel.Repo
 
   alias VilanoKernel.Storage.{
@@ -31,6 +32,7 @@ defmodule VilanoKernel.Storage do
   def project_count, do: Projects.project_count()
   def schema_state, do: RuntimeMetadata.schema_state()
   def runtime_metadata, do: RuntimeMetadata.runtime_metadata()
+  def runtime_diagnostics, do: Diagnostics.snapshot()
   def list_projects, do: Projects.list_projects()
   def get_project(name), do: Projects.get_project(name)
   def create_project!(project), do: Projects.create_project(project)
@@ -432,10 +434,13 @@ defmodule VilanoKernel.Storage do
   def list_run_events(run_id), do: ReadModels.list_run_events(run_id)
   def list_run_steps(run_id), do: ReadModels.list_run_steps(run_id)
   def list_active_timed_steps, do: ReadModels.list_active_timed_steps()
+  def list_active_leases, do: ReadModels.list_active_leases()
   def list_run_execs(run_id), do: ReadModels.list_run_execs(run_id)
   def list_run_waits(run_id), do: ReadModels.list_run_waits(run_id)
   def list_run_signals(run_id), do: ReadModels.list_run_signals(run_id)
   def list_run_children(run_id), do: ReadModels.list_run_children(run_id)
+  def count_runs_by_status, do: ReadModels.count_runs_by_status()
+  def count_runs_by_project_and_status, do: ReadModels.count_runs_by_project_and_status()
 
   def list_service_envelopes(service_run_id),
     do: ReadModels.list_service_envelopes(service_run_id)
