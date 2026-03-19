@@ -1,8 +1,7 @@
-import fs from "node:fs/promises";
-import { spawn } from "node:child_process";
-
 import { getRunningDaemonStatus } from "./daemon-client.ts";
+import { applyDoctorFixes, getDaemonStatusReport, inspectTool, type ToolCheck } from "./doctor/support.ts";
 import type { RuntimeInstallManifest } from "./distribution-contract.ts";
+import { fileExists } from "./fs-utils.ts";
 import { readJsonFile } from "./json-file.ts";
 import { getRuntimeCompatibilityIssues } from "./runtime-compatibility.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
@@ -46,12 +45,6 @@ export interface DoctorReport {
   };
   appliedFixes: string[];
   checks: DoctorCheck[];
-}
-
-interface ToolCheck {
-  found: boolean;
-  path: string | null;
-  version: string | null;
 }
 
 export async function runDoctor(options: { fix?: boolean } = {}): Promise<DoctorReport> {
@@ -234,146 +227,4 @@ export async function runDoctor(options: { fix?: boolean } = {}): Promise<Doctor
     appliedFixes,
     checks,
   };
-}
-
-async function applyDoctorFixes(
-  kernelDir: string,
-  options: {
-    bundled: boolean;
-    depsReady: boolean;
-    buildReady: boolean;
-  }
-): Promise<string[]> {
-  const fixes: string[] = [];
-
-  if (options.bundled && options.depsReady && options.buildReady) {
-    fixes.push("packaged runtime already contains a ready kernel release");
-    return fixes;
-  }
-
-  await runCommand("mix", ["local.hex", "--force"], kernelDir);
-  fixes.push("mix local.hex --force");
-
-  await runCommand("mix", ["local.rebar", "--force"], kernelDir);
-  fixes.push("mix local.rebar --force");
-
-  if (!options.depsReady) {
-    await runCommand("mix", ["deps.get"], kernelDir);
-    fixes.push("mix deps.get");
-  }
-
-  if (!options.buildReady) {
-    await runCommand("mix", ["compile"], kernelDir);
-    fixes.push("mix compile");
-  }
-
-  return fixes;
-}
-
-async function getDaemonStatusReport(): Promise<{
-  status: Awaited<ReturnType<typeof getRunningDaemonStatus>>;
-  error: string | null;
-}> {
-  try {
-    return {
-      status: await getRunningDaemonStatus(),
-      error: null,
-    };
-  } catch (error) {
-    return {
-      status: null,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-async function inspectTool(command: string, args: string[]): Promise<ToolCheck> {
-  const executable = Bun.which(command);
-  if (!executable) {
-    return {
-      found: false,
-      path: null,
-      version: null,
-    };
-  }
-
-  try {
-    const result = await runCommand(command, args);
-    return {
-      found: true,
-      path: executable,
-      version: firstNonEmptyLine(`${result.stdout}\n${result.stderr}`),
-    };
-  } catch {
-    return {
-      found: true,
-      path: executable,
-      version: null,
-    };
-  }
-}
-
-async function runCommand(
-  command: string,
-  args: string[],
-  cwd?: string
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  const child = spawn(command, args, {
-    cwd,
-    env: process.env,
-    stdio: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    streamToString(child.stdout),
-    streamToString(child.stderr),
-    new Promise<number>((resolve, reject) => {
-      child.once("error", reject);
-      child.once("exit", (code) => resolve(code ?? 0));
-    }),
-  ]);
-
-  if (exitCode !== 0) {
-    throw new Error(
-      [
-        `Command failed: ${command} ${args.join(" ")}`,
-        stdout ? `stdout:\n${stdout}` : "",
-        stderr ? `stderr:\n${stderr}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n")
-    );
-  }
-
-  return { stdout, stderr, exitCode };
-}
-
-async function streamToString(stream: NodeJS.ReadableStream | null): Promise<string> {
-  if (!stream) {
-    return "";
-  }
-
-  let data = "";
-  for await (const chunk of stream) {
-    data += chunk.toString();
-  }
-  return data;
-}
-
-function firstNonEmptyLine(text: string): string | null {
-  return (
-    text
-      .split(/\r?\n/u)
-      .map((line) => line.trim())
-      .find((line) => line.length > 0) ?? null
-  );
-}
-
-async function fileExists(targetPath: string): Promise<boolean> {
-  try {
-    await fs.access(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
 }

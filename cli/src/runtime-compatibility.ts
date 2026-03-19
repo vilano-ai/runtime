@@ -1,7 +1,7 @@
 import os from "node:os";
-import { spawn } from "node:child_process";
 
 import type { RuntimeBuildInfo, RuntimeCompatibility } from "./distribution-contract.ts";
+import { tryRunCommand } from "./process-utils.ts";
 
 export interface RuntimeHostInfo {
   platformKey: string;
@@ -118,7 +118,8 @@ function parseDarwinKernelMajor(osRelease: string): number | undefined {
 }
 
 async function detectGlibcVersion(): Promise<string | undefined> {
-  const gnuLibc = await runCommand("getconf", ["GNU_LIBC_VERSION"]);
+  const gnuLibcResult = await tryRunCommand("getconf", ["GNU_LIBC_VERSION"]);
+  const gnuLibc = gnuLibcResult ? `${gnuLibcResult.stdout}\n${gnuLibcResult.stderr}` : undefined;
   if (gnuLibc) {
     const match = gnuLibc.trim().match(/glibc\s+([0-9.]+)/i);
     if (match?.[1]) {
@@ -126,7 +127,8 @@ async function detectGlibcVersion(): Promise<string | undefined> {
     }
   }
 
-  const lddVersion = await runCommand("ldd", ["--version"]);
+  const lddResult = await tryRunCommand("ldd", ["--version"]);
+  const lddVersion = lddResult ? `${lddResult.stdout}\n${lddResult.stderr}` : undefined;
   if (!lddVersion) {
     return undefined;
   }
@@ -150,21 +152,4 @@ function compareVersionStrings(left: string, right: string): number {
   }
 
   return 0;
-}
-
-async function runCommand(command: string, args: string[]): Promise<string | undefined> {
-  return await new Promise((resolve) => {
-    const child = spawn(command, args, {
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-
-    let stdout = "";
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-
-    child.once("error", () => resolve(undefined));
-    child.once("exit", (code) => resolve(code === 0 ? stdout : undefined));
-  });
 }

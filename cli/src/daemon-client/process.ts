@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
+import { fileExists } from "../fs-utils.ts";
 import { ensurePrivateDir } from "../json-file.ts";
 import { getRuntimePaths } from "../runtime-home.ts";
 import { prepareRuntimeBundle } from "../runtime-materializer.ts";
@@ -27,19 +28,6 @@ import {
   readDaemonState,
   writeDaemonStateFiles,
 } from "./state.ts";
-
-async function fileExists(targetPath: string): Promise<boolean> {
-  try {
-    await fs.access(targetPath);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return false;
-    }
-
-    throw error;
-  }
-}
 
 async function ensureRuntimeDirectories(): Promise<void> {
   const runtimePaths = getRuntimePaths();
