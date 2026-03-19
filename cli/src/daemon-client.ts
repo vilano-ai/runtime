@@ -629,30 +629,40 @@ async function requestJson<T>({
 }: RequestOptions): Promise<T> {
   let daemonState = await readDaemonState();
   let daemonAuthState = await readDaemonAuthState();
-  let status = await getRunningDaemonStatus();
-  if (!status && autoStart) {
-    status = await ensureDaemonStarted();
+
+  if ((!daemonState || !daemonAuthState) && autoStart) {
+    const status = await ensureDaemonStarted();
+    assertCompatibleKernelStatus(status);
     daemonState = await readDaemonState();
     daemonAuthState = await readDaemonAuthState();
   }
 
-  if (!status) {
+  if (!daemonState || !daemonAuthState) {
     throw new Error("Vilano Runtime kernel is not running");
   }
 
-  if (!daemonState) {
-    daemonState = await readDaemonState();
-  }
+  if (!(await isProcessAlive(daemonState.pid))) {
+    await clearDaemonStateFiles();
 
-  if (!daemonAuthState) {
-    daemonAuthState = await readDaemonAuthState();
+    if (autoStart) {
+      const status = await ensureDaemonStarted();
+      assertCompatibleKernelStatus(status);
+      daemonState = await readDaemonState();
+      daemonAuthState = await readDaemonAuthState();
+    }
   }
 
   if (!daemonState || !daemonAuthState) {
     throw new Error("Vilano Runtime kernel state is missing from VILANO_HOME");
   }
 
-  assertCompatibleKernelStatus(status);
+  if (typeof daemonState.protocolVersion === "number") {
+    assertCompatibleKernelStatus({
+      protocolVersion: daemonState.protocolVersion,
+      runtimeVersion: daemonState.runtimeVersion ?? "unknown",
+    });
+  }
+
   return requestJsonWithState<T>(
     {
       port: daemonState.port,
