@@ -16,14 +16,14 @@ defmodule VilanoKernel.Storage.Infrastructure do
     maybe_chmod_runtime_db(runtime.runtime_db_path)
   end
 
-  def transaction_with_busy_retry(fun, attempts_left \\ 4)
+  def run_with_busy_retry(fun, attempts_left \\ 4)
 
-  def transaction_with_busy_retry(fun, attempts_left) do
-    case Repo.transaction(fun) do
+  def run_with_busy_retry(fun, attempts_left) do
+    case fun.() do
       {:error, reason} = result ->
         if attempts_left > 1 and busy_reason?(reason) do
           Process.sleep(busy_retry_delay_ms(attempts_left))
-          transaction_with_busy_retry(fun, attempts_left - 1)
+          run_with_busy_retry(fun, attempts_left - 1)
         else
           result
         end
@@ -35,10 +35,21 @@ defmodule VilanoKernel.Storage.Infrastructure do
     error ->
       if attempts_left > 1 and busy_reason?(error) do
         Process.sleep(busy_retry_delay_ms(attempts_left))
-        transaction_with_busy_retry(fun, attempts_left - 1)
+        run_with_busy_retry(fun, attempts_left - 1)
       else
         reraise error, __STACKTRACE__
       end
+  end
+
+  def transaction_with_busy_retry(fun, attempts_left \\ 4)
+
+  def transaction_with_busy_retry(fun, attempts_left) do
+    run_with_busy_retry(
+      fn ->
+        Repo.transaction(fun)
+      end,
+      attempts_left
+    )
   end
 
   def now_iso8601 do

@@ -21,7 +21,10 @@ defmodule VilanoKernel.Storage.WorkflowOps do
           existing_child = get_run_child(parent_run["id"], op_key)
 
           if existing_child do
-            %{"status" => "existing", "childRun" => VilanoKernel.Storage.get_run(existing_child["child_run_id"])}
+            %{
+              "status" => "existing",
+              "childRun" => VilanoKernel.Storage.get_run(existing_child["child_run_id"])
+            }
           else
             RunControl.ensure_fenced_run_ownership!(parent_run["id"], lease_id, now)
 
@@ -79,7 +82,7 @@ defmodule VilanoKernel.Storage.WorkflowOps do
     now = Infrastructure.now_iso8601()
     wait_key = "child_result:" <> child_run_id
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil

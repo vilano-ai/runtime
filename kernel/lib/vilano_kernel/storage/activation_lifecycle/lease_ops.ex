@@ -20,19 +20,21 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
     expires_at = shift_seconds(now, Infrastructure.lease_duration_seconds())
 
     updated_rows =
-      write_changes!(
-        """
-        update runs
-        set lease_expires_at = ?, updated_at = ?
-        where
-          lease_id = ?
-          and lease_worker_id = ?
-          and status in ('running', 'active')
-          and lease_expires_at is not null
-          and lease_expires_at >= ?
-        """,
-        [expires_at, now, lease_id, worker_id, now]
-      )
+      Infrastructure.run_with_busy_retry(fn ->
+        write_changes!(
+          """
+          update runs
+          set lease_expires_at = ?, updated_at = ?
+          where
+            lease_id = ?
+            and lease_worker_id = ?
+            and status in ('running', 'active')
+            and lease_expires_at is not null
+            and lease_expires_at >= ?
+          """,
+          [expires_at, now, lease_id, worker_id, now]
+        )
+      end)
 
     if updated_rows > 0, do: %{"leaseExpiresAt" => expires_at}, else: nil
   end
@@ -91,7 +93,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
   def complete_run_lease(lease_id, result) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
@@ -118,6 +120,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
           )
 
           append_event!(run["id"], "RunCompleted", %{"result" => result}, now)
+
           VilanoKernel.Storage.AgentRelationships.wake_waiting_parents_for_child!(
             run["id"],
             "completed",
@@ -125,8 +128,16 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
             now
           )
 
-          VilanoKernel.Storage.Supervision.maybe_apply_supervision_for_terminal_run!(run["id"], now)
-          VilanoKernel.Storage.AgentRelationships.maybe_trigger_relationships_for_terminal_run!(run["id"], now)
+          VilanoKernel.Storage.Supervision.maybe_apply_supervision_for_terminal_run!(
+            run["id"],
+            now
+          )
+
+          VilanoKernel.Storage.AgentRelationships.maybe_trigger_relationships_for_terminal_run!(
+            run["id"],
+            now
+          )
+
           VilanoKernel.Storage.get_run(run["id"])
       end
     end)
@@ -136,7 +147,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
   def fail_run_lease(lease_id, error_body) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
@@ -162,6 +173,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
           )
 
           append_event!(run["id"], "RunFailed", %{"error" => error_body}, now)
+
           VilanoKernel.Storage.AgentRelationships.wake_waiting_parents_for_child!(
             run["id"],
             "failed",
@@ -169,8 +181,16 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
             now
           )
 
-          VilanoKernel.Storage.Supervision.maybe_apply_supervision_for_terminal_run!(run["id"], now)
-          VilanoKernel.Storage.AgentRelationships.maybe_trigger_relationships_for_terminal_run!(run["id"], now)
+          VilanoKernel.Storage.Supervision.maybe_apply_supervision_for_terminal_run!(
+            run["id"],
+            now
+          )
+
+          VilanoKernel.Storage.AgentRelationships.maybe_trigger_relationships_for_terminal_run!(
+            run["id"],
+            now
+          )
+
           VilanoKernel.Storage.get_run(run["id"])
       end
     end)

@@ -123,10 +123,16 @@ defmodule VilanoKernel.Storage.Supervision do
                         "SupervisionMemberSpawned"
                       )
 
-                    AgentKernel.supervision_member_runtime_state(member, &VilanoKernel.Storage.get_run/1)
+                    AgentKernel.supervision_member_runtime_state(
+                      member,
+                      &VilanoKernel.Storage.get_run/1
+                    )
 
                   member ->
-                    AgentKernel.supervision_member_runtime_state(member, &VilanoKernel.Storage.get_run/1)
+                    AgentKernel.supervision_member_runtime_state(
+                      member,
+                      &VilanoKernel.Storage.get_run/1
+                    )
                 end
               end
           end
@@ -322,7 +328,7 @@ defmodule VilanoKernel.Storage.Supervision do
   def get_supervision_member_status(lease_id, group_id, member_key) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
@@ -344,7 +350,7 @@ defmodule VilanoKernel.Storage.Supervision do
   def list_supervision_members(lease_id, group_id) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
@@ -358,7 +364,10 @@ defmodule VilanoKernel.Storage.Supervision do
               group_id
               |> AgentKernel.list_run_supervision_members()
               |> Enum.map(fn member ->
-                AgentKernel.supervision_member_runtime_state(member, &VilanoKernel.Storage.get_run/1)
+                AgentKernel.supervision_member_runtime_state(
+                  member,
+                  &VilanoKernel.Storage.get_run/1
+                )
               end)
           end
       end
@@ -372,7 +381,8 @@ defmodule VilanoKernel.Storage.Supervision do
         :ok
 
       member ->
-        case {AgentKernel.get_run_supervision_group_by_id(member["group_id"]), VilanoKernel.Storage.get_run(run_id)} do
+        case {AgentKernel.get_run_supervision_group_by_id(member["group_id"]),
+              VilanoKernel.Storage.get_run(run_id)} do
           {nil, _} ->
             :ok
 
@@ -386,9 +396,13 @@ defmodule VilanoKernel.Storage.Supervision do
 
               owner_run ->
                 if group["status"] != "active" or
-                     VilanoKernel.Storage.FailureRecovery.terminal_run_status?(owner_run["status"]) or
+                     VilanoKernel.Storage.FailureRecovery.terminal_run_status?(
+                       owner_run["status"]
+                     ) or
                      member["current_child_run_id"] != run_id or
-                     not VilanoKernel.Storage.FailureRecovery.terminal_run_status?(child_run["status"]) do
+                     not VilanoKernel.Storage.FailureRecovery.terminal_run_status?(
+                       child_run["status"]
+                     ) do
                   :ok
                 else
                   apply_supervision_policy!(owner_run, group, member, child_run, now)
@@ -723,7 +737,9 @@ defmodule VilanoKernel.Storage.Supervision do
             :ok
 
           sibling_run ->
-            unless VilanoKernel.Storage.FailureRecovery.terminal_run_status?(sibling_run["status"]) do
+            unless VilanoKernel.Storage.FailureRecovery.terminal_run_status?(
+                     sibling_run["status"]
+                   ) do
               _ =
                 VilanoKernel.Storage.FailureRecovery.cancel_workflow_run_instance!(
                   sibling_run,
@@ -766,8 +782,11 @@ defmodule VilanoKernel.Storage.Supervision do
     member["member_key"] == triggering_member["member_key"] or
       (is_binary(member["current_child_run_id"]) and
          case VilanoKernel.Storage.get_run(member["current_child_run_id"]) do
-           nil -> false
-           child_run -> not VilanoKernel.Storage.FailureRecovery.terminal_run_status?(child_run["status"])
+           nil ->
+             false
+
+           child_run ->
+             not VilanoKernel.Storage.FailureRecovery.terminal_run_status?(child_run["status"])
          end)
   end
 
@@ -844,7 +863,11 @@ defmodule VilanoKernel.Storage.Supervision do
             )
 
           _ ->
-            VilanoKernel.Storage.FailureRecovery.fail_workflow_run_instance!(owner_run, error_body, now)
+            VilanoKernel.Storage.FailureRecovery.fail_workflow_run_instance!(
+              owner_run,
+              error_body,
+              now
+            )
         end
 
       _ ->
