@@ -424,6 +424,46 @@ test("managed workers run each activation in a fresh JS process", async () => {
   }
 });
 
+test("per-activation workers exit after workflows leave lingering event-loop handles", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const first = await harness.startWorkflow("demo/lingeringHandleProbe", {});
+    const firstCompleted = await harness.waitForRun(first.run.id, (inspect) => inspect.run.status === "completed");
+
+    const second = await harness.startWorkflow("demo/workerPidProbe", {});
+    const secondCompleted = await harness.waitForRun(
+      second.run.id,
+      (inspect) => inspect.run.status === "completed",
+      10_000
+    );
+
+    expect(firstCompleted.run.output).toBeTruthy();
+    expect(secondCompleted.run.output).toBeTruthy();
+    expect((firstCompleted.run.output as { pid: number }).pid).not.toBe(
+      (secondCompleted.run.output as { pid: number }).pid
+    );
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("parents can resume and spawn followup children after a child leaves lingering handles", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/childFollowupProbe", {});
+    const completed = await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed", 10_000);
+    const output = completed.run.output as { first: { pid: number }; second: { pid: number } };
+
+    expect(output.first.pid).toBeTruthy();
+    expect(output.second.pid).toBeTruthy();
+    expect(output.first.pid).not.toBe(output.second.pid);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("activations execute from writable workspaces while snapshots stay read-only", async () => {
   const harness = await RuntimeHarness.create();
 
