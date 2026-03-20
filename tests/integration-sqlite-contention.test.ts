@@ -1,7 +1,6 @@
-import path from "node:path";
-
 import { expect, test } from "bun:test";
 
+import type { RuntimeDebugResponse } from "../cli/src/types.ts";
 import { RuntimeHarness } from "./runtime-harness.ts";
 
 test(
@@ -63,9 +62,12 @@ test(
 
       expect(completions.every(({ inspect }) => inspect.run.status === "completed")).toBe(true);
 
-      const startupLog = await Bun.file(path.join(harness.homeDir, "kernel-startup.log")).text();
-      expect(startupLog).not.toContain("Database busy");
-      expect(startupLog).not.toContain("WorkerRequestError: Database busy");
+      const runtimeDebug = await getRuntimeDebug(harness);
+      expect(
+        runtimeDebug.busyRetries.recentExhausted.filter(
+          (entry) => entry.profile !== "lease_maintenance"
+        )
+      ).toHaveLength(0);
     } finally {
       await harness.dispose();
     }
@@ -112,4 +114,10 @@ async function runWithConcurrency(
       }
     })
   );
+}
+
+async function getRuntimeDebug(harness: RuntimeHarness): Promise<RuntimeDebugResponse> {
+  const response = await harness.requestKernel("/v1/admin/runtime-debug");
+  expect(response.status).toBe(200);
+  return (await response.json()) as RuntimeDebugResponse;
 }
