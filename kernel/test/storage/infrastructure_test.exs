@@ -10,7 +10,7 @@ defmodule VilanoKernel.Storage.InfrastructureTest do
       Infrastructure.run_with_busy_retry(fn ->
         attempt = :atomics.add_get(attempts, 1, 1)
 
-        if attempt < 3 do
+        if attempt < 5 do
           raise "database is locked"
         end
 
@@ -18,7 +18,7 @@ defmodule VilanoKernel.Storage.InfrastructureTest do
       end)
 
     assert result == :ok
-    assert :atomics.get(attempts, 1) == 3
+    assert :atomics.get(attempts, 1) == 5
   end
 
   test "run_with_busy_retry retries busy error tuples" do

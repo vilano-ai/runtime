@@ -9,10 +9,10 @@ defmodule VilanoKernel.Storage.Infrastructure do
 
   @busy_retry_profiles %{
     default: %{
-      attempts: 4,
+      attempts: 10,
       base_delay_ms: 25,
-      multiplier: 1.0,
-      max_delay_ms: 100
+      multiplier: 1.5,
+      max_delay_ms: 500
     },
     lease_maintenance: %{
       attempts: 10,
@@ -21,10 +21,10 @@ defmodule VilanoKernel.Storage.Infrastructure do
       max_delay_ms: 1_000
     },
     run_creation: %{
-      attempts: 10,
+      attempts: 14,
       base_delay_ms: 50,
       multiplier: 1.6,
-      max_delay_ms: 1_000
+      max_delay_ms: 1_500
     }
   }
 
