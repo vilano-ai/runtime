@@ -16,7 +16,6 @@ defmodule VilanoKernel.RuntimeSupervisor do
     core_children = [
       VilanoKernel.Repo,
       VilanoKernel.Diagnostics,
-      VilanoKernel.StorageBootstrap,
       VilanoKernel.WaitManager,
       VilanoKernel.StepDeadlineManager,
       {Bandit, plug: VilanoKernel.Router, scheme: :http, port: runtime.port, ip: {127, 0, 0, 1}}

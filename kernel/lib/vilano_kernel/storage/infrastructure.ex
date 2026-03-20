@@ -30,7 +30,6 @@ defmodule VilanoKernel.Storage.Infrastructure do
 
   def init! do
     runtime = Application.fetch_env!(:vilano_kernel, :runtime)
-    configure_database!()
     bootstrap_schema!()
     Migrations.ensure_tracking_table!()
     Migrations.run_pending!()
@@ -178,12 +177,6 @@ defmodule VilanoKernel.Storage.Infrastructure do
     attempt_number = policy.attempts - attempts_left + 1
     scaled_delay = policy.base_delay_ms * :math.pow(policy.multiplier, attempt_number - 1)
     trunc(min(scaled_delay, policy.max_delay_ms * 1.0))
-  end
-
-  defp configure_database! do
-    SQL.query!(Repo, "pragma journal_mode = wal", [])
-    SQL.query!(Repo, "pragma foreign_keys = on", [])
-    SQL.query!(Repo, "pragma busy_timeout = 5000", [])
   end
 
   defp maybe_chmod_runtime_db(runtime_db_path) do
