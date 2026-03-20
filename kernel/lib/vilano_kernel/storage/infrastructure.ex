@@ -21,10 +21,10 @@ defmodule VilanoKernel.Storage.Infrastructure do
       max_delay_ms: 1_000
     },
     run_creation: %{
-      attempts: 14,
+      attempts: 20,
       base_delay_ms: 50,
       multiplier: 1.6,
-      max_delay_ms: 1_500
+      max_delay_ms: 2_500
     }
   }
 
