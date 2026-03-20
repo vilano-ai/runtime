@@ -13,7 +13,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.WaitSignalOps do
     now = Infrastructure.now_iso8601()
     wake_at = shift_milliseconds(now, duration_ms)
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
@@ -51,22 +51,17 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.WaitSignalOps do
                 [run["id"], op_key, wake_at, now, now]
               )
 
-              RunControl.ensure_fenced_run_write!(
+              RunControl.update_fenced_run!(
                 run["id"],
                 lease_id,
                 now,
                 """
-                update runs
-                set
-                  status = 'waiting',
-                  lease_id = null,
-                  lease_auth_token = null,
-                  lease_worker_id = null,
-                  lease_expires_at = null,
-                  updated_at = ?
-                where id = ?
-                """,
-                [now, run["id"]]
+                status = 'waiting',
+                lease_id = null,
+                lease_auth_token = null,
+                lease_worker_id = null,
+                lease_expires_at = null
+                """
               )
 
               append_event!(
@@ -115,7 +110,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.WaitSignalOps do
   def satisfy_timed_wait(run_id, op_key, expected_wake_at) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case get_run_wait(run_id, op_key) do
         nil ->
           nil
@@ -208,7 +203,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.WaitSignalOps do
   def resolve_signal_wait(lease_id, name, op_key) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
@@ -270,22 +265,17 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.WaitSignalOps do
                 true ->
                   case get_pending_signal(run["id"], name) do
                     nil ->
-                      RunControl.ensure_fenced_run_write!(
+                      RunControl.update_fenced_run!(
                         run["id"],
                         lease_id,
                         now,
                         """
-                        update runs
-                        set
-                          status = 'waiting',
-                          lease_id = null,
-                          lease_auth_token = null,
-                          lease_worker_id = null,
-                          lease_expires_at = null,
-                          updated_at = ?
-                        where id = ?
-                        """,
-                        [now, run["id"]]
+                        status = 'waiting',
+                        lease_id = null,
+                        lease_auth_token = null,
+                        lease_worker_id = null,
+                        lease_expires_at = null
+                        """
                       )
 
                       append_event!(
@@ -398,7 +388,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.WaitSignalOps do
     now = Infrastructure.now_iso8601()
     signal_id = "sig_" <> Ecto.UUID.generate()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       SQL.query!(
         Repo,
         """

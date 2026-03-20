@@ -4,6 +4,7 @@ defmodule VilanoKernel.Storage.Projects do
   alias Ecto.Adapters.SQL
   alias VilanoKernel.ProjectContract
   alias VilanoKernel.Repo
+  alias VilanoKernel.Storage.Infrastructure
 
   def project_count do
     Repo
@@ -33,28 +34,30 @@ defmodule VilanoKernel.Storage.Projects do
   end
 
   def get_project(name) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        name,
-        path,
-        snapshot_path,
-        last_synced_at,
-        definitions_manifest_hash,
-        workflows_json,
-        services_json
-      from projects
-      where name = ?
-      """,
-      [name]
-    )
-    |> rows_to_maps()
-    |> List.first()
-    |> case do
-      nil -> nil
-      row -> project_from_row(row)
-    end
+    Infrastructure.run_with_busy_retry(fn ->
+      Repo
+      |> SQL.query!(
+        """
+        select
+          name,
+          path,
+          snapshot_path,
+          last_synced_at,
+          definitions_manifest_hash,
+          workflows_json,
+          services_json
+        from projects
+        where name = ?
+        """,
+        [name]
+      )
+      |> rows_to_maps()
+      |> List.first()
+      |> case do
+        nil -> nil
+        row -> project_from_row(row)
+      end
+    end)
   end
 
   def upsert_project!(project) do
@@ -162,9 +165,13 @@ defmodule VilanoKernel.Storage.Projects do
 
   def get_definition(project_name, kind, definition_name) do
     with project when not is_nil(project) <- get_project(project_name) do
-      definitions_for_kind(project, kind)
-      |> Enum.find(&(&1["name"] == definition_name))
+      find_definition(project, kind, definition_name)
     end
+  end
+
+  def find_definition(project, kind, definition_name) when is_map(project) do
+    definitions_for_kind(project, kind)
+    |> Enum.find(&(&1["name"] == definition_name))
   end
 
   defp definitions_for_kind(project, "workflow"), do: project["definitions"]["workflows"]

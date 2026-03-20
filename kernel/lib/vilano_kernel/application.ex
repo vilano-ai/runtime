@@ -15,10 +15,11 @@ defmodule VilanoKernel.Application do
 
     Application.put_env(:vilano_kernel, :runtime, runtime)
 
-    Application.put_env(:vilano_kernel, VilanoKernel.Repo,
-      database: runtime.runtime_db_path,
-      pool_size: repo_pool_size()
-    )
+    repo_config = runtime_repo_config(runtime.runtime_db_path, repo_pool_size())
+
+    Application.put_env(:vilano_kernel, VilanoKernel.Repo, repo_config)
+
+    bootstrap_storage!(bootstrap_repo_config(runtime.runtime_db_path))
 
     children = [
       VilanoKernel.RuntimeSupervisor
@@ -37,6 +38,38 @@ defmodule VilanoKernel.Application do
           {parsed, ""} when parsed > 0 -> parsed
           _ -> 5
         end
+    end
+  end
+
+  defp runtime_repo_config(database, pool_size) do
+    common_repo_config(database, pool_size)
+    |> Keyword.put(:journal_mode, nil)
+  end
+
+  defp bootstrap_repo_config(database) do
+    common_repo_config(database, 1)
+    |> Keyword.put(:journal_mode, :wal)
+  end
+
+  defp common_repo_config(database, pool_size) do
+    [
+      database: database,
+      pool_size: pool_size,
+      busy_timeout: 5_000,
+      custom_pragmas: [busy_timeout: 5_000]
+    ]
+  end
+
+  defp bootstrap_storage!(repo_config) do
+    {:ok, repo_pid} =
+      VilanoKernel.Repo.start_link(
+        Keyword.put(repo_config, :pool_size, 1)
+      )
+
+    try do
+      VilanoKernel.Storage.init!()
+    after
+      Supervisor.stop(repo_pid)
     end
   end
 end

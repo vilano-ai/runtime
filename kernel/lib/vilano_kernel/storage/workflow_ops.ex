@@ -21,7 +21,10 @@ defmodule VilanoKernel.Storage.WorkflowOps do
           existing_child = get_run_child(parent_run["id"], op_key)
 
           if existing_child do
-            %{"status" => "existing", "childRun" => VilanoKernel.Storage.get_run(existing_child["child_run_id"])}
+            %{
+              "status" => "existing",
+              "childRun" => VilanoKernel.Storage.get_run(existing_child["child_run_id"])
+            }
           else
             RunControl.ensure_fenced_run_ownership!(parent_run["id"], lease_id, now)
 
@@ -79,7 +82,7 @@ defmodule VilanoKernel.Storage.WorkflowOps do
     now = Infrastructure.now_iso8601()
     wait_key = "child_result:" <> child_run_id
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
@@ -254,22 +257,17 @@ defmodule VilanoKernel.Storage.WorkflowOps do
                                   %{"status" => "failed", "error" => rechecked_child_run["error"]}
 
                                 true ->
-                                  RunControl.ensure_fenced_run_write!(
+                                  RunControl.update_fenced_run!(
                                     parent_run["id"],
                                     lease_id,
                                     now,
                                     """
-                                    update runs
-                                    set
-                                      status = 'waiting',
-                                      lease_id = null,
-                                      lease_auth_token = null,
-                                      lease_worker_id = null,
-                                      lease_expires_at = null,
-                                      updated_at = ?
-                                    where id = ?
-                                    """,
-                                    [now, parent_run["id"]]
+                                    status = 'waiting',
+                                    lease_id = null,
+                                    lease_auth_token = null,
+                                    lease_worker_id = null,
+                                    lease_expires_at = null
+                                    """
                                   )
 
                                   append_event!(

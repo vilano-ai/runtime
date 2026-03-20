@@ -21,7 +21,7 @@ defmodule VilanoKernel.Storage.AgentRelationships do
     now = Infrastructure.now_iso8601()
     trap_value = if enabled, do: 1, else: 0
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
@@ -56,7 +56,7 @@ defmodule VilanoKernel.Storage.AgentRelationships do
   def resolve_exit_wait(lease_id, op_key) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
@@ -289,7 +289,7 @@ defmodule VilanoKernel.Storage.AgentRelationships do
   def resolve_run_relationship(lease_id, target_run_id, op_key, kind, propagate) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil

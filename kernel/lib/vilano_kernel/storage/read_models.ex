@@ -3,6 +3,7 @@ defmodule VilanoKernel.Storage.ReadModels do
 
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
+  alias VilanoKernel.Storage.Infrastructure
 
   def list_runs(project_name \\ nil) do
     query =
@@ -68,40 +69,42 @@ defmodule VilanoKernel.Storage.ReadModels do
   end
 
   def get_run(run_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-          id,
-          project_name,
-          definition_kind,
-          definition_name,
-          project_snapshot_path,
-          project_definitions_json,
-          definition_file,
-          definition_export_name,
-          definition_runtime_kind,
-          definition_source_language,
-          status,
-          lease_id,
-          lease_worker_id,
-        lease_expires_at,
-        input_json,
-        output_json,
-        error_json,
-        created_at,
-        updated_at
-      from runs
-      where id = ?
-      """,
-      [run_id]
-    )
-    |> rows_to_maps()
-    |> List.first()
-    |> case do
-      nil -> nil
-      row -> run_from_row(row)
-    end
+    Infrastructure.run_with_busy_retry(fn ->
+      Repo
+      |> SQL.query!(
+        """
+        select
+            id,
+            project_name,
+            definition_kind,
+            definition_name,
+            project_snapshot_path,
+            project_definitions_json,
+            definition_file,
+            definition_export_name,
+            definition_runtime_kind,
+            definition_source_language,
+            status,
+            lease_id,
+            lease_worker_id,
+          lease_expires_at,
+          input_json,
+          output_json,
+          error_json,
+          created_at,
+          updated_at
+        from runs
+        where id = ?
+        """,
+        [run_id]
+      )
+      |> rows_to_maps()
+      |> List.first()
+      |> case do
+        nil -> nil
+        row -> run_from_row(row)
+      end
+    end)
   end
 
   def list_run_events(run_id) do
@@ -326,6 +329,86 @@ defmodule VilanoKernel.Storage.ReadModels do
     )
     |> rows_to_maps()
     |> Enum.map(&service_envelope_from_row/1)
+  end
+
+  def list_active_leases do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        id,
+        project_name,
+        definition_kind,
+        definition_name,
+        status,
+        lease_id,
+        lease_worker_id,
+        lease_expires_at,
+        updated_at
+      from runs
+      where
+        lease_id is not null
+        and lease_expires_at is not null
+        and status in ('running', 'active')
+      order by lease_expires_at asc, updated_at asc
+      """,
+      []
+    )
+    |> rows_to_maps()
+    |> Enum.map(fn row ->
+      %{
+        "runId" => row["id"],
+        "project" => row["project_name"],
+        "definitionKind" => row["definition_kind"],
+        "definitionName" => row["definition_name"],
+        "status" => row["status"],
+        "leaseId" => row["lease_id"],
+        "leaseWorkerId" => row["lease_worker_id"],
+        "leaseExpiresAt" => row["lease_expires_at"],
+        "updatedAt" => row["updated_at"]
+      }
+    end)
+  end
+
+  def count_runs_by_status do
+    Repo
+    |> SQL.query!(
+      """
+      select status, count(*) as count
+      from runs
+      group by status
+      order by status asc
+      """,
+      []
+    )
+    |> rows_to_maps()
+    |> Enum.map(fn row ->
+      %{
+        "status" => row["status"],
+        "count" => row["count"]
+      }
+    end)
+  end
+
+  def count_runs_by_project_and_status do
+    Repo
+    |> SQL.query!(
+      """
+      select project_name, status, count(*) as count
+      from runs
+      group by project_name, status
+      order by project_name asc, status asc
+      """,
+      []
+    )
+    |> rows_to_maps()
+    |> Enum.map(fn row ->
+      %{
+        "project" => row["project_name"],
+        "status" => row["status"],
+        "count" => row["count"]
+      }
+    end)
   end
 
   defp run_from_row(row) do

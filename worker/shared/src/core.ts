@@ -111,13 +111,28 @@ export async function executeActivation(
   workerHomePath: string
 ): Promise<void> {
   let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let heartbeatFailureCount = 0;
   let activationWorkspace: string | null = null;
   let serviceDefinition: ServiceDefinition<any, any, any, any, any> | null = null;
   let serviceRetry: ServiceDefinition<any, any, any, any, any>["retry"] | undefined;
 
   try {
     heartbeat = setInterval(() => {
-      void client.heartbeat(activation.leaseId).catch(() => undefined);
+      void client
+        .heartbeat(activation.leaseId)
+        .then(() => {
+          heartbeatFailureCount = 0;
+        })
+        .catch((error) => {
+          heartbeatFailureCount += 1;
+
+          if (heartbeatFailureCount === 1 || heartbeatFailureCount % 5 === 0) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn(
+              `[vilano-worker] heartbeat failed lease=${activation.leaseId} run=${activation.run.id} consecutive_failures=${heartbeatFailureCount} error=${message}`
+            );
+          }
+        });
     }, heartbeatIntervalMs);
     activationWorkspace = await ensureActivationWorkspace(
       workerHomePath,

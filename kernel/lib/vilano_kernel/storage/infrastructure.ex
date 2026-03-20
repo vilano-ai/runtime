@@ -1,14 +1,35 @@
 defmodule VilanoKernel.Storage.Infrastructure do
   @moduledoc false
 
+  alias VilanoKernel.Diagnostics
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
   alias VilanoKernel.Storage.Migrations
   alias VilanoKernel.Storage.RuntimeMetadata
 
+  @busy_retry_profiles %{
+    default: %{
+      attempts: 10,
+      base_delay_ms: 25,
+      multiplier: 1.5,
+      max_delay_ms: 500
+    },
+    lease_maintenance: %{
+      attempts: 10,
+      base_delay_ms: 50,
+      multiplier: 1.5,
+      max_delay_ms: 1_000
+    },
+    run_creation: %{
+      attempts: 20,
+      base_delay_ms: 50,
+      multiplier: 1.6,
+      max_delay_ms: 2_500
+    }
+  }
+
   def init! do
     runtime = Application.fetch_env!(:vilano_kernel, :runtime)
-    configure_database!()
     bootstrap_schema!()
     Migrations.ensure_tracking_table!()
     Migrations.run_pending!()
@@ -16,15 +37,26 @@ defmodule VilanoKernel.Storage.Infrastructure do
     maybe_chmod_runtime_db(runtime.runtime_db_path)
   end
 
-  def transaction_with_busy_retry(fun, attempts_left \\ 4)
+  def run_with_busy_retry(fun, retry \\ :default)
 
-  def transaction_with_busy_retry(fun, attempts_left) do
-    case Repo.transaction(fun) do
+  def run_with_busy_retry(fun, retry) do
+    policy = busy_retry_policy(retry)
+    do_run_with_busy_retry(fun, policy, policy.attempts)
+  end
+
+  defp do_run_with_busy_retry(fun, policy, attempts_left) do
+    case fun.() do
       {:error, reason} = result ->
         if attempts_left > 1 and busy_reason?(reason) do
-          Process.sleep(busy_retry_delay_ms(attempts_left))
-          transaction_with_busy_retry(fun, attempts_left - 1)
+          delay_ms = busy_retry_delay_ms(policy, attempts_left)
+          Diagnostics.record_busy_retry(policy.name, reason, delay_ms)
+          Process.sleep(delay_ms)
+          do_run_with_busy_retry(fun, policy, attempts_left - 1)
         else
+          if busy_reason?(reason) do
+            Diagnostics.record_busy_retry_exhausted(policy.name, reason)
+          end
+
           result
         end
 
@@ -34,11 +66,28 @@ defmodule VilanoKernel.Storage.Infrastructure do
   rescue
     error ->
       if attempts_left > 1 and busy_reason?(error) do
-        Process.sleep(busy_retry_delay_ms(attempts_left))
-        transaction_with_busy_retry(fun, attempts_left - 1)
+        delay_ms = busy_retry_delay_ms(policy, attempts_left)
+        Diagnostics.record_busy_retry(policy.name, error, delay_ms)
+        Process.sleep(delay_ms)
+        do_run_with_busy_retry(fun, policy, attempts_left - 1)
       else
+        if busy_reason?(error) do
+          Diagnostics.record_busy_retry_exhausted(policy.name, error)
+        end
+
         reraise error, __STACKTRACE__
       end
+  end
+
+  def transaction_with_busy_retry(fun, retry \\ :default)
+
+  def transaction_with_busy_retry(fun, retry) do
+    run_with_busy_retry(
+      fn ->
+        Repo.transaction(fun)
+      end,
+      retry
+    )
   end
 
   def now_iso8601 do
@@ -70,12 +119,64 @@ defmodule VilanoKernel.Storage.Infrastructure do
       String.contains?(message, "busy")
   end
 
-  defp busy_retry_delay_ms(attempts_left), do: 25 * (5 - attempts_left + 1)
+  defp busy_retry_policy(retry) when is_integer(retry) and retry > 0 do
+    default = Map.fetch!(@busy_retry_profiles, :default)
+    %{default | attempts: retry, name: :default}
+  end
 
-  defp configure_database! do
-    SQL.query!(Repo, "pragma journal_mode = wal", [])
-    SQL.query!(Repo, "pragma foreign_keys = on", [])
-    SQL.query!(Repo, "pragma busy_timeout = 5000", [])
+  defp busy_retry_policy(retry) when is_atom(retry) do
+    (Map.get(@busy_retry_profiles, retry) &&
+       Map.put(Map.fetch!(@busy_retry_profiles, retry), :name, retry)) ||
+      raise ArgumentError, "unknown busy retry profile: #{inspect(retry)}"
+  end
+
+  defp busy_retry_policy(retry) when is_map(retry) do
+    @busy_retry_profiles
+    |> Map.fetch!(:default)
+    |> Map.merge(retry)
+    |> Map.put_new(:name, :custom)
+    |> normalize_busy_retry_policy()
+  end
+
+  defp busy_retry_policy(retry) when is_list(retry) do
+    retry
+    |> Map.new()
+    |> busy_retry_policy()
+  end
+
+  defp busy_retry_policy(retry) do
+    raise ArgumentError, "invalid busy retry configuration: #{inspect(retry)}"
+  end
+
+  defp normalize_busy_retry_policy(policy) do
+    attempts = max(1, round_numeric(Map.get(policy, :attempts), 4))
+    base_delay_ms = max(0, round_numeric(Map.get(policy, :base_delay_ms), 25))
+    multiplier = max(1.0, float_numeric(Map.get(policy, :multiplier), 1.0))
+
+    max_delay_ms =
+      max(base_delay_ms, round_numeric(Map.get(policy, :max_delay_ms), base_delay_ms))
+
+    %{
+      name: Map.get(policy, :name, :custom),
+      attempts: attempts,
+      base_delay_ms: base_delay_ms,
+      multiplier: multiplier,
+      max_delay_ms: max_delay_ms
+    }
+  end
+
+  defp round_numeric(value, _fallback) when is_integer(value), do: value
+  defp round_numeric(value, _fallback) when is_float(value), do: round(value)
+  defp round_numeric(_value, fallback), do: fallback
+
+  defp float_numeric(value, _fallback) when is_float(value), do: value
+  defp float_numeric(value, _fallback) when is_integer(value), do: value * 1.0
+  defp float_numeric(_value, fallback), do: fallback
+
+  defp busy_retry_delay_ms(policy, attempts_left) do
+    attempt_number = policy.attempts - attempts_left + 1
+    scaled_delay = policy.base_delay_ms * :math.pow(policy.multiplier, attempt_number - 1)
+    trunc(min(scaled_delay, policy.max_delay_ms * 1.0))
   end
 
   defp maybe_chmod_runtime_db(runtime_db_path) do

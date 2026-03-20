@@ -119,7 +119,7 @@ function renderTopLevelHelp(): string {
     "  vilano rollback",
     "  vilano doctor [--fix]",
     "  vilano init [path] [--starter] [--force]",
-    "  vilano daemon start|status|stop",
+    "  vilano daemon start|status|debug|stop",
     "  vilano project add|list|inspect|sync|remove",
     "  vilano workflow list|inspect",
     "  vilano run start|list|inspect|explain|replay|cancel",
@@ -137,10 +137,20 @@ function renderDaemonHelp(command?: string): string {
       return ["Usage: vilano daemon start [--port <port>] [--json]", "", "Start the local Vilano kernel if it is not already running."].join("\n");
     case "status":
       return ["Usage: vilano daemon status [--json]", "", "Show the running kernel status, if any."].join("\n");
+    case "debug":
+      return [
+        "Usage: vilano daemon debug [--json]",
+        "",
+        "Show a runtime debug snapshot with busy retries, active leases, and run backlog counts.",
+      ].join("\n");
     case "stop":
       return ["Usage: vilano daemon stop [--json]", "", "Stop the local Vilano kernel."].join("\n");
     default:
-      return ["Usage: vilano daemon <start|status|stop> [--json]", "", "Manage the local Vilano kernel process."].join("\n");
+      return [
+        "Usage: vilano daemon <start|status|debug|stop> [--json]",
+        "",
+        "Manage the local Vilano kernel process.",
+      ].join("\n");
   }
 }
 

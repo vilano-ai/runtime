@@ -25,8 +25,9 @@ defmodule VilanoKernel.Storage.ServiceOps do
   def resolve_service_send(lease_id, service_run_id, name, op_key, payload) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
-      case {RunControl.get_fenced_run_by_lease(lease_id, now), get_service_run_by_id(service_run_id)} do
+    Infrastructure.transaction_with_busy_retry(fn ->
+      case {RunControl.get_fenced_run_by_lease(lease_id, now),
+            get_service_run_by_id(service_run_id)} do
         {nil, _} ->
           nil
 
@@ -129,8 +130,9 @@ defmodule VilanoKernel.Storage.ServiceOps do
   def resolve_service_signal(lease_id, service_run_id, name, op_key, payload) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
-      case {RunControl.get_fenced_run_by_lease(lease_id, now), get_service_run_by_id(service_run_id)} do
+    Infrastructure.transaction_with_busy_retry(fn ->
+      case {RunControl.get_fenced_run_by_lease(lease_id, now),
+            get_service_run_by_id(service_run_id)} do
         {nil, _} ->
           nil
 
@@ -234,8 +236,9 @@ defmodule VilanoKernel.Storage.ServiceOps do
     now = Infrastructure.now_iso8601()
     wake_at = wait_deadline(now, timeout_ms)
 
-    Repo.transaction(fn ->
-      case {RunControl.get_fenced_run_by_lease(lease_id, now), get_service_run_by_id(service_run_id)} do
+    Infrastructure.transaction_with_busy_retry(fn ->
+      case {RunControl.get_fenced_run_by_lease(lease_id, now),
+            get_service_run_by_id(service_run_id)} do
         {nil, _} ->
           nil
 
@@ -398,22 +401,17 @@ defmodule VilanoKernel.Storage.ServiceOps do
                     now
                   )
 
-                  RunControl.ensure_fenced_run_write!(
+                  RunControl.update_fenced_run!(
                     caller_run["id"],
                     lease_id,
                     now,
                     """
-                    update runs
-                    set
-                      status = 'waiting',
-                      lease_id = null,
-                      lease_auth_token = null,
-                      lease_worker_id = null,
-                      lease_expires_at = null,
-                      updated_at = ?
-                    where id = ?
-                    """,
-                    [now, caller_run["id"]]
+                    status = 'waiting',
+                    lease_id = null,
+                    lease_auth_token = null,
+                    lease_worker_id = null,
+                    lease_expires_at = null
+                    """
                   )
 
                   %{
@@ -453,7 +451,7 @@ defmodule VilanoKernel.Storage.ServiceOps do
   def complete_service_turn(lease_id, envelope_id, body) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case {RunControl.get_fenced_run_by_lease(lease_id, now), get_service_envelope(envelope_id)} do
         {nil, _} ->
           nil
@@ -540,7 +538,10 @@ defmodule VilanoKernel.Storage.ServiceOps do
               _ =
                 VilanoKernel.Storage.FailureRecovery.stop_service_run_instance!(
                   get_service_run_by_id(service_run["id"]),
-                  VilanoKernel.Storage.FailureRecovery.cancellation_error("Service stopped", "handler_stop"),
+                  VilanoKernel.Storage.FailureRecovery.cancellation_error(
+                    "Service stopped",
+                    "handler_stop"
+                  ),
                   "handler_stop",
                   now,
                   lease_id
@@ -548,22 +549,18 @@ defmodule VilanoKernel.Storage.ServiceOps do
             else
               next_status = service_next_status(service_run["id"], false)
 
-              RunControl.ensure_fenced_run_write!(
+              RunControl.update_fenced_run!(
                 service_run["id"],
                 lease_id,
                 now,
                 """
-                update runs
-                set
-                  status = ?,
-                  lease_id = null,
-                  lease_auth_token = null,
-                  lease_worker_id = null,
-                  lease_expires_at = null,
-                  updated_at = ?
-                where id = ?
+                status = ?,
+                lease_id = null,
+                lease_auth_token = null,
+                lease_worker_id = null,
+                lease_expires_at = null
                 """,
-                [next_status, now, service_run["id"]]
+                [next_status]
               )
             end
 
@@ -579,7 +576,7 @@ defmodule VilanoKernel.Storage.ServiceOps do
   def get_service_turn_mailbox(lease_id, envelope_id) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case {RunControl.get_fenced_run_by_lease(lease_id, now), get_service_envelope(envelope_id)} do
         {nil, _} ->
           nil
@@ -606,7 +603,7 @@ defmodule VilanoKernel.Storage.ServiceOps do
     now = Infrastructure.now_iso8601()
     wake_at = shift_milliseconds(now, delay_ms)
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case {RunControl.get_fenced_run_by_lease(lease_id, now), get_service_envelope(envelope_id)} do
         {nil, _} ->
           nil
@@ -642,22 +639,18 @@ defmodule VilanoKernel.Storage.ServiceOps do
 
             next_status = service_next_status(service_run["id"], false)
 
-            RunControl.ensure_fenced_run_write!(
+            RunControl.update_fenced_run!(
               service_run["id"],
               lease_id,
               now,
               """
-              update runs
-              set
-                status = ?,
-                lease_id = null,
-                lease_auth_token = null,
-                lease_worker_id = null,
-                lease_expires_at = null,
-                updated_at = ?
-              where id = ?
+              status = ?,
+              lease_id = null,
+              lease_auth_token = null,
+              lease_worker_id = null,
+              lease_expires_at = null
               """,
-              [next_status, now, service_run["id"]]
+              [next_status]
             )
 
             append_event!(
@@ -689,7 +682,7 @@ defmodule VilanoKernel.Storage.ServiceOps do
   def reject_service_turn(lease_id, envelope_id, error_body) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case {RunControl.get_fenced_run_by_lease(lease_id, now), get_service_envelope(envelope_id)} do
         {nil, _} ->
           nil
@@ -739,22 +732,18 @@ defmodule VilanoKernel.Storage.ServiceOps do
 
             next_status = service_next_status(service_run["id"], false)
 
-            RunControl.ensure_fenced_run_write!(
+            RunControl.update_fenced_run!(
               service_run["id"],
               lease_id,
               now,
               """
-              update runs
-              set
-                status = ?,
-                lease_id = null,
-                lease_auth_token = null,
-                lease_worker_id = null,
-                lease_expires_at = null,
-                updated_at = ?
-              where id = ?
+              status = ?,
+              lease_id = null,
+              lease_auth_token = null,
+              lease_worker_id = null,
+              lease_expires_at = null
               """,
-              [next_status, now, service_run["id"]]
+              [next_status]
             )
 
             VilanoKernel.Storage.get_run(service_run["id"])
@@ -769,7 +758,7 @@ defmodule VilanoKernel.Storage.ServiceOps do
   def fail_service_turn(lease_id, envelope_id, error_body, retry_options \\ %{}) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case {RunControl.get_fenced_run_by_lease(lease_id, now), get_service_envelope(envelope_id)} do
         {nil, _} ->
           nil

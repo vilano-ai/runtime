@@ -22,13 +22,15 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.StepOps do
   import Support
 
   def resolve_step(lease_id, name, op_key), do: resolve_step(lease_id, name, op_key, nil, %{})
-  def resolve_step(lease_id, name, op_key, timeout_ms), do: resolve_step(lease_id, name, op_key, timeout_ms, %{})
+
+  def resolve_step(lease_id, name, op_key, timeout_ms),
+    do: resolve_step(lease_id, name, op_key, timeout_ms, %{})
 
   def resolve_step(lease_id, name, op_key, timeout_ms, retry_policy) do
     now = Infrastructure.now_iso8601()
 
     result =
-      Repo.transaction(fn ->
+      Infrastructure.transaction_with_busy_retry(fn ->
         case RunControl.get_fenced_run_by_lease(lease_id, now) do
           nil ->
             nil
@@ -323,7 +325,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.StepOps do
     now = Infrastructure.now_iso8601()
 
     result =
-      Repo.transaction(fn ->
+      Infrastructure.transaction_with_busy_retry(fn ->
         case RunControl.get_fenced_run_by_lease(lease_id, now) do
           nil ->
             nil
@@ -383,7 +385,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.StepOps do
     now = Infrastructure.now_iso8601()
 
     result =
-      Repo.transaction(fn ->
+      Infrastructure.transaction_with_busy_retry(fn ->
         case RunControl.get_fenced_run_by_lease(lease_id, now) do
           nil ->
             nil
@@ -418,7 +420,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.StepOps do
     now = Infrastructure.now_iso8601()
 
     result =
-      Repo.transaction(fn ->
+      Infrastructure.transaction_with_busy_retry(fn ->
         case RunControl.get_fenced_run_by_lease(lease_id, now) do
           nil ->
             nil

@@ -262,6 +262,49 @@ test("kernel rejects unauthenticated localhost requests", async () => {
   }
 });
 
+test("runtime debug endpoint reports leases and backlog counts", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const run = await harness.startWorkflow("demo/blockingStep", {
+      durationMs: 5_000,
+    });
+
+    await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "running");
+
+    const response = await harness.requestKernel("/v1/admin/runtime-debug");
+    expect(response.status).toBe(200);
+
+    const body = (await response.json()) as {
+      ok: true;
+      busyRetries: {
+        profiles: Record<string, unknown>;
+        recentExhausted: Array<{ profile: string; reason: string; at: string }>;
+      };
+      activeLeases: Array<{ runId: string; leaseId: string; leaseWorkerId: string | null }>;
+      managedWorkers: Array<{ workerId: string; activeLeaseCount: number }>;
+      runStatusCounts: Array<{ status: string; count: number }>;
+      projectRunStatusCounts: Array<{ project: string; status: string; count: number }>;
+    };
+
+    expect(body.ok).toBe(true);
+    expect(body.busyRetries.profiles).toBeObject();
+    expect(Array.isArray(body.busyRetries.recentExhausted)).toBe(true);
+    expect(body.activeLeases.some((lease) => lease.runId === run.run.id)).toBe(true);
+    expect(body.managedWorkers.length).toBeGreaterThan(0);
+    expect(
+      body.runStatusCounts.some((entry) => entry.status === "running" && Number(entry.count) >= 1)
+    ).toBe(true);
+    expect(
+      body.projectRunStatusCounts.some(
+        (entry) => entry.project === "demo" && entry.status === "running" && Number(entry.count) >= 1
+      )
+    ).toBe(true);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("worker tokens cannot access daemon-only routes", async () => {
   const harness = await RuntimeHarness.create();
 

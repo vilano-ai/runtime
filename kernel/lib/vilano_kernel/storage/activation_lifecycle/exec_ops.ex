@@ -24,7 +24,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.ExecOps do
   def resolve_exec(lease_id, name, op_key, exec_spec) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
@@ -143,7 +143,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.ExecOps do
   def complete_exec(lease_id, name, op_key, body) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
@@ -217,7 +217,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.ExecOps do
   def fail_exec(lease_id, name, op_key, body) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil

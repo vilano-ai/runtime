@@ -13,6 +13,7 @@ import { getRuntimePaths } from "./runtime-home.ts";
 import type {
   DaemonAuthState,
   DaemonState,
+  RuntimeDebugResponse,
   DaemonStatusResponse,
   DefinitionInspectResponse,
   DefinitionListResponse,
@@ -325,12 +326,23 @@ export async function getRunningDaemonStatus(): Promise<DaemonStatusResponse | n
     }
 
     if (await isProcessAlive(daemonState.pid)) {
-      throw new Error("Vilano Runtime kernel process is still running but the status probe failed");
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Vilano Runtime kernel process is still running but the status probe failed: ${reason}`
+      );
     }
 
     await clearDaemonStateFiles();
     return null;
   }
+}
+
+export async function getRuntimeDebug(): Promise<RuntimeDebugResponse> {
+  return requestJson<RuntimeDebugResponse>({
+    method: "GET",
+    pathname: "/v1/admin/runtime-debug",
+    autoStart: false,
+  });
 }
 
 export async function readDaemonState(): Promise<DaemonState | null> {
@@ -629,30 +641,40 @@ async function requestJson<T>({
 }: RequestOptions): Promise<T> {
   let daemonState = await readDaemonState();
   let daemonAuthState = await readDaemonAuthState();
-  let status = await getRunningDaemonStatus();
-  if (!status && autoStart) {
-    status = await ensureDaemonStarted();
+
+  if ((!daemonState || !daemonAuthState) && autoStart) {
+    const status = await ensureDaemonStarted();
+    assertCompatibleKernelStatus(status);
     daemonState = await readDaemonState();
     daemonAuthState = await readDaemonAuthState();
   }
 
-  if (!status) {
+  if (!daemonState || !daemonAuthState) {
     throw new Error("Vilano Runtime kernel is not running");
   }
 
-  if (!daemonState) {
-    daemonState = await readDaemonState();
-  }
+  if (!(await isProcessAlive(daemonState.pid))) {
+    await clearDaemonStateFiles();
 
-  if (!daemonAuthState) {
-    daemonAuthState = await readDaemonAuthState();
+    if (autoStart) {
+      const status = await ensureDaemonStarted();
+      assertCompatibleKernelStatus(status);
+      daemonState = await readDaemonState();
+      daemonAuthState = await readDaemonAuthState();
+    }
   }
 
   if (!daemonState || !daemonAuthState) {
     throw new Error("Vilano Runtime kernel state is missing from VILANO_HOME");
   }
 
-  assertCompatibleKernelStatus(status);
+  if (typeof daemonState.protocolVersion === "number") {
+    assertCompatibleKernelStatus({
+      protocolVersion: daemonState.protocolVersion,
+      runtimeVersion: daemonState.runtimeVersion ?? "unknown",
+    });
+  }
+
   return requestJsonWithState<T>(
     {
       port: daemonState.port,

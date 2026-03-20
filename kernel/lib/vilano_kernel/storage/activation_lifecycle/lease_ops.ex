@@ -20,18 +20,23 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
     expires_at = shift_seconds(now, Infrastructure.lease_duration_seconds())
 
     updated_rows =
-      write_changes!(
-        """
-        update runs
-        set lease_expires_at = ?, updated_at = ?
-        where
-          lease_id = ?
-          and lease_worker_id = ?
-          and status in ('running', 'active')
-          and lease_expires_at is not null
-          and lease_expires_at >= ?
-        """,
-        [expires_at, now, lease_id, worker_id, now]
+      Infrastructure.run_with_busy_retry(
+        fn ->
+          write_changes!(
+            """
+            update runs
+            set lease_expires_at = ?, updated_at = ?
+            where
+              lease_id = ?
+              and lease_worker_id = ?
+              and status in ('running', 'active')
+              and lease_expires_at is not null
+              and lease_expires_at >= ?
+            """,
+            [expires_at, now, lease_id, worker_id, now]
+          )
+        end,
+        :lease_maintenance
       )
 
     if updated_rows > 0, do: %{"leaseExpiresAt" => expires_at}, else: nil
@@ -91,7 +96,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
   def complete_run_lease(lease_id, result) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
@@ -118,6 +123,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
           )
 
           append_event!(run["id"], "RunCompleted", %{"result" => result}, now)
+
           VilanoKernel.Storage.AgentRelationships.wake_waiting_parents_for_child!(
             run["id"],
             "completed",
@@ -125,8 +131,16 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
             now
           )
 
-          VilanoKernel.Storage.Supervision.maybe_apply_supervision_for_terminal_run!(run["id"], now)
-          VilanoKernel.Storage.AgentRelationships.maybe_trigger_relationships_for_terminal_run!(run["id"], now)
+          VilanoKernel.Storage.Supervision.maybe_apply_supervision_for_terminal_run!(
+            run["id"],
+            now
+          )
+
+          VilanoKernel.Storage.AgentRelationships.maybe_trigger_relationships_for_terminal_run!(
+            run["id"],
+            now
+          )
+
           VilanoKernel.Storage.get_run(run["id"])
       end
     end)
@@ -136,7 +150,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
   def fail_run_lease(lease_id, error_body) do
     now = Infrastructure.now_iso8601()
 
-    Repo.transaction(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
           nil
@@ -162,6 +176,7 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
           )
 
           append_event!(run["id"], "RunFailed", %{"error" => error_body}, now)
+
           VilanoKernel.Storage.AgentRelationships.wake_waiting_parents_for_child!(
             run["id"],
             "failed",
@@ -169,8 +184,16 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
             now
           )
 
-          VilanoKernel.Storage.Supervision.maybe_apply_supervision_for_terminal_run!(run["id"], now)
-          VilanoKernel.Storage.AgentRelationships.maybe_trigger_relationships_for_terminal_run!(run["id"], now)
+          VilanoKernel.Storage.Supervision.maybe_apply_supervision_for_terminal_run!(
+            run["id"],
+            now
+          )
+
+          VilanoKernel.Storage.AgentRelationships.maybe_trigger_relationships_for_terminal_run!(
+            run["id"],
+            now
+          )
+
           VilanoKernel.Storage.get_run(run["id"])
       end
     end)
@@ -188,191 +211,194 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
     now = Infrastructure.now_iso8601()
     expires_at = shift_seconds(now, Infrastructure.lease_duration_seconds())
 
-    case Infrastructure.transaction_with_busy_retry(fn ->
-           case next_activation_candidate(now) do
-             nil ->
-               nil
+    case Infrastructure.transaction_with_busy_retry(
+           fn ->
+             case next_activation_candidate(now) do
+               nil ->
+                 nil
 
-             {:workflow, candidate} ->
-               lease_id = "lease_" <> Ecto.UUID.generate()
-               lease_auth_token = "ltok_" <> Ecto.UUID.generate()
-               run_id = candidate["id"]
+               {:workflow, candidate} ->
+                 lease_id = "lease_" <> Ecto.UUID.generate()
+                 lease_auth_token = "ltok_" <> Ecto.UUID.generate()
+                 run_id = candidate["id"]
 
-               claimed_rows =
-                 write_changes!(
-                   """
-                   update runs
-                   set
-                     status = 'running',
-                     lease_id = ?,
-                     lease_auth_token = ?,
-                     lease_worker_id = ?,
-                     lease_expires_at = ?,
-                     updated_at = ?
-                   where
-                     id = ?
-                     and definition_kind = 'workflow'
-                     and status in ('pending', 'running')
-                     and (lease_expires_at is null or lease_expires_at < ?)
-                   """,
-                   [lease_id, lease_auth_token, worker_id, expires_at, now, run_id, now]
-                 )
+                 claimed_rows =
+                   write_changes!(
+                     """
+                     update runs
+                     set
+                       status = 'running',
+                       lease_id = ?,
+                       lease_auth_token = ?,
+                       lease_worker_id = ?,
+                       lease_expires_at = ?,
+                       updated_at = ?
+                     where
+                       id = ?
+                       and definition_kind = 'workflow'
+                       and status in ('pending', 'running')
+                       and (lease_expires_at is null or lease_expires_at < ?)
+                     """,
+                     [lease_id, lease_auth_token, worker_id, expires_at, now, run_id, now]
+                   )
 
-               if claimed_rows != 1 do
-                 Repo.rollback(:stale_candidate)
-               end
-
-               append_event!(
-                 run_id,
-                 "RunLeaseGranted",
-                 %{
-                   leaseId: lease_id,
-                   workerId: worker_id,
-                   leaseExpiresAt: expires_at
-                 },
-                 now
-               )
-
-               run = VilanoKernel.Storage.get_run(run_id)
-
-               case RunControl.ensure_run_activation_pinned!(run) do
-                 {:ok, pinned_run} ->
-                   %{
-                     lease_id: lease_id,
-                     lease_auth_token: lease_auth_token,
-                     lease_expires_at: expires_at,
-                     activation_kind: "workflow",
-                     run: pinned_run
-                   }
-
-                 {:error, {:unresumable_candidate, unpinned_run}} ->
-                   Repo.rollback({:unresumable_candidate, unpinned_run})
-               end
-
-             {:service_turn, candidate} ->
-               lease_id = "lease_" <> Ecto.UUID.generate()
-               lease_auth_token = "ltok_" <> Ecto.UUID.generate()
-               run_id = candidate["service_run_id"]
-               envelope_id = candidate["id"]
-
-               attempt =
-                 cond do
-                   candidate["envelope_status"] == "queued" ->
-                     candidate["attempt"] || 1
-
-                   candidate["run_status"] == "active" and
-                       not is_nil(candidate["run_lease_expires_at"]) ->
-                     (candidate["attempt"] || 0) + 1
-
-                   true ->
-                     candidate["attempt"] || 1
+                 if claimed_rows != 1 do
+                   Repo.rollback(:stale_candidate)
                  end
 
-               envelope_rows =
-                 case candidate["envelope_status"] do
-                   "queued" ->
-                     write_changes!(
-                       """
-                       update service_envelopes
-                       set
-                         status = 'processing',
-                         attempt = ?,
-                         wake_at = null,
-                         updated_at = ?
-                       where id = ? and status = 'queued'
-                       """,
-                       [attempt, now, envelope_id]
-                     )
-
-                   _ ->
-                     write_changes!(
-                       """
-                       update service_envelopes
-                       set
-                         attempt = ?,
-                         updated_at = ?
-                       where id = ? and status = 'processing'
-                       """,
-                       [attempt, now, envelope_id]
-                     )
-                 end
-
-               if envelope_rows != 1 do
-                 Repo.rollback(:stale_candidate)
-               end
-
-               claimed_rows =
-                 write_changes!(
-                   """
-                   update runs
-                   set
-                     status = 'active',
-                     lease_id = ?,
-                     lease_auth_token = ?,
-                     lease_worker_id = ?,
-                     lease_expires_at = ?,
-                     updated_at = ?
-                   where
-                     id = ?
-                     and definition_kind = 'service'
-                     and status in ('idle', 'pending', 'active')
-                     and (lease_expires_at is null or lease_expires_at < ?)
-                   """,
-                   [lease_id, lease_auth_token, worker_id, expires_at, now, run_id, now]
-                 )
-
-               if claimed_rows != 1 do
-                 Repo.rollback(:stale_candidate)
-               end
-
-               if candidate["envelope_status"] == "queued" do
                  append_event!(
                    run_id,
-                   "TurnStarted",
+                   "RunLeaseGranted",
                    %{
-                     "envelopeId" => envelope_id,
-                     "kind" => candidate["kind"],
-                     "name" => candidate["name"],
-                     "correlationId" => candidate["correlation_id"],
-                     "attempt" => attempt
+                     leaseId: lease_id,
+                     workerId: worker_id,
+                     leaseExpiresAt: expires_at
                    },
                    now
                  )
-               else
-                 append_event!(
-                   run_id,
-                   "TurnResumed",
-                   %{
-                     "envelopeId" => envelope_id,
-                     "kind" => candidate["kind"],
-                     "name" => candidate["name"],
-                     "correlationId" => candidate["correlation_id"],
-                     "reason" => ServiceLifecycle.resume_reason(candidate),
-                     "attempt" => attempt
-                   },
-                   now
-                 )
-               end
 
-               run = VilanoKernel.Storage.get_run(run_id)
+                 run = VilanoKernel.Storage.get_run(run_id)
 
-               case RunControl.ensure_run_activation_pinned!(run) do
-                 {:ok, pinned_run} ->
-                   %{
-                     lease_id: lease_id,
-                     lease_auth_token: lease_auth_token,
-                     lease_expires_at: expires_at,
-                     activation_kind: "service_turn",
-                     run: pinned_run,
-                     service: get_service_run_by_id(run_id),
-                     envelope: service_envelope_from_row(get_service_envelope(envelope_id))
-                   }
+                 case RunControl.ensure_run_activation_pinned!(run) do
+                   {:ok, pinned_run} ->
+                     %{
+                       lease_id: lease_id,
+                       lease_auth_token: lease_auth_token,
+                       lease_expires_at: expires_at,
+                       activation_kind: "workflow",
+                       run: pinned_run
+                     }
 
-                 {:error, {:unresumable_candidate, unpinned_run}} ->
-                   Repo.rollback({:unresumable_candidate, unpinned_run})
-               end
-           end
-         end) do
+                   {:error, {:unresumable_candidate, unpinned_run}} ->
+                     Repo.rollback({:unresumable_candidate, unpinned_run})
+                 end
+
+               {:service_turn, candidate} ->
+                 lease_id = "lease_" <> Ecto.UUID.generate()
+                 lease_auth_token = "ltok_" <> Ecto.UUID.generate()
+                 run_id = candidate["service_run_id"]
+                 envelope_id = candidate["id"]
+
+                 attempt =
+                   cond do
+                     candidate["envelope_status"] == "queued" ->
+                       candidate["attempt"] || 1
+
+                     candidate["run_status"] == "active" and
+                         not is_nil(candidate["run_lease_expires_at"]) ->
+                       (candidate["attempt"] || 0) + 1
+
+                     true ->
+                       candidate["attempt"] || 1
+                   end
+
+                 envelope_rows =
+                   case candidate["envelope_status"] do
+                     "queued" ->
+                       write_changes!(
+                         """
+                         update service_envelopes
+                         set
+                           status = 'processing',
+                           attempt = ?,
+                           wake_at = null,
+                           updated_at = ?
+                         where id = ? and status = 'queued'
+                         """,
+                         [attempt, now, envelope_id]
+                       )
+
+                     _ ->
+                       write_changes!(
+                         """
+                         update service_envelopes
+                         set
+                           attempt = ?,
+                           updated_at = ?
+                         where id = ? and status = 'processing'
+                         """,
+                         [attempt, now, envelope_id]
+                       )
+                   end
+
+                 if envelope_rows != 1 do
+                   Repo.rollback(:stale_candidate)
+                 end
+
+                 claimed_rows =
+                   write_changes!(
+                     """
+                     update runs
+                     set
+                       status = 'active',
+                       lease_id = ?,
+                       lease_auth_token = ?,
+                       lease_worker_id = ?,
+                       lease_expires_at = ?,
+                       updated_at = ?
+                     where
+                       id = ?
+                       and definition_kind = 'service'
+                       and status in ('idle', 'pending', 'active')
+                       and (lease_expires_at is null or lease_expires_at < ?)
+                     """,
+                     [lease_id, lease_auth_token, worker_id, expires_at, now, run_id, now]
+                   )
+
+                 if claimed_rows != 1 do
+                   Repo.rollback(:stale_candidate)
+                 end
+
+                 if candidate["envelope_status"] == "queued" do
+                   append_event!(
+                     run_id,
+                     "TurnStarted",
+                     %{
+                       "envelopeId" => envelope_id,
+                       "kind" => candidate["kind"],
+                       "name" => candidate["name"],
+                       "correlationId" => candidate["correlation_id"],
+                       "attempt" => attempt
+                     },
+                     now
+                   )
+                 else
+                   append_event!(
+                     run_id,
+                     "TurnResumed",
+                     %{
+                       "envelopeId" => envelope_id,
+                       "kind" => candidate["kind"],
+                       "name" => candidate["name"],
+                       "correlationId" => candidate["correlation_id"],
+                       "reason" => ServiceLifecycle.resume_reason(candidate),
+                       "attempt" => attempt
+                     },
+                     now
+                   )
+                 end
+
+                 run = VilanoKernel.Storage.get_run(run_id)
+
+                 case RunControl.ensure_run_activation_pinned!(run) do
+                   {:ok, pinned_run} ->
+                     %{
+                       lease_id: lease_id,
+                       lease_auth_token: lease_auth_token,
+                       lease_expires_at: expires_at,
+                       activation_kind: "service_turn",
+                       run: pinned_run,
+                       service: get_service_run_by_id(run_id),
+                       envelope: service_envelope_from_row(get_service_envelope(envelope_id))
+                     }
+
+                   {:error, {:unresumable_candidate, unpinned_run}} ->
+                     Repo.rollback({:unresumable_candidate, unpinned_run})
+                 end
+             end
+           end,
+           :lease_maintenance
+         ) do
       {:ok, value} ->
         value
 
