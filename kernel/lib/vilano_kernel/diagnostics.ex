@@ -61,9 +61,11 @@ defmodule VilanoKernel.Diagnostics do
       |> put_in([:busyRetries, :recentExhausted], recent_exhausted)
     end)
 
-    Logger.warning(
-      "sqlite busy retry exhausted profile=#{profile_name(profile)} reason=#{normalized_reason}"
-    )
+    if warn_on_exhausted?(profile) do
+      Logger.warning(
+        "sqlite busy retry exhausted profile=#{profile_name(profile)} reason=#{normalized_reason}"
+      )
+    end
   end
 
   defp update_profile(profile, fun) do
@@ -96,6 +98,10 @@ defmodule VilanoKernel.Diagnostics do
   defp profile_name(profile) when is_atom(profile), do: Atom.to_string(profile)
   defp profile_name(profile) when is_binary(profile), do: profile
   defp profile_name(_profile), do: "custom"
+
+  defp warn_on_exhausted?(profile) do
+    profile_name(profile) != "lease_maintenance"
+  end
 
   defp normalize_reason(reason) when is_exception(reason) do
     reason
