@@ -48,6 +48,9 @@ defmodule VilanoKernel.Storage do
   def get_definition(project_name, kind, definition_name),
     do: Projects.get_definition(project_name, kind, definition_name)
 
+  def find_definition(project, kind, definition_name),
+    do: Projects.find_definition(project, kind, definition_name)
+
   def get_active_run_by_lease(lease_id), do: RunControl.get_run_by_lease(lease_id)
 
   def list_referenced_snapshot_paths(project_name \\ nil) do

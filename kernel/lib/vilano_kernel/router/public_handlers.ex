@@ -266,7 +266,7 @@ defmodule VilanoKernel.Router.PublicHandlers do
   def inspect_service_run(conn, project, name, service_key) do
     with project_record when not is_nil(project_record) <- Storage.get_project(project),
          definition when not is_nil(definition) <-
-           Storage.get_definition(project, "service", name),
+           Storage.find_definition(project_record, "service", name),
          service_run when not is_nil(service_run) <-
            Storage.find_service_run(project, definition["name"], service_key) do
       _ = project_record
@@ -404,7 +404,7 @@ defmodule VilanoKernel.Router.PublicHandlers do
 
     with project_record when not is_nil(project_record) <- Storage.get_project(project),
          definition when not is_nil(definition) <-
-           Storage.get_definition(project, "workflow", workflow),
+           Storage.find_definition(project_record, "workflow", workflow),
          run <-
            Storage.create_workflow_run!(
              project_record,
@@ -482,7 +482,7 @@ defmodule VilanoKernel.Router.PublicHandlers do
   defp enqueue_public_service_message(conn, project, name, service_key, kind, message_name) do
     with project_record when not is_nil(project_record) <- Storage.get_project(project),
          definition when not is_nil(definition) <-
-           Storage.get_definition(project, "service", name),
+           Storage.find_definition(project_record, "service", name),
          result <-
            Storage.enqueue_service_envelope!(
              project_record,
@@ -530,7 +530,7 @@ defmodule VilanoKernel.Router.PublicHandlers do
 
         with project_record when not is_nil(project_record) <- Storage.get_project(project),
              definition when not is_nil(definition) <-
-               Storage.get_definition(project, "service", service_name) do
+               Storage.find_definition(project_record, "service", service_name) do
           {project_record, definition}
         end
     end

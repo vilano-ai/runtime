@@ -3,6 +3,7 @@ defmodule VilanoKernel.Storage.ReadModels do
 
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
+  alias VilanoKernel.Storage.Infrastructure
 
   def list_runs(project_name \\ nil) do
     query =
@@ -68,40 +69,42 @@ defmodule VilanoKernel.Storage.ReadModels do
   end
 
   def get_run(run_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-          id,
-          project_name,
-          definition_kind,
-          definition_name,
-          project_snapshot_path,
-          project_definitions_json,
-          definition_file,
-          definition_export_name,
-          definition_runtime_kind,
-          definition_source_language,
-          status,
-          lease_id,
-          lease_worker_id,
-        lease_expires_at,
-        input_json,
-        output_json,
-        error_json,
-        created_at,
-        updated_at
-      from runs
-      where id = ?
-      """,
-      [run_id]
-    )
-    |> rows_to_maps()
-    |> List.first()
-    |> case do
-      nil -> nil
-      row -> run_from_row(row)
-    end
+    Infrastructure.run_with_busy_retry(fn ->
+      Repo
+      |> SQL.query!(
+        """
+        select
+            id,
+            project_name,
+            definition_kind,
+            definition_name,
+            project_snapshot_path,
+            project_definitions_json,
+            definition_file,
+            definition_export_name,
+            definition_runtime_kind,
+            definition_source_language,
+            status,
+            lease_id,
+            lease_worker_id,
+          lease_expires_at,
+          input_json,
+          output_json,
+          error_json,
+          created_at,
+          updated_at
+        from runs
+        where id = ?
+        """,
+        [run_id]
+      )
+      |> rows_to_maps()
+      |> List.first()
+      |> case do
+        nil -> nil
+        row -> run_from_row(row)
+      end
+    end)
   end
 
   def list_run_events(run_id) do
