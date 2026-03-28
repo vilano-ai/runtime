@@ -1,9 +1,9 @@
-import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 
 import { readJsonFile } from "../json-file.ts";
+import { fileExists } from "../fs-utils.ts";
 import { runDoctor } from "../doctor.ts";
 import {
   ensureDaemonStarted,
@@ -324,15 +324,6 @@ async function resolveWorkerLaunchCommand(
     executable: bundledNode,
     prefixArgs: [workerEntry],
   };
-}
-
-async function fileExists(targetPath: string): Promise<boolean> {
-  try {
-    await fs.access(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function resolveWorkerServerUrl(
