@@ -43,6 +43,12 @@ defmodule VilanoKernel.Router.PublicHandlers do
       activeLeases: active_leases,
       managedWorkers: managed_worker_snapshot(runtime.managed_worker_count, active_leases),
       activeTimedSteps: Storage.list_active_timed_steps(),
+      leaseQueue: %{
+        workflowHead: Storage.oldest_runnable_workflow_candidate(),
+        serviceTurnHead: Storage.oldest_runnable_service_turn_candidate(),
+        oldestPendingRuns: Storage.list_oldest_pending_runs(),
+        pendingByProject: Storage.count_pending_runs_by_project()
+      },
       runStatusCounts: Storage.count_runs_by_status(),
       projectRunStatusCounts: Storage.count_runs_by_project_and_status()
     })
@@ -186,6 +192,16 @@ defmodule VilanoKernel.Router.PublicHandlers do
     case Storage.remove_project(name) do
       nil -> send_error(conn, 404, "not_found", "Unknown project: #{name}")
       project -> send_json(conn, 200, %{ok: true, project: project})
+    end
+  end
+
+  def purge_project_runtime(conn, name) do
+    case Storage.purge_project_runtime(name) do
+      nil ->
+        send_error(conn, 404, "not_found", "Unknown project: #{name}")
+
+      result ->
+        send_json(conn, 200, Map.put(result, "ok", true))
     end
   end
 

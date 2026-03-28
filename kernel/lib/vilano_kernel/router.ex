@@ -151,6 +151,10 @@ defmodule VilanoKernel.Router do
     PublicHandlers.delete_project(conn, name)
   end
 
+  post "/v1/projects/:name/purge-runtime" do
+    PublicHandlers.purge_project_runtime(conn, name)
+  end
+
   get "/v1/workflows" do
     PublicHandlers.list_workflows(conn)
   end

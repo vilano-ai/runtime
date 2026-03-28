@@ -228,9 +228,11 @@ defmodule VilanoKernel.Storage do
   end
 
   def stop_service_run(project_name, definition_name, service_key) do
-    now = Infrastructure.now_iso8601()
+    initial_run = get_service_run(project_name, definition_name, service_key)
 
-    Repo.transaction(fn ->
+    admin_control_with_optional_preemption(initial_run, fn ->
+      now = Infrastructure.now_iso8601()
+
       case get_service_run(project_name, definition_name, service_key) do
         nil ->
           nil
@@ -244,13 +246,14 @@ defmodule VilanoKernel.Storage do
           )
       end
     end)
-    |> unwrap_transaction_result()
   end
 
   def cancel_run(run_id, reason \\ "cli_cancel") do
-    now = Infrastructure.now_iso8601()
+    initial_run = get_run(run_id)
 
-    Repo.transaction(fn ->
+    admin_control_with_optional_preemption(initial_run, fn ->
+      now = Infrastructure.now_iso8601()
+
       case get_run(run_id) do
         nil ->
           nil
@@ -274,6 +277,38 @@ defmodule VilanoKernel.Storage do
           )
       end
     end)
+  end
+
+  def purge_project_runtime(project_name) do
+    now = Infrastructure.now_iso8601()
+    active_managed_workers = list_project_active_managed_workers(project_name)
+
+    Enum.each(active_managed_workers, fn worker_id ->
+      _ = VilanoKernel.ManagedWorker.kill_worker(worker_id, :project_runtime_purge)
+    end)
+
+    Infrastructure.transaction_with_busy_retry(fn ->
+      case get_project(project_name) do
+        nil ->
+          nil
+
+        _project ->
+          run_count = count_project_runs(project_name)
+          service_run_count = count_project_service_runs(project_name)
+          envelope_count = count_project_service_envelopes(project_name)
+
+          delete_project_runtime_rows!(project_name)
+
+          %{
+            "project" => project_name,
+            "purgedRunCount" => run_count,
+            "purgedServiceRunCount" => service_run_count,
+            "purgedEnvelopeCount" => envelope_count,
+            "killedManagedWorkerIds" => active_managed_workers,
+            "purgedAt" => now
+          }
+      end
+    end, :admin_control)
     |> unwrap_transaction_result()
   end
 
@@ -438,6 +473,10 @@ defmodule VilanoKernel.Storage do
   def list_run_steps(run_id), do: ReadModels.list_run_steps(run_id)
   def list_active_timed_steps, do: ReadModels.list_active_timed_steps()
   def list_active_leases, do: ReadModels.list_active_leases()
+  def oldest_runnable_workflow_candidate, do: ReadModels.oldest_runnable_workflow_candidate()
+  def oldest_runnable_service_turn_candidate, do: ReadModels.oldest_runnable_service_turn_candidate()
+  def list_oldest_pending_runs(limit \\ 10), do: ReadModels.list_oldest_pending_runs(limit)
+  def count_pending_runs_by_project, do: ReadModels.count_pending_runs_by_project()
   def list_run_execs(run_id), do: ReadModels.list_run_execs(run_id)
   def list_run_waits(run_id), do: ReadModels.list_run_waits(run_id)
   def list_run_signals(run_id), do: ReadModels.list_run_signals(run_id)
@@ -497,4 +536,247 @@ defmodule VilanoKernel.Storage do
   end
 
   defp decorate_service_passivation(run), do: run
+
+  defp maybe_preempt_active_managed_worker(nil), do: :ok
+
+  defp maybe_preempt_active_managed_worker(run) do
+    case run["leaseWorkerId"] do
+      worker_id when is_binary(worker_id) ->
+        _ = VilanoKernel.ManagedWorker.kill_worker(worker_id, :admin_control)
+        :ok
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp admin_control_with_optional_preemption(run, fun) do
+    result =
+      try do
+        Infrastructure.transaction_with_busy_retry(fun, :admin_control)
+      rescue
+        error ->
+          if busy_exception?(error) and managed_worker_run?(run) do
+            maybe_preempt_active_managed_worker(run)
+            Infrastructure.transaction_with_busy_retry(fun, :admin_control)
+          else
+            reraise error, __STACKTRACE__
+          end
+      end
+
+    maybe_preempt_active_managed_worker(run)
+    unwrap_transaction_result(result)
+  end
+
+  defp managed_worker_run?(%{"leaseWorkerId" => "managed-local-" <> _rest}), do: true
+  defp managed_worker_run?(_run), do: false
+
+  defp busy_exception?(reason) when is_exception(reason) do
+    reason
+    |> Exception.message()
+    |> String.downcase()
+    |> busy_message?()
+  end
+
+  defp busy_exception?(reason) when is_binary(reason) do
+    reason
+    |> String.downcase()
+    |> busy_message?()
+  end
+
+  defp busy_exception?(_reason), do: false
+
+  defp busy_message?(message) do
+    String.contains?(message, "database busy") or
+      String.contains?(message, "database is locked") or
+      String.contains?(message, "busy")
+  end
+
+  defp list_project_active_managed_workers(project_name) do
+    list_active_leases()
+    |> Enum.filter(fn lease ->
+      lease["project"] == project_name and is_binary(lease["leaseWorkerId"])
+    end)
+    |> Enum.map(& &1["leaseWorkerId"])
+    |> Enum.uniq()
+  end
+
+  defp count_project_runs(project_name) do
+    Repo
+    |> SQL.query!("select count(*) from runs where project_name = ?", [project_name])
+    |> first_integer()
+  end
+
+  defp count_project_service_runs(project_name) do
+    Repo
+    |> SQL.query!(
+      """
+      select count(*)
+      from service_runs
+      where run_id in (select id from runs where project_name = ?)
+      """,
+      [project_name]
+    )
+    |> first_integer()
+  end
+
+  defp count_project_service_envelopes(project_name) do
+    Repo
+    |> SQL.query!(
+      """
+      select count(*)
+      from service_envelopes
+      where service_run_id in (select id from runs where project_name = ?)
+      """,
+      [project_name]
+    )
+    |> first_integer()
+  end
+
+  defp delete_project_runtime_rows!(project_name) do
+    delete_project_rows!(
+      """
+      delete from run_exit_events
+      where relationship_id in (
+        select id
+        from run_relationships
+        where
+          owner_run_id in (select id from runs where project_name = ?)
+          or target_run_id in (select id from runs where project_name = ?)
+      )
+      """,
+      [project_name, project_name]
+    )
+
+    delete_project_rows!(
+      "delete from run_signals where run_id in (select id from runs where project_name = ?)",
+      [project_name]
+    )
+
+    delete_project_rows!(
+      """
+      delete from run_service_refs
+      where
+        caller_run_id in (select id from runs where project_name = ?)
+        or service_run_id in (select id from runs where project_name = ?)
+      """,
+      [project_name, project_name]
+    )
+
+    delete_project_rows!(
+      """
+      delete from run_service_ops
+      where
+        caller_run_id in (select id from runs where project_name = ?)
+        or service_run_id in (select id from runs where project_name = ?)
+      """,
+      [project_name, project_name]
+    )
+
+    delete_project_rows!(
+      """
+      delete from service_envelopes
+      where
+        service_run_id in (select id from runs where project_name = ?)
+        or sender_run_id in (select id from runs where project_name = ?)
+      """,
+      [project_name, project_name]
+    )
+
+    delete_project_rows!(
+      """
+      delete from run_supervision_restarts
+      where
+        group_id in (
+          select id
+          from run_supervision_groups
+          where owner_run_id in (select id from runs where project_name = ?)
+        )
+        or child_run_id in (select id from runs where project_name = ?)
+      """,
+      [project_name, project_name]
+    )
+
+    delete_project_rows!(
+      """
+      delete from run_supervision_members
+      where
+        group_id in (
+          select id
+          from run_supervision_groups
+          where owner_run_id in (select id from runs where project_name = ?)
+        )
+        or current_child_run_id in (select id from runs where project_name = ?)
+      """,
+      [project_name, project_name]
+    )
+
+    delete_project_rows!(
+      """
+      delete from run_supervision_groups
+      where owner_run_id in (select id from runs where project_name = ?)
+      """,
+      [project_name]
+    )
+
+    delete_project_rows!(
+      """
+      delete from run_children
+      where
+        parent_run_id in (select id from runs where project_name = ?)
+        or child_run_id in (select id from runs where project_name = ?)
+      """,
+      [project_name, project_name]
+    )
+
+    delete_project_rows!(
+      "delete from run_waits where run_id in (select id from runs where project_name = ?)",
+      [project_name]
+    )
+
+    delete_project_rows!(
+      "delete from run_execs where run_id in (select id from runs where project_name = ?)",
+      [project_name]
+    )
+
+    delete_project_rows!(
+      "delete from run_steps where run_id in (select id from runs where project_name = ?)",
+      [project_name]
+    )
+
+    delete_project_rows!(
+      "delete from run_event_sequences where run_id in (select id from runs where project_name = ?)",
+      [project_name]
+    )
+
+    delete_project_rows!(
+      "delete from run_events where run_id in (select id from runs where project_name = ?)",
+      [project_name]
+    )
+
+    delete_project_rows!(
+      """
+      delete from run_relationships
+      where
+        owner_run_id in (select id from runs where project_name = ?)
+        or target_run_id in (select id from runs where project_name = ?)
+      """,
+      [project_name, project_name]
+    )
+
+    delete_project_rows!(
+      "delete from service_runs where run_id in (select id from runs where project_name = ?)",
+      [project_name]
+    )
+
+    delete_project_rows!(
+      "delete from runs where project_name = ?",
+      [project_name]
+    )
+  end
+
+  defp delete_project_rows!(query, args) do
+    SQL.query!(Repo, query, args)
+    :ok
+  end
 end

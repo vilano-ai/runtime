@@ -14,6 +14,12 @@ defmodule VilanoKernel.Storage.Infrastructure do
       multiplier: 1.5,
       max_delay_ms: 500
     },
+    admin_control: %{
+      attempts: 20,
+      base_delay_ms: 50,
+      multiplier: 1.6,
+      max_delay_ms: 2_500
+    },
     lease_maintenance: %{
       attempts: 10,
       base_delay_ms: 50,
