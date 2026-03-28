@@ -4,7 +4,7 @@ defmodule VilanoKernel.MixProject do
   def project do
     [
       app: :vilano_kernel,
-      version: "0.1.2",
+      version: "0.1.3",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps()
