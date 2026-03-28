@@ -41,6 +41,12 @@ defmodule VilanoKernel.Router.RuntimeViews do
       activeLeases: active_leases,
       managedWorkers: managed_worker_snapshot(runtime.managed_worker_count, active_leases),
       activeTimedSteps: Storage.list_active_timed_steps(),
+      leaseQueue: %{
+        workflowHead: Storage.oldest_runnable_workflow_candidate(),
+        serviceTurnHead: Storage.oldest_runnable_service_turn_candidate(),
+        oldestPendingRuns: Storage.list_oldest_pending_runs(),
+        pendingByProject: Storage.count_pending_runs_by_project()
+      },
       runStatusCounts: Storage.count_runs_by_status(),
       projectRunStatusCounts: Storage.count_runs_by_project_and_status()
     }
