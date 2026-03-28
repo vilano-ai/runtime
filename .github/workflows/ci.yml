@@ -39,11 +39,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Prepare Mix
-        run: |
-          mix local.hex --force
-          mix local.rebar --force
-          cd kernel
-          mix deps.get
+        run: bash scripts/prepare-mix.sh
 
       - name: Typecheck
         run: bun run typecheck
@@ -100,11 +96,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Prepare Mix
-        run: |
-          mix local.hex --force
-          mix local.rebar --force
-          cd kernel
-          mix deps.get
+        run: bash scripts/prepare-mix.sh
 
       - name: Compile kernel
         run: |
