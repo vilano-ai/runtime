@@ -73,6 +73,27 @@ defmodule VilanoKernel.Storage.InfrastructureTest do
     assert :atomics.get(attempts, 1) == 6
   end
 
+  test "run_with_busy_retry applies the admin control retry profile" do
+    attempts = :atomics.new(1, [])
+
+    result =
+      Infrastructure.run_with_busy_retry(
+        fn ->
+          attempt = :atomics.add_get(attempts, 1, 1)
+
+          if attempt < 8 do
+            raise "database busy"
+          end
+
+          :ok
+        end,
+        :admin_control
+      )
+
+    assert result == :ok
+    assert :atomics.get(attempts, 1) == 8
+  end
+
   test "run_with_busy_retry accepts custom retry policies" do
     attempts = :atomics.new(1, [])
 

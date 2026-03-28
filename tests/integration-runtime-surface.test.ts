@@ -262,15 +262,19 @@ test("kernel rejects unauthenticated localhost requests", async () => {
   }
 });
 
-test("runtime debug endpoint reports leases and backlog counts", async () => {
+test("runtime debug endpoint reports queue heads, leases, and backlog counts", async () => {
   const harness = await RuntimeHarness.create();
 
   try {
-    const run = await harness.startWorkflow("demo/blockingStep", {
+    const running = await harness.startWorkflow("demo/blockingStep", {
       durationMs: 5_000,
     });
 
-    await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "running");
+    await harness.waitForRun(running.run.id, (inspect) => inspect.run.status === "running");
+
+    const pending = await harness.startWorkflow("demo/planner", {
+      topic: "runtime-debug-queue-head",
+    });
 
     const response = await harness.requestKernel("/v1/admin/runtime-debug");
     expect(response.status).toBe(200);
@@ -283,6 +287,12 @@ test("runtime debug endpoint reports leases and backlog counts", async () => {
       };
       activeLeases: Array<{ runId: string; leaseId: string; leaseWorkerId: string | null }>;
       managedWorkers: Array<{ workerId: string; activeLeaseCount: number }>;
+      leaseQueue: {
+        workflowHead: { id: string } | null;
+        serviceTurnHead: unknown | null;
+        oldestPendingRuns: Array<{ id: string }>;
+        pendingByProject: Array<{ project: string; count: number }>;
+      };
       runStatusCounts: Array<{ status: string; count: number }>;
       projectRunStatusCounts: Array<{ project: string; status: string; count: number }>;
     };
@@ -290,8 +300,16 @@ test("runtime debug endpoint reports leases and backlog counts", async () => {
     expect(body.ok).toBe(true);
     expect(body.busyRetries.profiles).toBeObject();
     expect(Array.isArray(body.busyRetries.recentExhausted)).toBe(true);
-    expect(body.activeLeases.some((lease) => lease.runId === run.run.id)).toBe(true);
+    expect(body.activeLeases.some((lease) => lease.runId === running.run.id)).toBe(true);
     expect(body.managedWorkers.length).toBeGreaterThan(0);
+    expect(body.leaseQueue.workflowHead?.id).toBe(pending.run.id);
+    expect(body.leaseQueue.serviceTurnHead).toBeNull();
+    expect(body.leaseQueue.oldestPendingRuns.some((run) => run.id === pending.run.id)).toBe(true);
+    expect(
+      body.leaseQueue.pendingByProject.some(
+        (entry) => entry.project === "demo" && Number(entry.count) >= 1
+      )
+    ).toBe(true);
     expect(
       body.runStatusCounts.some((entry) => entry.status === "running" && Number(entry.count) >= 1)
     ).toBe(true);
@@ -300,6 +318,52 @@ test("runtime debug endpoint reports leases and backlog counts", async () => {
         (entry) => entry.project === "demo" && entry.status === "running" && Number(entry.count) >= 1
       )
     ).toBe(true);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("project purge-runtime clears persisted runs and service state for one project", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const serviceKey = { sessionId: "purge-runtime" };
+    await harness.ensureService("demo/operator", serviceKey);
+
+    const run = await harness.startWorkflow("demo/planner", { topic: "purge-runtime" });
+    await harness.waitForRun(run.run.id, (inspect) => inspect.run.status === "completed");
+
+    const purged = await harness.runCliJson<{
+      ok: true;
+      project: string;
+      purgedRunCount: number;
+      purgedServiceRunCount: number;
+      purgedEnvelopeCount: number;
+      killedManagedWorkerIds: string[];
+      purgedAt: string;
+    }>(["project", "purge-runtime", "demo"]);
+
+    expect(purged.ok).toBe(true);
+    expect(purged.project).toBe("demo");
+    expect(purged.purgedRunCount).toBeGreaterThan(0);
+    expect(purged.purgedServiceRunCount).toBeGreaterThan(0);
+
+    const runsResponse = await harness.requestKernel("/v1/runs?project=demo");
+    expect(runsResponse.status).toBe(200);
+    const runsBody = (await runsResponse.json()) as { ok: true; runs: Array<unknown> };
+    expect(runsBody.runs).toHaveLength(0);
+
+    const serviceRunsResponse = await harness.requestKernel("/v1/service-runs?project=demo");
+    expect(serviceRunsResponse.status).toBe(200);
+    const serviceRunsBody = (await serviceRunsResponse.json()) as { ok: true; runs: Array<unknown> };
+    expect(serviceRunsBody.runs).toHaveLength(0);
+
+    const fresh = await harness.startWorkflow("demo/planner", { topic: "post-purge-runtime" });
+    const freshInspect = await harness.waitForRun(
+      fresh.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+    expect(freshInspect.run.status).toBe("completed");
   } finally {
     await harness.dispose();
   }
