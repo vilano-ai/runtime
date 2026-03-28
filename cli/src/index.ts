@@ -120,7 +120,7 @@ function renderTopLevelHelp(): string {
     "  vilano doctor [--fix]",
     "  vilano init [path] [--starter] [--force]",
     "  vilano daemon start|status|debug|stop",
-    "  vilano project add|list|inspect|sync|remove",
+    "  vilano project add|list|inspect|sync|remove|purge-runtime",
     "  vilano workflow list|inspect",
     "  vilano run start|list|inspect|explain|replay|cancel",
     "  vilano worker start",
@@ -182,8 +182,14 @@ function renderProjectHelp(command?: string): string {
       ].join("\n");
     case "remove":
       return ["Usage: vilano project remove <project> [--json]", "", "Remove a project registration."].join("\n");
+    case "purge-runtime":
+      return [
+        "Usage: vilano project purge-runtime <project> [--json]",
+        "",
+        "Force-clear persisted runs, service state, and queued envelopes for one project without wiping the full runtime home.",
+      ].join("\n");
     default:
-      return ["Usage: vilano project <add|list|inspect|sync|remove> [--json]", "", "Manage the local project registry."].join("\n");
+      return ["Usage: vilano project <add|list|inspect|sync|remove|purge-runtime> [--json]", "", "Manage the local project registry."].join("\n");
   }
 }
 

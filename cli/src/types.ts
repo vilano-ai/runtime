@@ -126,6 +126,34 @@ export interface RuntimeDebugResponse {
     leaseId: string;
     leaseWorkerId: string | null;
   }>;
+  leaseQueue: {
+    workflowHead: RunRecord | null;
+    serviceTurnHead: {
+      envelopeId: string;
+      runId: string;
+      project: string;
+      definitionName: string;
+      serviceKey: string;
+      kind: "send" | "ask" | "signal";
+      name: string;
+      attempt: number | null;
+      status: string;
+      correlationId: string | null;
+      senderRunId: string | null;
+      wakeAt: string | null;
+      createdAt: string;
+      updatedAt: string;
+      runStatus: RunStatus;
+      leaseId: string | null;
+      leaseWorkerId: string | null;
+      leaseExpiresAt: string | null;
+    } | null;
+    oldestPendingRuns: RunRecord[];
+    pendingByProject: Array<{
+      project: string;
+      count: number;
+    }>;
+  };
   runStatusCounts: Array<{
     status: RunStatus;
     count: number;
@@ -145,6 +173,16 @@ export interface ProjectListResponse {
 export interface ProjectResponse {
   ok: true;
   project: ProjectRecord;
+}
+
+export interface ProjectPurgeRuntimeResponse {
+  ok: true;
+  project: string;
+  purgedRunCount: number;
+  purgedServiceRunCount: number;
+  purgedEnvelopeCount: number;
+  killedManagedWorkerIds: string[];
+  purgedAt: string;
 }
 
 export interface DefinitionListResponse {

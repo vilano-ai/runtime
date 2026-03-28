@@ -19,6 +19,7 @@ import type {
   DefinitionListResponse,
   ErrorResponse,
   ProjectListResponse,
+  ProjectPurgeRuntimeResponse,
   ProjectResponse,
   ProjectRecord,
   ServiceEnsureResponse,
@@ -391,6 +392,14 @@ export async function removeProject(name: string): Promise<ProjectResponse> {
   return requestJson<ProjectResponse>({
     method: "DELETE",
     pathname: `/v1/projects/${encodeURIComponent(name)}`,
+    autoStart: true,
+  });
+}
+
+export async function purgeProjectRuntime(name: string): Promise<ProjectPurgeRuntimeResponse> {
+  return requestJson<ProjectPurgeRuntimeResponse>({
+    method: "POST",
+    pathname: `/v1/projects/${encodeURIComponent(name)}/purge-runtime`,
     autoStart: true,
   });
 }

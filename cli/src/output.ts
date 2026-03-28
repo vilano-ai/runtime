@@ -82,6 +82,26 @@ export function renderDaemonDebug(body: RuntimeDebugResponse): string {
             }`
         )
       : ["  none"]),
+    "lease_queue:",
+    body.leaseQueue.workflowHead
+      ? `  workflow_head: run=${body.leaseQueue.workflowHead.id} project=${body.leaseQueue.workflowHead.project} definition=${body.leaseQueue.workflowHead.definitionName} status=${body.leaseQueue.workflowHead.status} created=${body.leaseQueue.workflowHead.createdAt}`
+      : "  workflow_head: none",
+    body.leaseQueue.serviceTurnHead
+      ? `  service_turn_head: run=${body.leaseQueue.serviceTurnHead.runId} project=${body.leaseQueue.serviceTurnHead.project} definition=${body.leaseQueue.serviceTurnHead.definitionName} service_key=${body.leaseQueue.serviceTurnHead.serviceKey} envelope=${body.leaseQueue.serviceTurnHead.envelopeId} status=${body.leaseQueue.serviceTurnHead.status} created=${body.leaseQueue.serviceTurnHead.createdAt}`
+      : "  service_turn_head: none",
+    "pending_runs_by_project:",
+    ...(body.leaseQueue.pendingByProject.length > 0
+      ? body.leaseQueue.pendingByProject.map(
+          (entry) => `  ${entry.project}: ${entry.count}`
+        )
+      : ["  none"]),
+    "oldest_pending_runs:",
+    ...(body.leaseQueue.oldestPendingRuns.length > 0
+      ? body.leaseQueue.oldestPendingRuns.slice(0, 5).map(
+          (run) =>
+            `  ${run.id} project=${run.project} definition=${run.definitionName} status=${run.status} created=${run.createdAt}`
+        )
+      : ["  none"]),
     "active_lease_detail:",
     ...(activeLeases.length > 0
       ? activeLeases.map(

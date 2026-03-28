@@ -370,6 +370,176 @@ defmodule VilanoKernel.Storage.ReadModels do
     end)
   end
 
+  def oldest_runnable_workflow_candidate do
+    now = Infrastructure.now_iso8601()
+
+    Repo
+    |> SQL.query!(
+      """
+      select
+        id,
+        project_name,
+        definition_kind,
+        definition_name,
+        project_snapshot_path,
+        project_definitions_json,
+        definition_file,
+        definition_export_name,
+        definition_runtime_kind,
+        definition_source_language,
+        status,
+        lease_id,
+        lease_worker_id,
+        lease_expires_at,
+        input_json,
+        output_json,
+        error_json,
+        created_at,
+        updated_at
+      from runs
+      where
+        definition_kind = 'workflow'
+        and status in ('pending', 'running')
+        and (lease_expires_at is null or lease_expires_at < ?)
+      order by created_at asc
+      limit 1
+      """,
+      [now]
+    )
+    |> rows_to_maps()
+    |> List.first()
+    |> case do
+      nil -> nil
+      row -> run_from_row(row)
+    end
+  end
+
+  def oldest_runnable_service_turn_candidate do
+    now = Infrastructure.now_iso8601()
+
+    Repo
+    |> SQL.query!(
+      """
+      select
+        e.id,
+        e.service_run_id,
+        e.kind,
+        e.name,
+        e.attempt,
+        e.correlation_id,
+        e.sender_run_id,
+        e.status as envelope_status,
+        e.wake_at,
+        e.created_at as envelope_created_at,
+        e.updated_at as envelope_updated_at,
+        r.project_name,
+        r.definition_name,
+        r.status as run_status,
+        r.lease_id,
+        r.lease_worker_id,
+        r.lease_expires_at,
+        s.service_key
+      from service_envelopes e
+      join runs r on r.id = e.service_run_id
+      join service_runs s on s.run_id = e.service_run_id
+      where
+        (e.status = 'processing' or (e.status = 'queued' and (e.wake_at is null or e.wake_at <= ?)))
+        and r.definition_kind = 'service'
+        and r.status in ('idle', 'pending', 'active')
+        and (r.lease_expires_at is null or r.lease_expires_at < ?)
+      order by
+        case when e.status = 'processing' then 0 else 1 end asc,
+        e.created_at asc
+      limit 1
+      """,
+      [now, now]
+    )
+    |> rows_to_maps()
+    |> List.first()
+    |> case do
+      nil ->
+        nil
+
+      row ->
+        %{
+          "envelopeId" => row["id"],
+          "runId" => row["service_run_id"],
+          "project" => row["project_name"],
+          "definitionName" => row["definition_name"],
+          "serviceKey" => row["service_key"],
+          "kind" => row["kind"],
+          "name" => row["name"],
+          "attempt" => row["attempt"],
+          "status" => row["envelope_status"],
+          "correlationId" => row["correlation_id"],
+          "senderRunId" => row["sender_run_id"],
+          "wakeAt" => row["wake_at"],
+          "createdAt" => row["envelope_created_at"],
+          "updatedAt" => row["envelope_updated_at"],
+          "runStatus" => row["run_status"],
+          "leaseId" => row["lease_id"],
+          "leaseWorkerId" => row["lease_worker_id"],
+          "leaseExpiresAt" => row["lease_expires_at"]
+        }
+    end
+  end
+
+  def list_oldest_pending_runs(limit \\ 10) do
+    Repo
+    |> SQL.query!(
+      """
+      select
+        id,
+        project_name,
+        definition_kind,
+        definition_name,
+        project_snapshot_path,
+        project_definitions_json,
+        definition_file,
+        definition_export_name,
+        definition_runtime_kind,
+        definition_source_language,
+        status,
+        lease_id,
+        lease_worker_id,
+        lease_expires_at,
+        input_json,
+        output_json,
+        error_json,
+        created_at,
+        updated_at
+      from runs
+      where status = 'pending'
+      order by created_at asc
+      limit ?
+      """,
+      [limit]
+    )
+    |> rows_to_maps()
+    |> Enum.map(&run_from_row/1)
+  end
+
+  def count_pending_runs_by_project do
+    Repo
+    |> SQL.query!(
+      """
+      select project_name, count(*) as count
+      from runs
+      where status = 'pending'
+      group by project_name
+      order by project_name asc
+      """,
+      []
+    )
+    |> rows_to_maps()
+    |> Enum.map(fn row ->
+      %{
+        "project" => row["project_name"],
+        "count" => row["count"]
+      }
+    end)
+  end
+
   def count_runs_by_status do
     Repo
     |> SQL.query!(
