@@ -5,6 +5,7 @@ import {
   inspectProject,
   listReferencedProjectSnapshots,
   listProjects,
+  purgeProjectRuntime,
   removeProject,
   syncProject,
 } from "../daemon-client.ts";
@@ -122,8 +123,23 @@ export async function handleProjectCommand(
       writeOutput(flags, response, (body) => `Removed project ${body.project.name}`);
       return 0;
     }
+    case "purge-runtime": {
+      const projectName = args[1];
+      if (!projectName) {
+        throw new CliError("Usage: vilano project purge-runtime <project>");
+      }
+
+      const response = await purgeProjectRuntime(projectName);
+      writeOutput(
+        flags,
+        response,
+        (body) =>
+          `Purged runtime state for ${body.project} runs=${body.purgedRunCount} services=${body.purgedServiceRunCount} envelopes=${body.purgedEnvelopeCount} killed_workers=${body.killedManagedWorkerIds.length}`
+      );
+      return 0;
+    }
     default:
-      throw new CliError("Usage: vilano project add|list|inspect|sync|remove");
+      throw new CliError("Usage: vilano project add|list|inspect|sync|remove|purge-runtime");
   }
 }
 
