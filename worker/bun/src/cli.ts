@@ -31,11 +31,16 @@ function parseArgs(argv: string[]): ParsedArgs {
 
 if (import.meta.main) {
   const parsed = parseArgs(process.argv.slice(2));
+  const once = Boolean(parsed.flags.once);
 
   await startWorker({
     serverUrl: typeof parsed.flags.server === "string" ? parsed.flags.server : undefined,
     workerId: typeof parsed.flags["worker-id"] === "string" ? parsed.flags["worker-id"] : undefined,
     authToken: typeof parsed.flags.token === "string" ? parsed.flags.token : undefined,
-    once: Boolean(parsed.flags.once),
+    once,
   });
+
+  if (once) {
+    process.exit(0);
+  }
 }

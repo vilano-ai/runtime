@@ -25,6 +25,28 @@ export const workerPidProbe = workflow({
   run: async () => ({ pid: process.pid }),
 });
 
+export const lingeringHandleProbe = workflow({
+  name: "lingeringHandleProbe",
+  run: async () => {
+    setInterval(() => {
+      // Intentionally leaked to verify per-activation workers still terminate after --once.
+    }, 60_000);
+
+    return { pid: process.pid };
+  },
+});
+
+export const childFollowupProbe = workflow({
+  name: "childFollowupProbe",
+  run: async (_input, ctx) => {
+    const first = ctx.spawn(lingeringHandleProbe, {}, { key: "first" });
+    const firstResult = await first.result();
+    const second = ctx.spawn(workerPidProbe, {}, { key: "second" });
+    const secondResult = await second.result();
+    return { first: firstResult, second: secondResult };
+  },
+});
+
 export const moduleStateProbe = workflow({
   name: "moduleStateProbe",
   run: async (_input, ctx) => {

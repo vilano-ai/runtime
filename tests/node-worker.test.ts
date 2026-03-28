@@ -65,3 +65,34 @@ test("managed Node workers can drive workflow and service orchestration", async 
     await harness.dispose();
   }
 });
+
+test("managed Node workers exit after workflows leave lingering event-loop handles", async () => {
+  const harness = await RuntimeHarness.create({
+    env: {
+      VILANO_MANAGED_WORKER_RUNTIME: "node",
+    },
+  });
+
+  try {
+    const first = await harness.startWorkflow("demo/lingeringHandleProbe", {});
+    const firstCompleted = await harness.waitForRun(
+      first.run.id,
+      (inspect) => inspect.run.status === "completed"
+    );
+
+    const second = await harness.startWorkflow("demo/workerPidProbe", {});
+    const secondCompleted = await harness.waitForRun(
+      second.run.id,
+      (inspect) => inspect.run.status === "completed",
+      10_000
+    );
+
+    expect(firstCompleted.run.output).toBeTruthy();
+    expect(secondCompleted.run.output).toBeTruthy();
+    expect((firstCompleted.run.output as { pid: number }).pid).not.toBe(
+      (secondCompleted.run.output as { pid: number }).pid
+    );
+  } finally {
+    await harness.dispose();
+  }
+});

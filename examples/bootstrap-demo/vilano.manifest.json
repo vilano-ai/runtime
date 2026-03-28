@@ -84,6 +84,14 @@
       },
       {
         "kind": "workflow",
+        "name": "childFollowupProbe",
+        "exportName": "childFollowupProbe",
+        "file": "src/runtime-probes.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
         "name": "cooperativeStep",
         "exportName": "cooperativeStep",
         "file": "src/workflows-core.ts",
@@ -119,6 +127,14 @@
         "name": "gate",
         "exportName": "gate",
         "file": "src/workflows-core.ts",
+        "runtimeKind": "javascript",
+        "sourceLanguage": "typescript"
+      },
+      {
+        "kind": "workflow",
+        "name": "lingeringHandleProbe",
+        "exportName": "lingeringHandleProbe",
+        "file": "src/runtime-probes.ts",
         "runtimeKind": "javascript",
         "sourceLanguage": "typescript"
       },
