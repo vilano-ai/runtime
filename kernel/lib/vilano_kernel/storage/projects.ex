@@ -7,57 +7,70 @@ defmodule VilanoKernel.Storage.Projects do
   alias VilanoKernel.Storage.Infrastructure
 
   def project_count do
-    Repo
-    |> SQL.query!("select count(*) from projects", [])
-    |> first_integer()
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        Repo
+        |> SQL.query!("select count(*) from projects", [])
+        |> first_integer()
+      end,
+      :public_read
+    )
   end
 
   def list_projects do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        name,
-        path,
-        snapshot_path,
-        last_synced_at,
-        definitions_manifest_hash,
-        workflows_json,
-        services_json
-      from projects
-      order by name asc
-      """,
-      []
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        Repo
+        |> SQL.query!(
+          """
+          select
+            name,
+            path,
+            snapshot_path,
+            last_synced_at,
+            definitions_manifest_hash,
+            workflows_json,
+            services_json
+          from projects
+          order by name asc
+          """,
+          []
+        )
+        |> rows_to_maps()
+        |> Enum.map(&project_from_row/1)
+      end,
+      :public_read
     )
-    |> rows_to_maps()
-    |> Enum.map(&project_from_row/1)
   end
 
   def get_project(name) do
-    Infrastructure.run_with_busy_retry(fn ->
-      Repo
-      |> SQL.query!(
-        """
-        select
-          name,
-          path,
-          snapshot_path,
-          last_synced_at,
-          definitions_manifest_hash,
-          workflows_json,
-          services_json
-        from projects
-        where name = ?
-        """,
-        [name]
-      )
-      |> rows_to_maps()
-      |> List.first()
-      |> case do
-        nil -> nil
-        row -> project_from_row(row)
-      end
-    end)
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        Repo
+        |> SQL.query!(
+          """
+          select
+            name,
+            path,
+            snapshot_path,
+            last_synced_at,
+            definitions_manifest_hash,
+            workflows_json,
+            services_json
+          from projects
+          where name = ?
+          """,
+          [name]
+        )
+        |> rows_to_maps()
+        |> List.first()
+        |> case do
+          nil -> nil
+          row -> project_from_row(row)
+        end
+      end,
+      :public_read
+    )
   end
 
   def upsert_project!(project) do
@@ -149,6 +162,7 @@ defmodule VilanoKernel.Storage.Projects do
       services_json = excluded.services_json
     """
   end
+
   def list_definitions(kind, project_name \\ nil)
 
   def list_definitions(kind, nil) do
