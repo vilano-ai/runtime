@@ -6,70 +6,72 @@ defmodule VilanoKernel.Storage.ReadModels do
   alias VilanoKernel.Storage.Infrastructure
 
   def list_runs(project_name \\ nil) do
-    query =
-      if is_nil(project_name) do
-        """
-        select
-          id,
-          project_name,
-          definition_kind,
-          definition_name,
-          project_snapshot_path,
-          project_definitions_json,
-          definition_file,
-          definition_export_name,
-          definition_runtime_kind,
-          definition_source_language,
-          status,
-          lease_id,
-          lease_worker_id,
-          lease_expires_at,
-          input_json,
-          output_json,
-          error_json,
-          created_at,
-          updated_at
-        from runs
-        order by created_at desc
-        """
-      else
-        """
-        select
-          id,
-          project_name,
-          definition_kind,
-          definition_name,
-          project_snapshot_path,
-          project_definitions_json,
-          definition_file,
-          definition_export_name,
-          definition_runtime_kind,
-          definition_source_language,
-          status,
-          lease_id,
-          lease_worker_id,
-          lease_expires_at,
-          input_json,
-          output_json,
-          error_json,
-          created_at,
-          updated_at
-        from runs
-        where project_name = ?
-        order by created_at desc
-        """
-      end
+    public_read(fn ->
+      query =
+        if is_nil(project_name) do
+          """
+          select
+            id,
+            project_name,
+            definition_kind,
+            definition_name,
+            project_snapshot_path,
+            project_definitions_json,
+            definition_file,
+            definition_export_name,
+            definition_runtime_kind,
+            definition_source_language,
+            status,
+            lease_id,
+            lease_worker_id,
+            lease_expires_at,
+            input_json,
+            output_json,
+            error_json,
+            created_at,
+            updated_at
+          from runs
+          order by created_at desc
+          """
+        else
+          """
+          select
+            id,
+            project_name,
+            definition_kind,
+            definition_name,
+            project_snapshot_path,
+            project_definitions_json,
+            definition_file,
+            definition_export_name,
+            definition_runtime_kind,
+            definition_source_language,
+            status,
+            lease_id,
+            lease_worker_id,
+            lease_expires_at,
+            input_json,
+            output_json,
+            error_json,
+            created_at,
+            updated_at
+          from runs
+          where project_name = ?
+          order by created_at desc
+          """
+        end
 
-    args = if is_nil(project_name), do: [], else: [project_name]
+      args = if is_nil(project_name), do: [], else: [project_name]
 
-    Repo
-    |> SQL.query!(query, args)
-    |> rows_to_maps()
-    |> Enum.map(&run_from_row/1)
+      Repo
+      |> SQL.query!(query, args)
+      |> rows_to_maps()
+      |> Enum.map(&run_from_row/1)
+    end)
   end
 
   def get_run(run_id) do
-    Infrastructure.run_with_busy_retry(fn ->
+    public_read(fn ->
       Repo
       |> SQL.query!(
         """
@@ -108,58 +110,62 @@ defmodule VilanoKernel.Storage.ReadModels do
   end
 
   def list_run_events(run_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        id,
-        run_id,
-        seq,
-        event_type,
-        body_json,
-        created_at
-      from run_events
-      where run_id = ?
-      order by seq asc
-      """,
-      [run_id]
-    )
-    |> rows_to_maps()
-    |> Enum.map(&run_event_from_row/1)
+    public_read(fn ->
+      Repo
+      |> SQL.query!(
+        """
+        select
+          id,
+          run_id,
+          seq,
+          event_type,
+          body_json,
+          created_at
+        from run_events
+        where run_id = ?
+        order by seq asc
+        """,
+        [run_id]
+      )
+      |> rows_to_maps()
+      |> Enum.map(&run_event_from_row/1)
+    end)
   end
 
   def list_run_steps(run_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        run_id,
-        op_key,
-        name,
-        status,
-        attempt,
-        max_attempts,
-        backoff_kind,
-        backoff_ms,
-        backoff_step_ms,
-        backoff_factor,
-        max_backoff_ms,
-        backoff_jitter_kind,
-        backoff_jitter_ratio,
-        retry_on_json,
-        timeout_ms,
-        output_json,
-        error_json,
-        created_at,
-        updated_at
-      from run_steps
-      where run_id = ?
-      order by created_at asc
-      """,
-      [run_id]
-    )
-    |> rows_to_maps()
-    |> Enum.map(&step_from_row/1)
+    public_read(fn ->
+      Repo
+      |> SQL.query!(
+        """
+        select
+          run_id,
+          op_key,
+          name,
+          status,
+          attempt,
+          max_attempts,
+          backoff_kind,
+          backoff_ms,
+          backoff_step_ms,
+          backoff_factor,
+          max_backoff_ms,
+          backoff_jitter_kind,
+          backoff_jitter_ratio,
+          retry_on_json,
+          timeout_ms,
+          output_json,
+          error_json,
+          created_at,
+          updated_at
+        from run_steps
+        where run_id = ?
+        order by created_at asc
+        """,
+        [run_id]
+      )
+      |> rows_to_maps()
+      |> Enum.map(&step_from_row/1)
+    end)
   end
 
   def list_active_timed_steps do
@@ -202,133 +208,143 @@ defmodule VilanoKernel.Storage.ReadModels do
   end
 
   def list_run_execs(run_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        run_id,
-        op_key,
-        name,
-        status,
-        cmd,
-        args_json,
-        cwd,
-        env_json,
-        timeout_ms,
-        attempt,
-        exit_code,
-        signal_code,
-        stdout_ref,
-        stderr_ref,
-        artifacts_json,
-        output_json,
-        error_json,
-        created_at,
-        updated_at
-      from run_execs
-      where run_id = ?
-      order by created_at asc
-      """,
-      [run_id]
-    )
-    |> rows_to_maps()
-    |> Enum.map(&exec_from_row/1)
+    public_read(fn ->
+      Repo
+      |> SQL.query!(
+        """
+        select
+          run_id,
+          op_key,
+          name,
+          status,
+          cmd,
+          args_json,
+          cwd,
+          env_json,
+          timeout_ms,
+          attempt,
+          exit_code,
+          signal_code,
+          stdout_ref,
+          stderr_ref,
+          artifacts_json,
+          output_json,
+          error_json,
+          created_at,
+          updated_at
+        from run_execs
+        where run_id = ?
+        order by created_at asc
+        """,
+        [run_id]
+      )
+      |> rows_to_maps()
+      |> Enum.map(&exec_from_row/1)
+    end)
   end
 
   def list_run_waits(run_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        run_id,
-        op_key,
-        wait_kind,
-        wait_name,
-        status,
-        wake_at,
-        output_json,
-        created_at,
-        updated_at
-      from run_waits
-      where run_id = ?
-      order by created_at asc
-      """,
-      [run_id]
-    )
-    |> rows_to_maps()
-    |> Enum.map(&wait_from_row/1)
+    public_read(fn ->
+      Repo
+      |> SQL.query!(
+        """
+        select
+          run_id,
+          op_key,
+          wait_kind,
+          wait_name,
+          status,
+          wake_at,
+          output_json,
+          created_at,
+          updated_at
+        from run_waits
+        where run_id = ?
+        order by created_at asc
+        """,
+        [run_id]
+      )
+      |> rows_to_maps()
+      |> Enum.map(&wait_from_row/1)
+    end)
   end
 
   def list_run_signals(run_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        id,
-        run_id,
-        signal_name,
-        payload_json,
-        consumed_at,
-        created_at
-      from run_signals
-      where run_id = ?
-      order by created_at asc
-      """,
-      [run_id]
-    )
-    |> rows_to_maps()
-    |> Enum.map(&signal_from_row/1)
+    public_read(fn ->
+      Repo
+      |> SQL.query!(
+        """
+        select
+          id,
+          run_id,
+          signal_name,
+          payload_json,
+          consumed_at,
+          created_at
+        from run_signals
+        where run_id = ?
+        order by created_at asc
+        """,
+        [run_id]
+      )
+      |> rows_to_maps()
+      |> Enum.map(&signal_from_row/1)
+    end)
   end
 
   def list_run_children(run_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        parent_run_id,
-        op_key,
-        child_run_id,
-        definition_name,
-        status,
-        created_at,
-        updated_at
-      from run_children
-      where parent_run_id = ?
-      order by created_at asc
-      """,
-      [run_id]
-    )
-    |> rows_to_maps()
-    |> Enum.map(&child_from_row/1)
+    public_read(fn ->
+      Repo
+      |> SQL.query!(
+        """
+        select
+          parent_run_id,
+          op_key,
+          child_run_id,
+          definition_name,
+          status,
+          created_at,
+          updated_at
+        from run_children
+        where parent_run_id = ?
+        order by created_at asc
+        """,
+        [run_id]
+      )
+      |> rows_to_maps()
+      |> Enum.map(&child_from_row/1)
+    end)
   end
 
   def list_service_envelopes(service_run_id) do
-    Repo
-    |> SQL.query!(
-      """
-      select
-        id,
-        service_run_id,
-        kind,
-        name,
-        attempt,
-        payload_json,
-        correlation_id,
-        sender_run_id,
-        status,
-        reply_json,
-        error_json,
-        wake_at,
-        created_at,
-        updated_at
-      from service_envelopes
-      where service_run_id = ?
-      order by created_at asc
-      """,
-      [service_run_id]
-    )
-    |> rows_to_maps()
-    |> Enum.map(&service_envelope_from_row/1)
+    public_read(fn ->
+      Repo
+      |> SQL.query!(
+        """
+        select
+          id,
+          service_run_id,
+          kind,
+          name,
+          attempt,
+          payload_json,
+          correlation_id,
+          sender_run_id,
+          status,
+          reply_json,
+          error_json,
+          wake_at,
+          created_at,
+          updated_at
+        from service_envelopes
+        where service_run_id = ?
+        order by created_at asc
+        """,
+        [service_run_id]
+      )
+      |> rows_to_maps()
+      |> Enum.map(&service_envelope_from_row/1)
+    end)
   end
 
   def list_active_leases do
@@ -579,6 +595,10 @@ defmodule VilanoKernel.Storage.ReadModels do
         "count" => row["count"]
       }
     end)
+  end
+
+  defp public_read(fun) do
+    Infrastructure.run_with_busy_retry(fun, :public_read)
   end
 
   defp run_from_row(row) do
