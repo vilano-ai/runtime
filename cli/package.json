@@ -1,6 +1,6 @@
 {
   "name": "vilano",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "description": "Vilano Runtime CLI for local durable workflow and service orchestration.",
   "bin": {
