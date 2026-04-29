@@ -26,6 +26,12 @@ defmodule VilanoKernel.Storage.Infrastructure do
       multiplier: 1.5,
       max_delay_ms: 1_000
     },
+    public_read: %{
+      attempts: 20,
+      base_delay_ms: 25,
+      multiplier: 1.5,
+      max_delay_ms: 1_000
+    },
     run_creation: %{
       attempts: 20,
       base_delay_ms: 50,
@@ -122,6 +128,8 @@ defmodule VilanoKernel.Storage.Infrastructure do
   defp busy_message?(message) do
     String.contains?(message, "database busy") or
       String.contains?(message, "database is locked") or
+      String.contains?(message, "connection not available") or
+      String.contains?(message, "request was dropped from queue") or
       String.contains?(message, "busy")
   end
 

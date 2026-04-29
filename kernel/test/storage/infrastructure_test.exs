@@ -39,6 +39,24 @@ defmodule VilanoKernel.Storage.InfrastructureTest do
     assert :atomics.get(attempts, 1) == 3
   end
 
+  test "run_with_busy_retry retries connection pool queue pressure" do
+    attempts = :atomics.new(1, [])
+
+    result =
+      Infrastructure.run_with_busy_retry(fn ->
+        attempt = :atomics.add_get(attempts, 1, 1)
+
+        if attempt < 3 do
+          raise "connection not available and request was dropped from queue after 100ms"
+        end
+
+        :ok
+      end)
+
+    assert result == :ok
+    assert :atomics.get(attempts, 1) == 3
+  end
+
   test "run_with_busy_retry does not retry non-busy errors" do
     attempts = :atomics.new(1, [])
 
@@ -92,6 +110,27 @@ defmodule VilanoKernel.Storage.InfrastructureTest do
 
     assert result == :ok
     assert :atomics.get(attempts, 1) == 8
+  end
+
+  test "run_with_busy_retry applies the public read retry profile" do
+    attempts = :atomics.new(1, [])
+
+    result =
+      Infrastructure.run_with_busy_retry(
+        fn ->
+          attempt = :atomics.add_get(attempts, 1, 1)
+
+          if attempt < 6 do
+            raise "connection not available"
+          end
+
+          :ok
+        end,
+        :public_read
+      )
+
+    assert result == :ok
+    assert :atomics.get(attempts, 1) == 6
   end
 
   test "run_with_busy_retry accepts custom retry policies" do
