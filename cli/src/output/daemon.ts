@@ -1,6 +1,7 @@
 import type {
   DaemonStatusResponse,
   RuntimeDebugResponse,
+  RuntimePruneResponse,
   RuntimeStorageResponse,
 } from "../types.ts";
 
@@ -111,6 +112,23 @@ export function renderDaemonStorage(body: RuntimeStorageResponse): string {
     `  service_states: count=${body.database.serviceStates.count} state_json=${formatBytes(body.database.serviceStates.bytes)}`,
     `  service_envelopes: count=${body.database.serviceEnvelopes.count} payload_json=${formatBytes(body.database.serviceEnvelopes.bytes)}`,
     `  run_execs: count=${body.database.runExecs.count} metadata_json=${formatBytes(body.database.runExecs.bytes)}`,
+  ].join("\n");
+}
+
+export function renderDaemonPrune(body: RuntimePruneResponse): string {
+  return [
+    `Vilano Runtime prune ${body.dryRun ? "dry run" : "complete"}`,
+    `pruned_at: ${body.prunedAt}`,
+    "project_snapshots:",
+    `  candidates: ${body.projectSnapshots.candidateCount} (${formatBytes(body.projectSnapshots.candidateBytes)})`,
+    `  removed: ${body.projectSnapshots.removedCount} (${formatBytes(body.projectSnapshots.removedBytes)})`,
+    "run_workspaces:",
+    `  ttl_seconds: ${body.runWorkspaces.ttlSeconds}`,
+    `  candidates: ${body.runWorkspaces.candidateCount} (${formatBytes(body.runWorkspaces.candidateBytes)})`,
+    `  removed: ${body.runWorkspaces.removedCount} (${formatBytes(body.runWorkspaces.removedBytes)})`,
+    "event_payloads:",
+    `  grace_seconds: ${body.eventPayloads.graceSeconds}`,
+    `  garbage_collected: ${body.eventPayloads.garbageCollected}`,
   ].join("\n");
 }
 

@@ -1,6 +1,7 @@
 export { writeOutput } from "./output/base.ts";
 export {
   renderDaemonDebug,
+  renderDaemonPrune,
   renderDaemonStatus,
   renderDaemonStorage,
 } from "./output/daemon.ts";

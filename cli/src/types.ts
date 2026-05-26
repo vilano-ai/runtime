@@ -196,6 +196,31 @@ export interface RuntimeStorageResponse {
   };
 }
 
+export interface RuntimePruneResponse {
+  ok: true;
+  dryRun: boolean;
+  prunedAt: string;
+  projectSnapshots: {
+    root: string;
+    candidateCount: number;
+    candidateBytes: number;
+    removedCount: number;
+    removedBytes: number;
+  };
+  runWorkspaces: {
+    root: string;
+    ttlSeconds: number;
+    candidateCount: number;
+    candidateBytes: number;
+    removedCount: number;
+    removedBytes: number;
+  };
+  eventPayloads: {
+    graceSeconds: number;
+    garbageCollected: boolean;
+  };
+}
+
 export interface ProjectListResponse {
   ok: true;
   projects: ProjectRecord[];

@@ -10,6 +10,7 @@ import {
   getRuntimeDebug,
   getRuntimeStorage,
   getRunningDaemonStatus,
+  pruneRuntimeStorage,
   readDaemonAuthState,
   resolveDefaultKernelPort,
   stopDaemon,
@@ -17,6 +18,7 @@ import {
 import {
   renderRollbackResult,
   renderDaemonDebug,
+  renderDaemonPrune,
   renderDaemonStatus,
   renderDaemonStorage,
   renderDoctorReport,
@@ -77,6 +79,23 @@ export async function handleDaemonCommand(
       writeOutput(flags, body, renderDaemonStorage);
       return 0;
     }
+    case "prune": {
+      const body = await pruneRuntimeStorage({
+        dryRun: Boolean(flags["dry-run"]),
+        runWorkspaceTtlSeconds: readOptionalNonNegativeSeconds(
+          flags["workspace-ttl-seconds"],
+          "workspace-ttl-seconds",
+          process.env.VILANO_PRUNE_RUN_WORKSPACE_TTL_SECONDS
+        ),
+        eventPayloadGraceSeconds: readOptionalNonNegativeSeconds(
+          flags["event-payload-grace-seconds"],
+          "event-payload-grace-seconds",
+          process.env.VILANO_PRUNE_EVENT_PAYLOAD_GRACE_SECONDS
+        ),
+      });
+      writeOutput(flags, body, renderDaemonPrune);
+      return 0;
+    }
     case "stop": {
       const stopped = await stopDaemon();
       if (!stopped) {
@@ -92,8 +111,30 @@ export async function handleDaemonCommand(
       return 0;
     }
     default:
-      throw new CliError("Usage: vilano daemon start|status|debug|storage|stop");
+      throw new CliError("Usage: vilano daemon start|status|debug|storage|prune|stop");
   }
+}
+
+function readOptionalNonNegativeSeconds(
+  flagValue: string | boolean | undefined,
+  flagName: string,
+  envValue: string | undefined
+): number | undefined {
+  if (flagValue === true) {
+    throw new CliError(`--${flagName} requires a value in seconds`);
+  }
+
+  const rawValue = typeof flagValue === "string" ? flagValue : envValue;
+  if (rawValue === undefined || rawValue.trim() === "") {
+    return undefined;
+  }
+
+  const value = Number.parseInt(rawValue, 10);
+  if (!Number.isInteger(value) || value < 0 || String(value) !== rawValue.trim()) {
+    throw new CliError(`--${flagName} must be a non-negative integer number of seconds`);
+  }
+
+  return value;
 }
 
 export async function handleVersionCommand(flags: Record<string, string | boolean>): Promise<number> {

@@ -40,13 +40,26 @@ defmodule VilanoKernel.Storage.Usage do
   def path_summary(paths) do
     Enum.map(paths, fn {name, path, kind} ->
       path
-      |> usage()
+      |> path_usage()
       |> Map.merge(%{
         "name" => name,
         "path" => path,
         "kind" => kind
       })
     end)
+  end
+
+  def path_usage(path) do
+    case File.lstat(path, time: :posix) do
+      {:ok, stat} ->
+        usage_for_stat(path, stat)
+
+      {:error, :enoent} ->
+        empty_usage(false)
+
+      {:error, reason} ->
+        empty_usage(false) |> Map.put("error", Atom.to_string(reason))
+    end
   end
 
   defp scalar!(query) do
@@ -62,19 +75,6 @@ defmodule VilanoKernel.Storage.Usage do
 
       _ ->
         %{"count" => 0, "bytes" => 0}
-    end
-  end
-
-  defp usage(path) do
-    case File.lstat(path, time: :posix) do
-      {:ok, stat} ->
-        usage_for_stat(path, stat)
-
-      {:error, :enoent} ->
-        empty_usage(false)
-
-      {:error, reason} ->
-        empty_usage(false) |> Map.put("error", Atom.to_string(reason))
     end
   end
 
@@ -101,7 +101,7 @@ defmodule VilanoKernel.Storage.Usage do
     case File.ls(path) do
       {:ok, entries} ->
         Enum.reduce(entries, empty_usage(true), fn entry, acc ->
-          entry_usage = usage(Path.join(path, entry))
+          entry_usage = path_usage(Path.join(path, entry))
 
           %{
             "exists" => true,

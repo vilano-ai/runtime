@@ -12,6 +12,7 @@ import type {
   RunReplayResponse,
   RunStartResponse,
   RuntimeDebugResponse,
+  RuntimePruneResponse,
   RuntimeStorageResponse,
   ServiceEnsureResponse,
   ServiceEnvelopeResponse,
@@ -43,6 +44,19 @@ export async function getRuntimeStorage(): Promise<RuntimeStorageResponse> {
   return requestJson<RuntimeStorageResponse>({
     method: "GET",
     pathname: "/v1/admin/storage",
+    autoStart: false,
+  });
+}
+
+export async function pruneRuntimeStorage(options: {
+  dryRun?: boolean;
+  runWorkspaceTtlSeconds?: number;
+  eventPayloadGraceSeconds?: number;
+}): Promise<RuntimePruneResponse> {
+  return requestJson<RuntimePruneResponse>({
+    method: "POST",
+    pathname: "/v1/admin/prune",
+    body: options,
     autoStart: false,
   });
 }

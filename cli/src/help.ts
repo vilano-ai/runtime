@@ -69,7 +69,7 @@ function renderTopLevelHelp(): string {
     "  vilano rollback",
     "  vilano doctor [--fix]",
     "  vilano init [path] [--starter] [--force]",
-    "  vilano daemon start|status|debug|storage|stop",
+    "  vilano daemon start|status|debug|storage|prune|stop",
     "  vilano project add|list|inspect|sync|remove",
     "  vilano workflow list|inspect",
     "  vilano run start|list|inspect|explain|replay|cancel",
@@ -107,6 +107,12 @@ function renderDaemonHelp(command?: string): string {
         "",
         "Show runtime storage usage by directory and persisted row category.",
       ].join("\n");
+    case "prune":
+      return [
+        "Usage: vilano daemon prune [--workspace-ttl-seconds <seconds>] [--event-payload-grace-seconds <seconds>] [--dry-run] [--json]",
+        "",
+        "Prune unreferenced snapshots, old inactive run workspaces, and orphan event payload files.",
+      ].join("\n");
     case "stop":
       return [
         "Usage: vilano daemon stop [--json]",
@@ -115,7 +121,7 @@ function renderDaemonHelp(command?: string): string {
       ].join("\n");
     default:
       return [
-        "Usage: vilano daemon <start|status|debug|storage|stop> [--json]",
+        "Usage: vilano daemon <start|status|debug|storage|prune|stop> [--json]",
         "",
         "Manage the local Vilano kernel process.",
       ].join("\n");

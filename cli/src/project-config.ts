@@ -20,6 +20,8 @@ export interface VilanoProjectConfig {
   storage?: {
     snapshot_excludes?: string[];
     snapshot_include_node_modules?: boolean;
+    prune_run_workspace_ttl_seconds?: number;
+    prune_event_payload_grace_seconds?: number;
   };
 }
 
@@ -109,6 +111,20 @@ export async function applyProjectConfig(
     storageConfig.snapshot_include_node_modules !== undefined
   ) {
     env.VILANO_SNAPSHOT_INCLUDE_NODE_MODULES = String(storageConfig.snapshot_include_node_modules);
+  }
+
+  if (
+    env.VILANO_PRUNE_RUN_WORKSPACE_TTL_SECONDS === undefined &&
+    storageConfig.prune_run_workspace_ttl_seconds !== undefined
+  ) {
+    env.VILANO_PRUNE_RUN_WORKSPACE_TTL_SECONDS = String(storageConfig.prune_run_workspace_ttl_seconds);
+  }
+
+  if (
+    env.VILANO_PRUNE_EVENT_PAYLOAD_GRACE_SECONDS === undefined &&
+    storageConfig.prune_event_payload_grace_seconds !== undefined
+  ) {
+    env.VILANO_PRUNE_EVENT_PAYLOAD_GRACE_SECONDS = String(storageConfig.prune_event_payload_grace_seconds);
   }
 }
 
@@ -242,6 +258,18 @@ function normalizeStorageSection(
     record.snapshot_include_node_modules,
     "storage.snapshot_include_node_modules",
     configPath
+  );
+  storage.prune_run_workspace_ttl_seconds = readOptionalInteger(
+    record.prune_run_workspace_ttl_seconds,
+    "storage.prune_run_workspace_ttl_seconds",
+    configPath,
+    { min: 0 }
+  );
+  storage.prune_event_payload_grace_seconds = readOptionalInteger(
+    record.prune_event_payload_grace_seconds,
+    "storage.prune_event_payload_grace_seconds",
+    configPath,
+    { min: 0 }
   );
 
   return Object.keys(storage).length > 0 ? storage : undefined;

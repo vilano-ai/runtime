@@ -15,6 +15,7 @@ export {
   listReferencedProjectSnapshots,
   listRuns,
   listServiceRuns,
+  pruneRuntimeStorage,
   purgeProjectRuntime,
   removeProject,
   replayRun,

@@ -20,6 +20,10 @@ defmodule VilanoKernel.Router.PublicHandlers do
     send_json(conn, 200, RuntimeViews.runtime_storage_payload())
   end
 
+  def prune_runtime(conn) do
+    send_json(conn, 200, VilanoKernel.Storage.prune_runtime(conn.body_params || %{}))
+  end
+
   def shutdown(conn) do
     conn = send_json(conn, 200, %{ok: true, shuttingDown: true})
 

@@ -11,6 +11,7 @@ defmodule VilanoKernel.Storage do
     EventPayloads,
     Infrastructure,
     Projects,
+    Prune,
     ReadModels,
     RunControl,
     RuntimeMetadata,
@@ -322,6 +323,8 @@ defmodule VilanoKernel.Storage do
 
     result
   end
+
+  def prune_runtime(opts \\ %{}), do: Prune.prune_runtime(opts)
 
   def list_service_runs(project_name \\ nil, active_only \\ false) do
     {where_sql, args} =

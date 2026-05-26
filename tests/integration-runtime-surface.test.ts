@@ -359,6 +359,68 @@ test("runtime storage endpoint and CLI report disk usage categories", async () =
   }
 });
 
+test("runtime prune removes unreferenced snapshots and stale run workspaces", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const storage = await harness.runCliJson<{
+      ok: true;
+      roots: { executionHomeDir: string };
+    }>(["daemon", "storage"]);
+    const executionHome = storage.roots.executionHomeDir;
+    const orphanSnapshot = path.join(executionHome, "project-snapshots", "orphan", "snapshot-1");
+    const staleWorkspace = path.join(executionHome, "worker-home", "run-workspaces", "lease-stale");
+
+    await fs.mkdir(orphanSnapshot, { recursive: true });
+    await fs.writeFile(path.join(orphanSnapshot, "index.ts"), "export const orphan = true;\n", "utf8");
+    await fs.chmod(orphanSnapshot, 0o555);
+    await fs.mkdir(staleWorkspace, { recursive: true });
+    await fs.writeFile(path.join(staleWorkspace, "workspace.txt"), "stale\n", "utf8");
+
+    const dryRun = await harness.runCliJson<{
+      ok: true;
+      dryRun: boolean;
+      projectSnapshots: { candidateCount: number; removedCount: number };
+      runWorkspaces: { candidateCount: number; removedCount: number };
+      eventPayloads: { garbageCollected: boolean };
+    }>([
+      "daemon",
+      "prune",
+      "--workspace-ttl-seconds",
+      "0",
+      "--event-payload-grace-seconds",
+      "0",
+      "--dry-run",
+    ]);
+
+    expect(dryRun.projectSnapshots.candidateCount).toBeGreaterThanOrEqual(1);
+    expect(dryRun.projectSnapshots.removedCount).toBe(0);
+    expect(dryRun.runWorkspaces.candidateCount).toBeGreaterThanOrEqual(1);
+    expect(dryRun.runWorkspaces.removedCount).toBe(0);
+    expect(dryRun.eventPayloads.garbageCollected).toBe(false);
+    await fs.access(orphanSnapshot);
+    await fs.access(staleWorkspace);
+
+    const pruned = await harness.runCliJson<typeof dryRun>([
+      "daemon",
+      "prune",
+      "--workspace-ttl-seconds",
+      "0",
+      "--event-payload-grace-seconds",
+      "0",
+    ]);
+
+    expect(pruned.dryRun).toBe(false);
+    expect(pruned.projectSnapshots.removedCount).toBeGreaterThanOrEqual(1);
+    expect(pruned.runWorkspaces.removedCount).toBeGreaterThanOrEqual(1);
+    expect(pruned.eventPayloads.garbageCollected).toBe(true);
+    await expect(fs.access(orphanSnapshot)).rejects.toThrow();
+    await expect(fs.access(staleWorkspace)).rejects.toThrow();
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("project purge-runtime clears persisted runs and service state for one project", async () => {
   const harness = await RuntimeHarness.create();
 
