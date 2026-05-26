@@ -8,6 +8,7 @@ defmodule VilanoKernel.Storage do
   alias VilanoKernel.Storage.{
     ActivationLifecycle,
     AgentTopology,
+    EventPayloads,
     Infrastructure,
     Projects,
     ReadModels,
@@ -287,29 +288,39 @@ defmodule VilanoKernel.Storage do
       _ = VilanoKernel.ManagedWorker.kill_worker(worker_id, :project_runtime_purge)
     end)
 
-    Infrastructure.transaction_with_busy_retry(fn ->
-      case get_project(project_name) do
-        nil ->
-          nil
+    result =
+      Infrastructure.transaction_with_busy_retry(
+        fn ->
+          case get_project(project_name) do
+            nil ->
+              nil
 
-        _project ->
-          run_count = count_project_runs(project_name)
-          service_run_count = count_project_service_runs(project_name)
-          envelope_count = count_project_service_envelopes(project_name)
+            _project ->
+              run_count = count_project_runs(project_name)
+              service_run_count = count_project_service_runs(project_name)
+              envelope_count = count_project_service_envelopes(project_name)
 
-          delete_project_runtime_rows!(project_name)
+              delete_project_runtime_rows!(project_name)
 
-          %{
-            "project" => project_name,
-            "purgedRunCount" => run_count,
-            "purgedServiceRunCount" => service_run_count,
-            "purgedEnvelopeCount" => envelope_count,
-            "killedManagedWorkerIds" => active_managed_workers,
-            "purgedAt" => now
-          }
-      end
-    end, :admin_control)
-    |> unwrap_transaction_result()
+              %{
+                "project" => project_name,
+                "purgedRunCount" => run_count,
+                "purgedServiceRunCount" => service_run_count,
+                "purgedEnvelopeCount" => envelope_count,
+                "killedManagedWorkerIds" => active_managed_workers,
+                "purgedAt" => now
+              }
+          end
+        end,
+        :admin_control
+      )
+      |> unwrap_transaction_result()
+
+    if result do
+      EventPayloads.garbage_collect!()
+    end
+
+    result
   end
 
   def list_service_runs(project_name \\ nil, active_only \\ false) do
@@ -474,7 +485,10 @@ defmodule VilanoKernel.Storage do
   def list_active_timed_steps, do: ReadModels.list_active_timed_steps()
   def list_active_leases, do: ReadModels.list_active_leases()
   def oldest_runnable_workflow_candidate, do: ReadModels.oldest_runnable_workflow_candidate()
-  def oldest_runnable_service_turn_candidate, do: ReadModels.oldest_runnable_service_turn_candidate()
+
+  def oldest_runnable_service_turn_candidate,
+    do: ReadModels.oldest_runnable_service_turn_candidate()
+
   def list_oldest_pending_runs(limit \\ 10), do: ReadModels.list_oldest_pending_runs(limit)
   def count_pending_runs_by_project, do: ReadModels.count_pending_runs_by_project()
   def list_run_execs(run_id), do: ReadModels.list_run_execs(run_id)

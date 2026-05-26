@@ -16,6 +16,7 @@ defmodule VilanoKernel.Storage.Migrations do
     FailUnpinnedRuns,
     AddRunEventsUniqueIndex,
     CreateRunEventSequences,
+    CreateRunEventPayloadRefs,
     CreateRunServiceRefs,
     CreateRuntimeMetadata
   }
@@ -33,7 +34,8 @@ defmodule VilanoKernel.Storage.Migrations do
     AddRunRelationshipsAndExitEvents,
     AddRunSupervisionGroups,
     AddServiceEnvelopeWakeAt,
-    AddPubsubTopics
+    AddPubsubTopics,
+    CreateRunEventPayloadRefs
   ]
 
   def ensure_tracking_table! do

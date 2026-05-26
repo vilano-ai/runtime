@@ -3,6 +3,7 @@ defmodule VilanoKernel.Storage.Support.Sql do
 
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
+  alias VilanoKernel.Storage.EventPayloads
   alias VilanoKernel.Storage.Support.Rows
 
   def list_service_runs_by_definition(project_name, definition_name) do
@@ -490,8 +491,31 @@ defmodule VilanoKernel.Storage.Support.Sql do
   end
 
   def append_event!(run_id, event_type, body, created_at) do
-    next_seq = reserve_next_event_seq!(run_id)
+    with_write_transaction!(fn ->
+      event_id = "evt_" <> Ecto.UUID.generate()
+      next_seq = reserve_next_event_seq!(run_id)
+      storage = EventPayloads.body_for_storage!(body)
 
+      result =
+        insert_run_event!(event_id, run_id, next_seq, event_type, storage.body_json, created_at)
+
+      EventPayloads.insert_payload_ref!(event_id, run_id, storage.payload_ref, created_at)
+      result
+    end)
+  end
+
+  defp with_write_transaction!(fun) do
+    if Repo.in_transaction?() do
+      fun.()
+    else
+      case Repo.transaction(fun, mode: :immediate) do
+        {:ok, result} -> result
+        {:error, reason} -> raise inspect(reason)
+      end
+    end
+  end
+
+  defp insert_run_event!(event_id, run_id, next_seq, event_type, body_json, created_at) do
     SQL.query!(
       Repo,
       """
@@ -505,11 +529,11 @@ defmodule VilanoKernel.Storage.Support.Sql do
       ) values (?, ?, ?, ?, ?, ?)
       """,
       [
-        "evt_" <> Ecto.UUID.generate(),
+        event_id,
         run_id,
         next_seq,
         event_type,
-        Jason.encode!(body),
+        body_json,
         created_at
       ]
     )

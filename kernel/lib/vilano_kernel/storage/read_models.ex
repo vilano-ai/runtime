@@ -3,6 +3,7 @@ defmodule VilanoKernel.Storage.ReadModels do
 
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
+  alias VilanoKernel.Storage.EventPayloads
   alias VilanoKernel.Storage.Infrastructure
 
   def list_runs(project_name \\ nil) do
@@ -643,7 +644,7 @@ defmodule VilanoKernel.Storage.ReadModels do
       "runId" => row["run_id"],
       "seq" => row["seq"],
       "type" => row["event_type"],
-      "body" => decode_json_value(row["body_json"], %{}),
+      "body" => row["body_json"] |> decode_json_value(%{}) |> EventPayloads.hydrate_body(),
       "createdAt" => row["created_at"]
     }
   end

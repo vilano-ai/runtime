@@ -15,7 +15,8 @@ defmodule VilanoKernel.Runtime do
     :managed_worker_count,
     :managed_worker_runtime,
     :managed_worker_mode,
-    :lease_duration_seconds
+    :lease_duration_seconds,
+    :event_payload_max_bytes
   ]
 
   def load! do
@@ -58,6 +59,9 @@ defmodule VilanoKernel.Runtime do
           String.to_integer(value)
       end
 
+    event_payload_max_bytes =
+      parse_non_negative_integer_env("VILANO_EVENT_PAYLOAD_MAX_BYTES", 65_536)
+
     %__MODULE__{
       install_root_dir: install_root_dir,
       home_dir: home_dir,
@@ -72,8 +76,22 @@ defmodule VilanoKernel.Runtime do
       managed_worker_count: managed_worker_count,
       managed_worker_runtime: managed_worker_runtime,
       managed_worker_mode: managed_worker_mode,
-      lease_duration_seconds: lease_duration_seconds
+      lease_duration_seconds: lease_duration_seconds,
+      event_payload_max_bytes: event_payload_max_bytes
     }
+  end
+
+  defp parse_non_negative_integer_env(name, default_value) do
+    case System.get_env(name) do
+      nil ->
+        default_value
+
+      value ->
+        case Integer.parse(value) do
+          {parsed, ""} when parsed >= 0 -> parsed
+          _ -> default_value
+        end
+    end
   end
 
   defp default_execution_home_dir(home_dir) do
