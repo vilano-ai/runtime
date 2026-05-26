@@ -302,6 +302,9 @@ export interface ExecSpec<TOutput = unknown> {
 export interface ExecArtifact {
   path: string;
   ref: string;
+  bytes?: number;
+  originalBytes?: number;
+  truncated?: boolean;
 }
 
 export interface ExecResult {

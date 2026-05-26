@@ -360,7 +360,13 @@ export interface RunExecRecord {
   signalCode: string | null;
   stdoutRef: string | null;
   stderrRef: string | null;
-  artifacts: Array<{ path: string; ref: string }>;
+  artifacts: Array<{
+    path: string;
+    ref: string;
+    bytes?: number;
+    originalBytes?: number;
+    truncated?: boolean;
+  }>;
   output: unknown | null;
   error: unknown | null;
   attempts?: number;

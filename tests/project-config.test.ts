@@ -73,6 +73,8 @@ test("applyProjectConfigForCwd maps storage snapshot config into env defaults", 
         "snapshot_include_node_modules = false",
         "prune_run_workspace_ttl_seconds = 3600",
         "prune_event_payload_grace_seconds = 30",
+        "exec_capture_max_bytes = 4096",
+        "exec_artifact_max_bytes = 8192",
       ].join("\n"),
       "utf8"
     );
@@ -84,6 +86,8 @@ test("applyProjectConfigForCwd maps storage snapshot config into env defaults", 
     expect(env.VILANO_SNAPSHOT_INCLUDE_NODE_MODULES).toBe("false");
     expect(env.VILANO_PRUNE_RUN_WORKSPACE_TTL_SECONDS).toBe("3600");
     expect(env.VILANO_PRUNE_EVENT_PAYLOAD_GRACE_SECONDS).toBe("30");
+    expect(env.VILANO_EXEC_CAPTURE_MAX_BYTES).toBe("4096");
+    expect(env.VILANO_EXEC_ARTIFACT_MAX_BYTES).toBe("8192");
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

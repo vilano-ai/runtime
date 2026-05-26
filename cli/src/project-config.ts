@@ -22,6 +22,8 @@ export interface VilanoProjectConfig {
     snapshot_include_node_modules?: boolean;
     prune_run_workspace_ttl_seconds?: number;
     prune_event_payload_grace_seconds?: number;
+    exec_capture_max_bytes?: number;
+    exec_artifact_max_bytes?: number;
   };
 }
 
@@ -125,6 +127,14 @@ export async function applyProjectConfig(
     storageConfig.prune_event_payload_grace_seconds !== undefined
   ) {
     env.VILANO_PRUNE_EVENT_PAYLOAD_GRACE_SECONDS = String(storageConfig.prune_event_payload_grace_seconds);
+  }
+
+  if (env.VILANO_EXEC_CAPTURE_MAX_BYTES === undefined && storageConfig.exec_capture_max_bytes !== undefined) {
+    env.VILANO_EXEC_CAPTURE_MAX_BYTES = String(storageConfig.exec_capture_max_bytes);
+  }
+
+  if (env.VILANO_EXEC_ARTIFACT_MAX_BYTES === undefined && storageConfig.exec_artifact_max_bytes !== undefined) {
+    env.VILANO_EXEC_ARTIFACT_MAX_BYTES = String(storageConfig.exec_artifact_max_bytes);
   }
 }
 
@@ -268,6 +278,18 @@ function normalizeStorageSection(
   storage.prune_event_payload_grace_seconds = readOptionalInteger(
     record.prune_event_payload_grace_seconds,
     "storage.prune_event_payload_grace_seconds",
+    configPath,
+    { min: 0 }
+  );
+  storage.exec_capture_max_bytes = readOptionalInteger(
+    record.exec_capture_max_bytes,
+    "storage.exec_capture_max_bytes",
+    configPath,
+    { min: 0 }
+  );
+  storage.exec_artifact_max_bytes = readOptionalInteger(
+    record.exec_artifact_max_bytes,
+    "storage.exec_artifact_max_bytes",
     configPath,
     { min: 0 }
   );

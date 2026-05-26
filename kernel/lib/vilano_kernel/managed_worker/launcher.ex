@@ -82,12 +82,15 @@ defmodule VilanoKernel.ManagedWorker.Launcher do
   end
 
   defp worker_env(runtime) do
-    base_env = [
-      {~c"VILANO_WORKER_ARTIFACT_HOME", String.to_charlist(runtime.artifact_home_dir)},
-      {~c"VILANO_WORKER_HOME",
-       String.to_charlist(Path.join(runtime.execution_home_dir, "worker-home"))},
-      {~c"VILANO_KERNEL_PORT", String.to_charlist(Integer.to_string(runtime.port))}
-    ]
+    base_env =
+      [
+        {~c"VILANO_WORKER_ARTIFACT_HOME", String.to_charlist(runtime.artifact_home_dir)},
+        {~c"VILANO_WORKER_HOME",
+         String.to_charlist(Path.join(runtime.execution_home_dir, "worker-home"))},
+        {~c"VILANO_KERNEL_PORT", String.to_charlist(Integer.to_string(runtime.port))}
+      ] ++
+        optional_env("VILANO_EXEC_CAPTURE_MAX_BYTES") ++
+        optional_env("VILANO_EXEC_ARTIFACT_MAX_BYTES")
 
     case runtime.worker_auth_token do
       token when is_binary(token) and token != "" ->
@@ -95,6 +98,16 @@ defmodule VilanoKernel.ManagedWorker.Launcher do
 
       _ ->
         base_env
+    end
+  end
+
+  defp optional_env(name) do
+    case System.get_env(name) do
+      value when is_binary(value) and value != "" ->
+        [{String.to_charlist(name), String.to_charlist(value)}]
+
+      _ ->
+        []
     end
   end
 

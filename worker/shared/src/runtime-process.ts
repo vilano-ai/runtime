@@ -19,6 +19,8 @@ interface ActivationLike {
 }
 
 let runtimeHomeOverride: string | null = null;
+const DEFAULT_EXEC_CAPTURE_MAX_BYTES = 1024 * 1024;
+const DEFAULT_EXEC_ARTIFACT_MAX_BYTES = 50 * 1024 * 1024;
 
 export type ExecSuccess<TOutput> = {
   ok: true;
@@ -290,8 +292,8 @@ export async function executeProcess<TOutput>(
     const defaultOutput: ExecResult = {
       exitCode: exitCode ?? 0,
       signalCode,
-      stdout,
-      stderr,
+      stdout: limitTextForStorage(stdout, execCaptureMaxBytes()),
+      stderr: limitTextForStorage(stderr, execCaptureMaxBytes()),
       stdoutRef: captures.stdoutRef,
       stderrRef: captures.stderrRef,
       artifacts: captures.artifacts,
@@ -397,13 +399,21 @@ async function persistExecCaptures<TOutput>(
 
   if (captures.stdout) {
     const stdoutPath = path.join(attemptDir, "stdout.txt");
-    await fs.writeFile(stdoutPath, stdout, "utf8");
+    await fs.writeFile(
+      stdoutPath,
+      limitTextForStorage(stdout, execCaptureMaxBytes()),
+      "utf8"
+    );
     stdoutRef = path.relative(runtimeHome, stdoutPath);
   }
 
   if (captures.stderr) {
     const stderrPath = path.join(attemptDir, "stderr.txt");
-    await fs.writeFile(stderrPath, stderr, "utf8");
+    await fs.writeFile(
+      stderrPath,
+      limitTextForStorage(stderr, execCaptureMaxBytes()),
+      "utf8"
+    );
     stderrRef = path.relative(runtimeHome, stderrPath);
   }
 
@@ -418,6 +428,7 @@ async function captureArtifacts(
   artifactPaths: string[]
 ): Promise<ExecArtifact[]> {
   const artifacts: ExecArtifact[] = [];
+  const maxBytes = execArtifactMaxBytes();
 
   for (const artifactPath of artifactPaths) {
     const sourcePath = path.isAbsolute(artifactPath)
@@ -425,17 +436,90 @@ async function captureArtifacts(
       : path.resolve(cwd, artifactPath);
     const targetRelative = path.join("files", sanitizeArtifactPath(artifactPath));
     const targetPath = path.join(attemptDir, targetRelative);
+    const sourceStat = await fs.stat(sourcePath);
+    const truncated = sourceStat.size > maxBytes;
 
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
-    await fs.copyFile(sourcePath, targetPath);
+    if (truncated) {
+      await copyFilePrefix(sourcePath, targetPath, maxBytes);
+    } else {
+      await fs.copyFile(sourcePath, targetPath);
+    }
 
     artifacts.push({
       path: artifactPath,
       ref: path.relative(runtimeHome, targetPath),
+      bytes: Math.min(sourceStat.size, maxBytes),
+      originalBytes: sourceStat.size,
+      truncated,
     });
   }
 
   return artifacts;
+}
+
+function limitTextForStorage(value: string, maxBytes: number): string {
+  const encoded = Buffer.from(value, "utf8");
+  if (encoded.byteLength <= maxBytes) {
+    return value;
+  }
+
+  if (maxBytes === 0) {
+    return "";
+  }
+
+  const markerText = `\n[vilano: captured output truncated to ${maxBytes} bytes from ${encoded.byteLength} bytes]\n`;
+  const markerBytes = Buffer.byteLength(markerText, "utf8");
+
+  if (maxBytes <= markerBytes) {
+    return truncateUtf8ToByteLength(markerText, maxBytes);
+  }
+
+  return `${truncateUtf8ToByteLength(value, maxBytes - markerBytes)}${markerText}`;
+}
+
+function truncateUtf8ToByteLength(value: string, maxBytes: number): string {
+  if (maxBytes === 0) {
+    return "";
+  }
+
+  let bytes = 0;
+  let result = "";
+
+  for (const char of value) {
+    const charBytes = Buffer.byteLength(char, "utf8");
+    if (bytes + charBytes > maxBytes) {
+      break;
+    }
+
+    result += char;
+    bytes += charBytes;
+  }
+
+  return result;
+}
+
+async function copyFilePrefix(sourcePath: string, targetPath: string, maxBytes: number): Promise<void> {
+  const source = await fs.open(sourcePath, "r");
+  const target = await fs.open(targetPath, "w");
+
+  try {
+    let remaining = maxBytes;
+    const buffer = Buffer.alloc(Math.min(64 * 1024, Math.max(remaining, 1)));
+
+    while (remaining > 0) {
+      const readSize = Math.min(buffer.byteLength, remaining);
+      const { bytesRead } = await source.read(buffer, 0, readSize, null);
+      if (bytesRead === 0) {
+        break;
+      }
+
+      await target.write(buffer, 0, bytesRead);
+      remaining -= bytesRead;
+    }
+  } finally {
+    await Promise.all([source.close(), target.close()]);
+  }
 }
 
 function sanitizeArtifactPath(artifactPath: string): string {
@@ -452,6 +536,28 @@ function sanitizeArtifactPath(artifactPath: string): string {
 
 function sanitizePathSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]+/g, "_");
+}
+
+function execCaptureMaxBytes(): number {
+  return nonNegativeIntegerEnv("VILANO_EXEC_CAPTURE_MAX_BYTES", DEFAULT_EXEC_CAPTURE_MAX_BYTES);
+}
+
+function execArtifactMaxBytes(): number {
+  return nonNegativeIntegerEnv("VILANO_EXEC_ARTIFACT_MAX_BYTES", DEFAULT_EXEC_ARTIFACT_MAX_BYTES);
+}
+
+function nonNegativeIntegerEnv(name: string, defaultValue: number): number {
+  const value = process.env[name];
+  if (value === undefined || value.trim() === "") {
+    return defaultValue;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 0 || String(parsed) !== value.trim()) {
+    return defaultValue;
+  }
+
+  return parsed;
 }
 
 export function setRuntimeHomeOverride(runtimeHome: string | null): void {
