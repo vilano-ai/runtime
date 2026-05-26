@@ -7,7 +7,9 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
   alias VilanoKernel.Storage.EventPayloads
   alias VilanoKernel.Storage.Migrations.CreateRunEventPayloadRefs
   alias VilanoKernel.Storage.ReadModels
+  alias VilanoKernel.Storage.Supervision
   alias VilanoKernel.Storage.Support
+  alias VilanoKernel.Storage.WorkflowOps
 
   @ref_marker "__vilano_event_payload_ref__"
   @unavailable_marker "__vilano_event_payload_unavailable__"
@@ -94,6 +96,399 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
       assert event["body"] == body
     after
       cleanup_run_events(run_id)
+    end
+  end
+
+  test "large payloads can be staged before DB publication", %{runtime_home: runtime_home} do
+    body = large_body()
+    body_json = Jason.encode!(body)
+    storage = EventPayloads.prepare_body_for_storage!(body)
+    ref = Jason.decode!(storage.body_json)
+    payload_path = Path.join(runtime_home, ref["path"])
+
+    try do
+      refute File.exists?(payload_path)
+
+      staged_files =
+        Path.wildcard(Path.join([runtime_home, "event-payloads-staging", "*", "*.tmp"]))
+
+      assert length(staged_files) == 1
+      assert File.read!(List.first(staged_files)) == body_json
+
+      EventPayloads.publish_prepared_payload!(storage)
+
+      assert File.exists?(payload_path)
+      assert File.read!(payload_path) == body_json
+
+      assert Path.wildcard(Path.join([runtime_home, "event-payloads-staging", "*", "*.tmp"])) ==
+               []
+    after
+      EventPayloads.discard_prepared_payload!(storage)
+    end
+  end
+
+  test "garbage collection removes stale staged payload temp files without pruning staging dirs",
+       %{
+         runtime_home: runtime_home
+       } do
+    stale_path =
+      Path.join([
+        runtime_home,
+        "event-payloads-staging",
+        "aa",
+        "#{String.duplicate("a", 64)}.stale.tmp"
+      ])
+
+    fresh_path =
+      Path.join([
+        runtime_home,
+        "event-payloads-staging",
+        "bb",
+        "#{String.duplicate("b", 64)}.fresh.tmp"
+      ])
+
+    File.mkdir_p!(Path.dirname(stale_path))
+    File.mkdir_p!(Path.dirname(fresh_path))
+    File.write!(stale_path, "stale")
+    File.write!(fresh_path, "fresh")
+    assert force_old_mtime(stale_path)
+
+    EventPayloads.garbage_collect!(60_000)
+
+    refute File.exists?(stale_path)
+    assert File.dir?(Path.dirname(stale_path))
+    assert File.exists?(fresh_path)
+
+    EventPayloads.garbage_collect!(0)
+
+    refute File.exists?(fresh_path)
+    assert File.dir?(Path.dirname(fresh_path))
+    assert File.dir?(Path.join(runtime_home, "event-payloads-staging"))
+  end
+
+  test "garbage collection removes stale canonical payload temp files", %{
+    runtime_home: runtime_home
+  } do
+    stale_sha = String.duplicate("a", 64)
+    fresh_sha = String.duplicate("b", 64)
+
+    stale_path =
+      Path.join([
+        runtime_home,
+        "event-payloads",
+        "aa",
+        ".#{stale_sha}.json.1.tmp"
+      ])
+
+    fresh_path =
+      Path.join([
+        runtime_home,
+        "event-payloads",
+        "bb",
+        ".#{fresh_sha}.json.2.tmp"
+      ])
+
+    File.mkdir_p!(Path.dirname(stale_path))
+    File.mkdir_p!(Path.dirname(fresh_path))
+    File.write!(stale_path, "stale")
+    File.write!(fresh_path, "fresh")
+    assert force_old_mtime(stale_path)
+
+    EventPayloads.garbage_collect!(60_000)
+
+    refute File.exists?(stale_path)
+    assert File.exists?(fresh_path)
+
+    EventPayloads.garbage_collect!(0)
+
+    refute File.exists?(fresh_path)
+  end
+
+  test "workflow creation externalizes prepared RunStarted payloads", %{
+    runtime_home: runtime_home,
+    execution_home: execution_home
+  } do
+    project_name = project_name()
+    project = workflow_project(project_name, execution_home)
+    definition = workflow_definition()
+    input = large_body()
+
+    try do
+      run = Storage.create_workflow_run!(project, definition, input)
+
+      assert %{"id" => run_id} = run
+      assert [row] = event_rows(run_id)
+      ref = Jason.decode!(row["body_json"])
+
+      assert ref[@ref_marker] == 1
+      assert [payload_ref] = payload_ref_rows(run_id)
+      assert payload_ref["event_id"] == row["id"]
+      assert payload_ref["payload_path"] == ref["path"]
+
+      payload_path = Path.join(runtime_home, ref["path"])
+      assert File.exists?(payload_path)
+
+      assert Path.wildcard(Path.join([runtime_home, "event-payloads-staging", "*", "*.tmp"])) ==
+               []
+
+      assert [event] = ReadModels.list_run_events(run_id)
+      assert event["type"] == "RunStarted"
+      assert event["body"]["input"] == input
+    after
+      cleanup_project_runtime(project_name)
+    end
+  end
+
+  test "workflow creation discards prepared RunStarted payload staging on failure", %{
+    runtime_home: runtime_home,
+    execution_home: execution_home
+  } do
+    project_name = project_name()
+    project = workflow_project(project_name, execution_home)
+    definition = Map.delete(workflow_definition(), "file")
+
+    try do
+      assert_raise KeyError, fn ->
+        Storage.create_workflow_run!(project, definition, large_body())
+      end
+
+      assert Path.wildcard(Path.join([runtime_home, "event-payloads-staging", "*", "*.tmp"])) ==
+               []
+    after
+      cleanup_project_runtime(project_name)
+    end
+  end
+
+  test "child workflow spawn externalizes prepared RunStarted payloads", %{
+    runtime_home: runtime_home,
+    execution_home: execution_home
+  } do
+    project_name = project_name()
+    project = workflow_project(project_name, execution_home)
+    definition = workflow_definition()
+    input = large_body()
+    lease_id = "lease_" <> Ecto.UUID.generate()
+    child_run_id = run_id()
+
+    try do
+      parent_run = Storage.create_workflow_run!(project, definition, %{"parent" => true})
+      activate_run_for_lease!(parent_run["id"], lease_id)
+
+      assert %{"status" => "created", "childRun" => %{"id" => ^child_run_id}} =
+               WorkflowOps.resolve_spawn(lease_id, "workflow", "child:1", child_run_id, input)
+
+      [row] = event_rows(child_run_id)
+      ref = Jason.decode!(row["body_json"])
+
+      assert ref[@ref_marker] == 1
+      assert [_payload_ref] = payload_ref_rows(child_run_id)
+      assert File.exists?(Path.join(runtime_home, ref["path"]))
+
+      assert Path.wildcard(Path.join([runtime_home, "event-payloads-staging", "*", "*.tmp"])) ==
+               []
+
+      assert [event] = ReadModels.list_run_events(child_run_id)
+      assert event["type"] == "RunStarted"
+      assert event["body"]["input"] == input
+    after
+      cleanup_project_runtime(project_name)
+    end
+  end
+
+  test "supervised member spawn externalizes prepared RunStarted payloads", %{
+    runtime_home: runtime_home,
+    execution_home: execution_home
+  } do
+    project_name = project_name()
+    project = workflow_project(project_name, execution_home)
+    definition = workflow_definition()
+    input = large_body()
+    lease_id = "lease_" <> Ecto.UUID.generate()
+
+    try do
+      owner_run = Storage.create_workflow_run!(project, definition, %{"owner" => true})
+      activate_run_for_lease!(owner_run["id"], lease_id)
+
+      group =
+        Supervision.resolve_supervision_group(
+          lease_id,
+          "supervision:1",
+          "one_for_one",
+          3,
+          60_000,
+          "fail"
+        )
+
+      assert %{"currentChildRunId" => child_run_id} =
+               Supervision.resolve_supervised_spawn(
+                 lease_id,
+                 group["id"],
+                 "workflow",
+                 "member-a",
+                 input
+               )
+
+      [row] = event_rows(child_run_id)
+      ref = Jason.decode!(row["body_json"])
+
+      assert ref[@ref_marker] == 1
+      assert [_payload_ref] = payload_ref_rows(child_run_id)
+      assert File.exists?(Path.join(runtime_home, ref["path"]))
+
+      assert Path.wildcard(Path.join([runtime_home, "event-payloads-staging", "*", "*.tmp"])) ==
+               []
+
+      assert [event] = ReadModels.list_run_events(child_run_id)
+      assert event["type"] == "RunStarted"
+      assert event["body"]["input"] == input
+    after
+      cleanup_project_runtime(project_name)
+    end
+  end
+
+  test "supervised child failure externalizes terminal and restart payloads", %{
+    runtime_home: runtime_home,
+    execution_home: execution_home
+  } do
+    project_name = project_name()
+    project = workflow_project(project_name, execution_home)
+    definition = workflow_definition()
+    input = large_body()
+    error_body = large_body()
+    owner_lease_id = "lease_" <> Ecto.UUID.generate()
+    child_lease_id = "lease_" <> Ecto.UUID.generate()
+
+    try do
+      owner_run = Storage.create_workflow_run!(project, definition, %{"owner" => true})
+      activate_run_for_lease!(owner_run["id"], owner_lease_id)
+
+      group =
+        Supervision.resolve_supervision_group(
+          owner_lease_id,
+          "supervision:restart",
+          "one_for_one",
+          3,
+          60_000,
+          "fail"
+        )
+
+      assert %{"currentChildRunId" => child_run_id} =
+               Supervision.resolve_supervised_spawn(
+                 owner_lease_id,
+                 group["id"],
+                 "workflow",
+                 "member-a",
+                 input
+               )
+
+      activate_run_for_lease!(child_run_id, child_lease_id)
+
+      assert %{"id" => ^child_run_id, "status" => "failed"} =
+               Storage.fail_run_lease(child_lease_id, error_body)
+
+      assert %{"currentChildRunId" => restart_run_id, "generation" => 2} =
+               Supervision.get_supervision_member_status(
+                 owner_lease_id,
+                 group["id"],
+                 "member-a"
+               )
+
+      refute restart_run_id == child_run_id
+
+      failed_row =
+        child_run_id
+        |> event_rows()
+        |> Enum.find(&(&1["event_type"] == "RunFailed"))
+
+      failed_ref = Jason.decode!(failed_row["body_json"])
+      assert failed_ref[@ref_marker] == 1
+      assert payload_ref_rows(child_run_id) |> Enum.any?(&(&1["event_id"] == failed_row["id"]))
+      assert File.exists?(Path.join(runtime_home, failed_ref["path"]))
+
+      restart_row =
+        restart_run_id
+        |> event_rows()
+        |> Enum.find(&(&1["event_type"] == "RunStarted"))
+
+      restart_ref = Jason.decode!(restart_row["body_json"])
+      assert restart_ref[@ref_marker] == 1
+      assert [_payload_ref] = payload_ref_rows(restart_run_id)
+      assert File.exists?(Path.join(runtime_home, restart_ref["path"]))
+
+      assert Path.wildcard(Path.join([runtime_home, "event-payloads-staging", "*", "*.tmp"])) ==
+               []
+
+      assert [failed_event] =
+               child_run_id
+               |> ReadModels.list_run_events()
+               |> Enum.filter(&(&1["type"] == "RunFailed"))
+
+      assert failed_event["body"]["error"] == error_body
+
+      assert [started_event] = ReadModels.list_run_events(restart_run_id)
+      assert started_event["type"] == "RunStarted"
+      assert started_event["body"]["input"] == input
+    after
+      cleanup_project_runtime(project_name)
+    end
+  end
+
+  test "workflow cancellation prepares RunCancelled payload before admin transaction", %{
+    runtime_home: runtime_home,
+    execution_home: execution_home
+  } do
+    project_name = project_name()
+    project = workflow_project(project_name, execution_home)
+    definition = workflow_definition()
+    parent = self()
+    original_hooks = Application.get_env(:vilano_kernel, :storage_test_hooks)
+    reason = String.duplicate("large-cancel-reason", 32)
+
+    on_exit(fn ->
+      case original_hooks do
+        nil -> Application.delete_env(:vilano_kernel, :storage_test_hooks)
+        hooks -> Application.put_env(:vilano_kernel, :storage_test_hooks, hooks)
+      end
+    end)
+
+    try do
+      run = Storage.create_workflow_run!(project, definition, %{"cancel" => true})
+
+      Application.put_env(:vilano_kernel, :storage_test_hooks, %{
+        event_payload_prepared: fn payload ->
+          send(parent, {:event_payload_prepared, payload})
+        end
+      })
+
+      assert %{
+               "run" => %{"id" => run_id, "status" => "cancelled"},
+               "cancelledWaitCount" => 0,
+               "cancelledChildRunCount" => 0,
+               "cancelledServiceAskCount" => 0
+             } = Storage.cancel_run(run["id"], reason)
+
+      assert_receive {:event_payload_prepared, %{in_transaction?: false}}
+      refute_receive {:event_payload_prepared, %{in_transaction?: true}}, 100
+
+      cancelled_row =
+        run_id
+        |> event_rows()
+        |> Enum.find(&(&1["event_type"] == "RunCancelled"))
+
+      ref = Jason.decode!(cancelled_row["body_json"])
+      assert ref[@ref_marker] == 1
+      assert payload_ref_rows(run_id) |> Enum.any?(&(&1["event_id"] == cancelled_row["id"]))
+      assert File.exists?(Path.join(runtime_home, ref["path"]))
+
+      assert [cancelled_event] =
+               run_id
+               |> ReadModels.list_run_events()
+               |> Enum.filter(&(&1["type"] == "RunCancelled"))
+
+      assert cancelled_event["body"]["reason"] == reason
+      assert cancelled_event["body"]["cancelledWaitCount"] == 0
+    after
+      cleanup_project_runtime(project_name)
     end
   end
 
@@ -616,7 +1011,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     Repo
     |> SQL.query!(
       """
-      select id, body_json, created_at
+      select id, event_type, body_json, created_at
       from run_events
       where run_id = ?
       order by seq asc
@@ -735,6 +1130,60 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
   defp cleanup_project_runtime(project_name) do
     SQL.query!(
       Repo,
+      """
+      delete from run_waits
+      where run_id in (select id from runs where project_name = ?)
+      """,
+      [project_name]
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      delete from run_children
+      where parent_run_id in (select id from runs where project_name = ?)
+        or child_run_id in (select id from runs where project_name = ?)
+      """,
+      [project_name, project_name]
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      delete from run_supervision_restarts
+      where group_id in (
+        select id
+        from run_supervision_groups
+        where owner_run_id in (select id from runs where project_name = ?)
+      )
+      """,
+      [project_name]
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      delete from run_supervision_members
+      where group_id in (
+        select id
+        from run_supervision_groups
+        where owner_run_id in (select id from runs where project_name = ?)
+      )
+      """,
+      [project_name]
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      delete from run_supervision_groups
+      where owner_run_id in (select id from runs where project_name = ?)
+      """,
+      [project_name]
+    )
+
+    SQL.query!(
+      Repo,
       "delete from run_event_payload_refs where run_id in (select id from runs where project_name = ?)",
       [project_name]
     )
@@ -779,8 +1228,48 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
 
   defp project_name, do: "project-" <> Ecto.UUID.generate()
 
+  defp workflow_project(project_name, path) do
+    %{
+      "name" => project_name,
+      "path" => path,
+      "snapshotPath" => path,
+      "definitions" => %{"workflows" => [workflow_definition()], "services" => []}
+    }
+  end
+
+  defp workflow_definition do
+    %{
+      "name" => "workflow",
+      "file" => "src/definitions.ts",
+      "exportName" => "workflow",
+      "runtimeKind" => "javascript",
+      "sourceLanguage" => "typescript"
+    }
+  end
+
   defp now do
     DateTime.utc_now() |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()
+  end
+
+  defp activate_run_for_lease!(run_id, lease_id) do
+    now = now()
+    lease_expires_at = DateTime.utc_now() |> DateTime.add(60, :second) |> DateTime.to_iso8601()
+
+    SQL.query!(
+      Repo,
+      """
+      update runs
+      set
+        status = 'running',
+        lease_id = ?,
+        lease_auth_token = ?,
+        lease_worker_id = ?,
+        lease_expires_at = ?,
+        updated_at = ?
+      where id = ?
+      """,
+      [lease_id, "token", "worker", lease_expires_at, now, run_id]
+    )
   end
 
   defp sha256_hex(value) do

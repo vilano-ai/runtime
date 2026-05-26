@@ -4,6 +4,7 @@ defmodule VilanoKernel.Storage.Support.Sql do
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
   alias VilanoKernel.Storage.EventPayloads
+  alias VilanoKernel.Storage.Infrastructure
   alias VilanoKernel.Storage.Support.Rows
 
   def list_service_runs_by_definition(project_name, definition_name) do
@@ -491,24 +492,40 @@ defmodule VilanoKernel.Storage.Support.Sql do
   end
 
   def append_event!(run_id, event_type, body, created_at) do
-    with_write_transaction!(fn ->
-      event_id = "evt_" <> Ecto.UUID.generate()
-      next_seq = reserve_next_event_seq!(run_id)
-      storage = EventPayloads.body_for_storage!(body)
+    storage = EventPayloads.prepare_body_for_storage!(body)
 
-      result =
-        insert_run_event!(event_id, run_id, next_seq, event_type, storage.body_json, created_at)
+    try do
+      with_write_transaction!(fn ->
+        append_prepared_event!(run_id, event_type, storage, created_at)
+      end)
+    after
+      EventPayloads.discard_prepared_payload!(storage)
+    end
+  end
 
-      EventPayloads.insert_payload_ref!(event_id, run_id, storage.payload_ref, created_at)
-      result
-    end)
+  def prepare_workflow_run_started_event!(project, definition, input) do
+    EventPayloads.prepare_body_for_storage!(
+      workflow_run_started_event_body(project, definition, input)
+    )
+  end
+
+  def append_prepared_event!(run_id, event_type, storage, created_at) do
+    event_id = "evt_" <> Ecto.UUID.generate()
+    next_seq = reserve_next_event_seq!(run_id)
+    EventPayloads.publish_prepared_payload!(storage)
+
+    result =
+      insert_run_event!(event_id, run_id, next_seq, event_type, storage.body_json, created_at)
+
+    EventPayloads.insert_payload_ref!(event_id, run_id, storage.payload_ref, created_at)
+    result
   end
 
   defp with_write_transaction!(fun) do
     if Repo.in_transaction?() do
       fun.()
     else
-      case Repo.transaction(fun, mode: :immediate) do
+      case Infrastructure.transaction_with_busy_retry(fun) do
         {:ok, result} -> result
         {:error, reason} -> raise inspect(reason)
       end
@@ -554,6 +571,16 @@ defmodule VilanoKernel.Storage.Support.Sql do
   end
 
   def insert_workflow_run!(run_id, project, definition, input, now) do
+    run_started_event = prepare_workflow_run_started_event!(project, definition, input)
+
+    try do
+      insert_workflow_run!(run_id, project, definition, input, now, run_started_event)
+    after
+      EventPayloads.discard_prepared_payload!(run_started_event)
+    end
+  end
+
+  def insert_workflow_run!(run_id, project, definition, input, now, run_started_event) do
     input_json = Jason.encode!(input || %{})
     project_name = Map.fetch!(project, "name")
     definition_name = Map.fetch!(definition, "name")
@@ -610,17 +637,21 @@ defmodule VilanoKernel.Storage.Support.Sql do
       ]
     )
 
-    append_event!(
+    append_prepared_event!(
       run_id,
       "RunStarted",
-      %{
-        project: project_name,
-        definitionKind: "workflow",
-        definitionName: definition_name,
-        definition: definition,
-        input: input || %{}
-      },
+      run_started_event,
       now
     )
+  end
+
+  defp workflow_run_started_event_body(project, definition, input) do
+    %{
+      project: Map.fetch!(project, "name"),
+      definitionKind: "workflow",
+      definitionName: Map.fetch!(definition, "name"),
+      definition: definition,
+      input: input || %{}
+    }
   end
 end

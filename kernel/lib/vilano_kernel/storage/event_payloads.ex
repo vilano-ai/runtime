@@ -3,9 +3,12 @@ defmodule VilanoKernel.Storage.EventPayloads do
 
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
+  alias VilanoKernel.Storage.{Infrastructure, Support}
 
   @default_max_bytes 65_536
   @payload_dir "event-payloads"
+  @payload_staging_dir "event-payloads-staging"
+  @gc_quarantine_dir "event-payloads-gc"
   @default_gc_grace_ms :timer.minutes(5)
   @ref_marker "__vilano_event_payload_ref__"
   @unavailable_marker "__vilano_event_payload_unavailable__"
@@ -14,22 +17,43 @@ defmodule VilanoKernel.Storage.EventPayloads do
   @sha256_hex ~r/\A[0-9a-f]{64}\z/
 
   def body_for_storage!(body) do
+    storage = prepare_body_for_storage!(body)
+    publish_prepared_payload!(storage)
+    storage_result(storage)
+  end
+
+  def prepare_body_for_storage!(body) do
     body_json = Jason.encode!(body)
     max_bytes = max_inline_bytes()
 
     if externalize_body?(body, body_json, max_bytes) do
-      ref = write_payload!(body_json)
+      prepared_payload = prepare_payload!(body_json)
+      ref = prepared_payload.ref
 
       %{
         body_json: Jason.encode!(ref),
-        payload_ref: ref
+        payload_ref: ref,
+        prepared_payload: prepared_payload
       }
     else
       %{
         body_json: body_json,
-        payload_ref: nil
+        payload_ref: nil,
+        prepared_payload: nil
       }
     end
+  end
+
+  def publish_prepared_payload!(%{prepared_payload: nil}), do: :ok
+
+  def publish_prepared_payload!(%{prepared_payload: prepared_payload}) do
+    publish_payload!(prepared_payload)
+  end
+
+  def discard_prepared_payload!(%{prepared_payload: nil}), do: :ok
+
+  def discard_prepared_payload!(%{prepared_payload: %{staged_path: staged_path}}) do
+    remove_file(staged_path)
   end
 
   def body_json_for_storage!(body) do
@@ -73,89 +97,235 @@ defmodule VilanoKernel.Storage.EventPayloads do
   defp payload_ref?(%{} = body), do: match?({:ok, _ref}, payload_ref(body))
   defp payload_ref?(_body), do: false
 
-  def garbage_collect!(grace_period_ms \\ @default_gc_grace_ms)
-      when is_integer(grace_period_ms) and grace_period_ms >= 0 do
-    with_write_transaction!(fn ->
-      acquire_gc_write_lock!()
-      delete_unreferenced_payload_files!(grace_period_ms)
-    end)
+  defp storage_result(storage) do
+    %{
+      body_json: storage.body_json,
+      payload_ref: storage.payload_ref
+    }
   end
 
-  defp delete_unreferenced_payload_files!(grace_period_ms) do
-    referenced_paths = referenced_payload_paths()
-    now_seconds = System.system_time(:second)
-    grace_seconds = ceil_div(grace_period_ms, 1_000)
-    root = payload_root()
+  def garbage_collect!(grace_period_ms \\ @default_gc_grace_ms)
+      when is_integer(grace_period_ms) and grace_period_ms >= 0 do
+    candidates = payload_gc_candidates(grace_period_ms)
+    stale_canonical_temp_paths = canonical_payload_temp_gc_candidates(grace_period_ms)
+    stale_staged_payload_paths = staged_payload_gc_candidates(grace_period_ms)
 
-    if File.dir?(root) do
-      root
-      |> payload_files()
-      |> Enum.each(
-        &remove_unreferenced_payload_file(&1, referenced_paths, now_seconds, grace_seconds)
-      )
+    quarantined_paths =
+      case Infrastructure.transaction_with_busy_retry(
+             fn ->
+               acquire_gc_write_lock!()
+               quarantine_unreferenced_payload_files!(candidates, grace_period_ms)
+             end,
+             :admin_control
+           ) do
+        {:ok, paths} -> paths
+        {:error, reason} -> raise inspect(reason)
+      end
 
-      prune_empty_payload_dirs(root)
-    end
+    Enum.each(quarantined_paths, &remove_file/1)
+    remove_stale_payload_temp_files(stale_canonical_temp_paths, grace_period_ms)
+    remove_stale_staged_payload_files(stale_staged_payload_paths, grace_period_ms)
+    remove_quarantined_payload_files()
+    prune_empty_payload_dirs(payload_root())
+    prune_empty_payload_dirs(gc_quarantine_root())
 
     :ok
   end
 
-  defp with_write_transaction!(fun) do
-    if Repo.in_transaction?() do
-      fun.()
+  defp payload_gc_candidates(grace_period_ms) do
+    root = payload_root()
+
+    if File.dir?(root) do
+      now_seconds = System.system_time(:second)
+      grace_seconds = ceil_div(grace_period_ms, 1_000)
+
+      root
+      |> payload_files()
+      |> Enum.reduce([], fn absolute_path, candidates ->
+        relative_path = Path.relative_to(absolute_path, runtime_home_dir())
+
+        if valid_payload_file_path?(relative_path) and
+             old_enough_for_gc?(absolute_path, now_seconds, grace_seconds) do
+          [%{absolute_path: absolute_path, relative_path: relative_path} | candidates]
+        else
+          candidates
+        end
+      end)
     else
-      case Repo.transaction(fun, mode: :immediate) do
-        {:ok, result} -> result
-        {:error, reason} -> raise inspect(reason)
-      end
+      []
     end
+  end
+
+  defp staged_payload_gc_candidates(grace_period_ms) do
+    root = payload_staging_root()
+
+    if File.dir?(root) do
+      now_seconds = System.system_time(:second)
+      grace_seconds = ceil_div(grace_period_ms, 1_000)
+
+      root
+      |> staged_payload_files()
+      |> Enum.filter(&old_enough_for_gc?(&1, now_seconds, grace_seconds))
+    else
+      []
+    end
+  end
+
+  defp canonical_payload_temp_gc_candidates(grace_period_ms) do
+    root = payload_root()
+
+    if File.dir?(root) do
+      now_seconds = System.system_time(:second)
+      grace_seconds = ceil_div(grace_period_ms, 1_000)
+
+      root
+      |> canonical_payload_temp_files()
+      |> Enum.reduce([], fn absolute_path, candidates ->
+        relative_path = Path.relative_to(absolute_path, runtime_home_dir())
+
+        if valid_payload_temp_file_path?(relative_path) and
+             old_enough_for_gc?(absolute_path, now_seconds, grace_seconds) do
+          [absolute_path | candidates]
+        else
+          candidates
+        end
+      end)
+    else
+      []
+    end
+  end
+
+  defp remove_stale_payload_temp_files(paths, grace_period_ms) do
+    now_seconds = System.system_time(:second)
+    grace_seconds = ceil_div(grace_period_ms, 1_000)
+
+    Enum.each(paths, fn path ->
+      if old_enough_for_gc?(path, now_seconds, grace_seconds) do
+        remove_file(path)
+      end
+    end)
+  end
+
+  defp remove_stale_staged_payload_files(paths, grace_period_ms) do
+    now_seconds = System.system_time(:second)
+    grace_seconds = ceil_div(grace_period_ms, 1_000)
+
+    Enum.each(paths, fn path ->
+      if old_enough_for_gc?(path, now_seconds, grace_seconds) do
+        remove_file(path)
+      end
+    end)
+  end
+
+  defp quarantine_unreferenced_payload_files!(candidates, grace_period_ms) do
+    referenced_paths = referenced_payload_paths()
+    now_seconds = System.system_time(:second)
+    grace_seconds = ceil_div(grace_period_ms, 1_000)
+
+    Enum.reduce(candidates, [], fn candidate, quarantined_paths ->
+      if not MapSet.member?(referenced_paths, candidate.relative_path) and
+           old_enough_for_gc?(candidate.absolute_path, now_seconds, grace_seconds) do
+        case quarantine_payload_file(candidate) do
+          {:ok, quarantined_path} -> [quarantined_path | quarantined_paths]
+          :skip -> quarantined_paths
+        end
+      else
+        quarantined_paths
+      end
+    end)
   end
 
   defp acquire_gc_write_lock! do
     SQL.query!(Repo, "update runtime_metadata set updated_at = updated_at where id = 1", [])
   end
 
-  defp write_payload!(body_json) do
+  defp prepare_payload!(body_json) do
     sha256 = sha256_hex(body_json)
     bytes = byte_size(body_json)
     relative_path = payload_relative_path(sha256)
     absolute_path = payload_absolute_path!(relative_path)
+    staged_path = staged_payload_path!(sha256)
 
-    write_payload_once!(absolute_path, body_json, sha256, bytes)
+    Support.run_storage_test_hook(:event_payload_prepared, %{
+      bytes: bytes,
+      in_transaction?: Repo.in_transaction?()
+    })
 
-    %{
+    write_staged_payload!(staged_path, body_json)
+
+    ref = %{
       @ref_marker => @version,
       "sha256" => sha256,
       "bytes" => bytes,
       "path" => relative_path
     }
+
+    %{
+      ref: ref,
+      sha256: sha256,
+      bytes: bytes,
+      body_json: body_json,
+      absolute_path: absolute_path,
+      staged_path: staged_path
+    }
   end
 
-  defp write_payload_once!(path, body_json, sha256, bytes) do
-    if File.exists?(path) do
-      reuse_or_rewrite_payload_file!(path, body_json, sha256, bytes)
-    else
-      write_new_payload_file!(path, body_json)
+  defp publish_payload!(prepared_payload) do
+    try do
+      if File.exists?(prepared_payload.absolute_path) do
+        reuse_or_publish_payload_file!(prepared_payload)
+      else
+        publish_new_payload_file!(prepared_payload)
+      end
+    after
+      remove_file(prepared_payload.staged_path)
     end
-
-    :ok
   end
 
-  defp reuse_or_rewrite_payload_file!(path, body_json, sha256, bytes) do
+  defp reuse_or_publish_payload_file!(
+         %{absolute_path: path, body_json: body_json} = prepared_payload
+       ) do
     case File.read(path) do
       {:ok, existing_body_json} ->
-        if payload_file_matches?(existing_body_json, body_json, sha256, bytes) do
+        if payload_file_matches?(
+             existing_body_json,
+             body_json,
+             prepared_payload.sha256,
+             prepared_payload.bytes
+           ) do
           refresh_payload_file!(path, body_json)
         else
-          write_new_payload_file!(path, body_json)
+          publish_new_payload_file!(prepared_payload)
         end
 
       {:error, :enoent} ->
-        write_new_payload_file!(path, body_json)
+        publish_new_payload_file!(prepared_payload)
 
       {:error, reason} ->
         raise File.Error, reason: reason, action: "read", path: path
     end
+  end
+
+  defp publish_new_payload_file!(%{
+         absolute_path: path,
+         staged_path: staged_path,
+         body_json: body_json
+       }) do
+    File.mkdir_p!(Path.dirname(path))
+
+    case File.rename(staged_path, path) do
+      :ok ->
+        File.chmod!(path, 0o600)
+
+      {:error, _reason} ->
+        write_new_payload_file!(path, body_json)
+    end
+  end
+
+  defp write_staged_payload!(path, body_json) do
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, body_json)
+    File.chmod!(path, 0o600)
   end
 
   defp payload_file_matches?(existing_body_json, body_json, sha256, bytes) do
@@ -336,9 +506,35 @@ defmodule VilanoKernel.Storage.EventPayloads do
     end
   end
 
+  defp valid_payload_temp_file_path?(relative_path) do
+    case Path.split(relative_path) do
+      [@payload_dir, prefix, "." <> filename] ->
+        with <<sha256::binary-size(64), ".json.", tmp_id::binary>> <- filename,
+             true <- valid_sha256?(sha256),
+             true <- prefix == String.slice(sha256, 0, 2),
+             true <- String.ends_with?(tmp_id, ".tmp"),
+             true <- tmp_id != ".tmp" do
+          true
+        else
+          _ -> false
+        end
+
+      _ ->
+        false
+    end
+  end
+
   defp payload_absolute_path!(relative_path) do
     {:ok, absolute_path} = safe_payload_path(relative_path)
     absolute_path
+  end
+
+  defp staged_payload_path!(sha256) do
+    Path.join([
+      payload_staging_root(),
+      String.slice(sha256, 0, 2),
+      "#{sha256}.#{System.unique_integer([:positive])}.tmp"
+    ])
   end
 
   defp payload_read_paths(relative_path) do
@@ -356,6 +552,14 @@ defmodule VilanoKernel.Storage.EventPayloads do
 
   defp payload_root do
     Path.join(runtime_home_dir(), @payload_dir)
+  end
+
+  defp payload_staging_root do
+    Path.join(runtime_home_dir(), @payload_staging_dir)
+  end
+
+  defp gc_quarantine_root do
+    Path.join(runtime_home_dir(), @gc_quarantine_dir)
   end
 
   defp safe_payload_path(relative_path) do
@@ -407,19 +611,45 @@ defmodule VilanoKernel.Storage.EventPayloads do
     Path.wildcard(Path.join([root, "*", "*.json"]))
   end
 
-  defp remove_unreferenced_payload_file(
-         absolute_path,
-         referenced_paths,
-         now_seconds,
-         grace_seconds
-       ) do
-    relative_path = Path.relative_to(absolute_path, runtime_home_dir())
+  defp staged_payload_files(root) do
+    Path.wildcard(Path.join([root, "*", "*.tmp"]))
+  end
 
-    if valid_payload_file_path?(relative_path) and
-         not MapSet.member?(referenced_paths, relative_path) and
-         old_enough_for_gc?(absolute_path, now_seconds, grace_seconds) do
-      remove_file(absolute_path)
+  defp canonical_payload_temp_files(root) do
+    Path.wildcard(Path.join([root, "*", ".*.json.*.tmp"]), match_dot: true)
+  end
+
+  defp quarantine_payload_file(%{
+         absolute_path: absolute_path,
+         relative_path: relative_path
+       }) do
+    case Path.split(relative_path) do
+      [@payload_dir, prefix, filename] ->
+        quarantine_path =
+          Path.join([
+            gc_quarantine_root(),
+            prefix,
+            "#{filename}.#{System.unique_integer([:positive])}.gc"
+          ])
+
+        File.mkdir_p!(Path.dirname(quarantine_path))
+
+        case File.rename(absolute_path, quarantine_path) do
+          :ok -> {:ok, quarantine_path}
+          {:error, _reason} -> :skip
+        end
+
+      _ ->
+        :skip
     end
+  end
+
+  defp remove_quarantined_payload_files do
+    gc_quarantine_root()
+    |> Path.join("*")
+    |> Path.join("*.gc")
+    |> Path.wildcard()
+    |> Enum.each(&remove_file/1)
   end
 
   defp old_enough_for_gc?(path, now_seconds, grace_seconds) do

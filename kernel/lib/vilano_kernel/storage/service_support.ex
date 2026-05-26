@@ -3,7 +3,8 @@ defmodule VilanoKernel.Storage.ServiceSupport do
 
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
-  alias VilanoKernel.Storage.{Infrastructure, ReadModels, ServiceLifecycle}
+  alias VilanoKernel.Storage.{EventPayloads, Infrastructure, ReadModels, ServiceLifecycle}
+  alias VilanoKernel.Storage.Support.Sql, as: SqlSupport
 
   import VilanoKernel.Storage.Support
 
@@ -433,31 +434,134 @@ defmodule VilanoKernel.Storage.ServiceSupport do
     envelope_id
   end
 
-  def maybe_append_service_turn_waiting!(run, wait_body, now) do
+  def prepare_service_turn_waiting_event(run, wait_body) do
     if run["definitionKind"] == "service" do
       case get_processing_service_envelope_for_run(run["id"]) do
         nil ->
+          %{run_id: run["id"], envelope_id: nil, storage: nil}
+
+        envelope ->
+          %{
+            run_id: run["id"],
+            envelope_id: envelope["id"],
+            storage:
+              EventPayloads.prepare_body_for_storage!(
+                service_turn_waiting_body(wait_body, envelope)
+              )
+          }
+      end
+    end
+  end
+
+  def discard_prepared_service_turn_waiting_event(nil), do: :ok
+  def discard_prepared_service_turn_waiting_event(%{storage: nil}), do: :ok
+
+  def discard_prepared_service_turn_waiting_event(%{storage: storage}) do
+    EventPayloads.discard_prepared_payload!(storage)
+  end
+
+  def maybe_append_service_turn_waiting!(run, wait_body, now, prepared_event \\ nil) do
+    if run["definitionKind"] == "service" do
+      case get_processing_service_envelope_for_run(run["id"]) do
+        nil ->
+          validate_no_prepared_service_turn_waiting_event!(prepared_event, run)
           :ok
 
         envelope ->
-          append_event!(
+          append_service_turn_waiting_event!(
             run["id"],
-            "TurnWaiting",
-            Map.merge(wait_body, %{
-              "envelopeId" => envelope["id"],
-              "kind" => envelope["kind"],
-              "turnName" => envelope["name"],
-              "correlationId" => envelope["correlation_id"]
-            }),
-            now
+            service_turn_waiting_body(wait_body, envelope),
+            now,
+            prepared_event,
+            envelope
           )
       end
     else
+      if is_map(prepared_event), do: Repo.rollback(:stale_cancellation_plan)
       :ok
     end
   end
 
-  def wake_service_ask_waiter!(correlation_id, status, payload, now) do
+  defp validate_no_prepared_service_turn_waiting_event!(nil, _run), do: :ok
+
+  defp validate_no_prepared_service_turn_waiting_event!(
+         %{run_id: run_id, envelope_id: nil, storage: nil},
+         %{"id" => run_id}
+       ),
+       do: :ok
+
+  defp validate_no_prepared_service_turn_waiting_event!(_prepared_event, _run),
+    do: Repo.rollback(:stale_cancellation_plan)
+
+  defp service_turn_waiting_body(wait_body, envelope) do
+    Map.merge(wait_body, %{
+      "envelopeId" => envelope["id"],
+      "kind" => envelope["kind"],
+      "turnName" => envelope["name"],
+      "correlationId" => envelope["correlation_id"]
+    })
+  end
+
+  defp append_service_turn_waiting_event!(run_id, body, now, nil, _envelope) do
+    append_event!(run_id, "TurnWaiting", body, now)
+  end
+
+  defp append_service_turn_waiting_event!(
+         run_id,
+         _body,
+         now,
+         %{run_id: run_id, envelope_id: envelope_id, storage: storage},
+         %{"id" => envelope_id}
+       ) do
+    SqlSupport.append_prepared_event!(run_id, "TurnWaiting", storage, now)
+  end
+
+  defp append_service_turn_waiting_event!(_run_id, _body, _now, _prepared_event, _envelope),
+    do: Repo.rollback(:stale_cancellation_plan)
+
+  def prepare_service_ask_waiter_event(correlation_id, status, payload) do
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        correlation_id
+        |> service_ask_waiter_op()
+        |> prepare_service_ask_waiter_event(correlation_id, status, payload)
+      end,
+      :public_read
+    )
+  end
+
+  def discard_prepared_service_ask_waiter_event(nil), do: :ok
+
+  def discard_prepared_service_ask_waiter_event(%{storage: nil}), do: :ok
+
+  def discard_prepared_service_ask_waiter_event(%{storage: storage}) do
+    EventPayloads.discard_prepared_payload!(storage)
+  end
+
+  def discard_prepared_service_ask_waiter_events(prepared_events) when is_map(prepared_events) do
+    prepared_events
+    |> Map.values()
+    |> Enum.each(&discard_prepared_service_ask_waiter_event/1)
+  end
+
+  def discard_prepared_service_ask_waiter_events(_prepared_events), do: :ok
+
+  def wake_service_ask_waiter!(correlation_id, status, payload, now, prepared_event \\ nil) do
+    op = service_ask_waiter_op(correlation_id)
+
+    validate_prepared_service_ask_waiter_event!(
+      prepared_event,
+      op,
+      correlation_id,
+      status
+    )
+
+    if op && op["status"] == "waiting" do
+      do_wake_service_ask_waiter!(op, correlation_id, status, payload, now, prepared_event)
+    end
+  end
+
+  defp service_ask_waiter_op(correlation_id) do
     op =
       Repo
       |> SQL.query!(
@@ -484,79 +588,171 @@ defmodule VilanoKernel.Storage.ServiceSupport do
       |> rows_to_maps()
       |> List.first()
 
-    if op && op["status"] == "waiting" do
-      case status do
-        "completed" ->
-          SQL.query!(
-            Repo,
-            """
-            update run_service_ops
-            set
-              status = 'completed',
-              response_json = ?,
-              error_json = null,
-              updated_at = ?
-            where caller_run_id = ? and op_key = ?
-            """,
-            [maybe_encode_json(payload), now, op["caller_run_id"], op["op_key"]]
-          )
+    op
+  end
 
-        "failed" ->
-          SQL.query!(
-            Repo,
-            """
-            update run_service_ops
-            set
-              status = 'failed',
-              response_json = null,
-              error_json = ?,
-              updated_at = ?
-            where caller_run_id = ? and op_key = ?
-            """,
-            [maybe_encode_json(payload), now, op["caller_run_id"], op["op_key"]]
-          )
-      end
+  defp prepare_service_ask_waiter_event(
+         %{"status" => "waiting"} = op,
+         correlation_id,
+         status,
+         payload
+       ) do
+    wait_key = "ask_reply:" <> correlation_id
 
-      wait_key = "ask_reply:" <> correlation_id
-      wait_status = if status == "completed", do: "completed", else: "failed"
-
-      SQL.query!(
-        Repo,
-        """
-        update run_waits
-        set
-          status = ?,
-          output_json = ?,
-          updated_at = ?
-        where run_id = ? and op_key = ?
-        """,
-        [wait_status, maybe_encode_json(payload), now, op["caller_run_id"], wait_key]
-      )
-
-      SQL.query!(
-        Repo,
-        """
-        update runs
-        set
-          status = 'pending',
-          updated_at = ?
-        where id = ? and status = 'waiting'
-        """,
-        [now, op["caller_run_id"]]
-      )
-
-      append_event!(
-        op["caller_run_id"],
-        "WaitSatisfied",
-        %{
+    %{
+      kind: :service_ask_waiter,
+      expected_caller_run_id: op["caller_run_id"],
+      expected_op_key: op["op_key"],
+      expected_correlation_id: correlation_id,
+      expected_status: status,
+      storage:
+        EventPayloads.prepare_body_for_storage!(%{
           "kind" => "ask_reply",
           "key" => wait_key,
           "correlationId" => correlation_id,
           "payload" => payload
-        },
-        now
-      )
+        })
+    }
+  end
+
+  defp prepare_service_ask_waiter_event(_op, correlation_id, status, _payload) do
+    %{
+      kind: :service_ask_waiter,
+      expected_correlation_id: correlation_id,
+      expected_status: status,
+      storage: nil
+    }
+  end
+
+  defp validate_prepared_service_ask_waiter_event!(nil, _op, _correlation_id, _status), do: :ok
+
+  defp validate_prepared_service_ask_waiter_event!(
+         %{
+           kind: :service_ask_waiter,
+           expected_correlation_id: correlation_id,
+           expected_status: status,
+           storage: nil
+         },
+         op,
+         correlation_id,
+         status
+       ) do
+    if is_nil(op) or op["status"] != "waiting" do
+      :ok
+    else
+      Repo.rollback(:stale_cancellation_plan)
     end
+  end
+
+  defp validate_prepared_service_ask_waiter_event!(
+         %{
+           kind: :service_ask_waiter,
+           expected_caller_run_id: caller_run_id,
+           expected_op_key: op_key,
+           expected_correlation_id: correlation_id,
+           expected_status: status,
+           storage: storage
+         },
+         %{"status" => "waiting"} = op,
+         correlation_id,
+         status
+       )
+       when not is_nil(storage) do
+    if op["caller_run_id"] == caller_run_id and op["op_key"] == op_key do
+      :ok
+    else
+      Repo.rollback(:stale_cancellation_plan)
+    end
+  end
+
+  defp validate_prepared_service_ask_waiter_event!(
+         _prepared_event,
+         _op,
+         _correlation_id,
+         _status
+       ),
+       do: Repo.rollback(:stale_cancellation_plan)
+
+  defp do_wake_service_ask_waiter!(op, correlation_id, status, payload, now, prepared_event) do
+    case status do
+      "completed" ->
+        SQL.query!(
+          Repo,
+          """
+          update run_service_ops
+          set
+            status = 'completed',
+            response_json = ?,
+            error_json = null,
+            updated_at = ?
+          where caller_run_id = ? and op_key = ?
+          """,
+          [maybe_encode_json(payload), now, op["caller_run_id"], op["op_key"]]
+        )
+
+      "failed" ->
+        SQL.query!(
+          Repo,
+          """
+          update run_service_ops
+          set
+            status = 'failed',
+            response_json = null,
+            error_json = ?,
+            updated_at = ?
+          where caller_run_id = ? and op_key = ?
+          """,
+          [maybe_encode_json(payload), now, op["caller_run_id"], op["op_key"]]
+        )
+    end
+
+    wait_key = "ask_reply:" <> correlation_id
+    wait_status = if status == "completed", do: "completed", else: "failed"
+
+    SQL.query!(
+      Repo,
+      """
+      update run_waits
+      set
+        status = ?,
+        output_json = ?,
+        updated_at = ?
+      where run_id = ? and op_key = ?
+      """,
+      [wait_status, maybe_encode_json(payload), now, op["caller_run_id"], wait_key]
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      update runs
+      set
+        status = 'pending',
+        updated_at = ?
+      where id = ? and status = 'waiting'
+      """,
+      [now, op["caller_run_id"]]
+    )
+
+    append_service_ask_wait_satisfied_event!(
+      op["caller_run_id"],
+      %{
+        "kind" => "ask_reply",
+        "key" => wait_key,
+        "correlationId" => correlation_id,
+        "payload" => payload
+      },
+      now,
+      prepared_event
+    )
+  end
+
+  defp append_service_ask_wait_satisfied_event!(run_id, body, now, nil) do
+    append_event!(run_id, "WaitSatisfied", body, now)
+  end
+
+  defp append_service_ask_wait_satisfied_event!(run_id, _body, now, %{storage: storage}) do
+    SqlSupport.append_prepared_event!(run_id, "WaitSatisfied", storage, now)
   end
 
   def timeout_service_ask_wait!(run_id, op_key, wait, now) do

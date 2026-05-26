@@ -5,11 +5,14 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
   alias VilanoKernel.Repo
 
   alias VilanoKernel.Storage.{
+    EventPayloads,
     Infrastructure,
     RunControl,
     ServiceLifecycle,
     Support
   }
+
+  alias VilanoKernel.Storage.Support.Sql, as: SqlSupport
 
   import Support
 
@@ -94,111 +97,412 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.LeaseOps do
   end
 
   def complete_run_lease(lease_id, result) do
+    complete_run_lease_with_prepared_payload_retry(lease_id, result, 3)
+  end
+
+  defp complete_run_lease_with_prepared_payload_retry(lease_id, result, attempts_left) do
     now = Infrastructure.now_iso8601()
 
-    Infrastructure.transaction_with_busy_retry(fn ->
-      case RunControl.get_fenced_run_by_lease(lease_id, now) do
-        nil ->
-          nil
+    {completed_event, child_wait_events, restart_events, supervision_cancellations,
+     supervision_events,
+     linked_exit_cancellations} =
+      prepare_terminal_event_and_restart_events!(
+        lease_id,
+        %{"result" => result},
+        "completed",
+        now
+      )
 
-        run ->
-          RunControl.ensure_fenced_run_write!(
-            run["id"],
-            lease_id,
-            now,
-            """
-            update runs
-            set
-              status = 'completed',
-              lease_id = null,
-              lease_auth_token = null,
-              lease_worker_id = null,
-              lease_expires_at = null,
-              output_json = ?,
-              error_json = null,
-              updated_at = ?
-            where id = ?
-            """,
-            [Jason.encode!(result), now, run["id"]]
-          )
+    try do
+      case Infrastructure.transaction_with_busy_retry(fn ->
+             case RunControl.get_fenced_run_by_lease(lease_id, now) do
+               nil ->
+                 nil
 
-          append_event!(run["id"], "RunCompleted", %{"result" => result}, now)
+               run ->
+                 RunControl.ensure_fenced_run_write!(
+                   run["id"],
+                   lease_id,
+                   now,
+                   """
+                   update runs
+                   set
+                     status = 'completed',
+                     lease_id = null,
+                     lease_auth_token = null,
+                     lease_worker_id = null,
+                     lease_expires_at = null,
+                     output_json = ?,
+                     error_json = null,
+                     updated_at = ?
+                   where id = ?
+                   """,
+                   [Jason.encode!(result), now, run["id"]]
+                 )
 
-          VilanoKernel.Storage.AgentRelationships.wake_waiting_parents_for_child!(
-            run["id"],
-            "completed",
-            result,
-            now
-          )
+                 SqlSupport.append_prepared_event!(
+                   run["id"],
+                   "RunCompleted",
+                   completed_event,
+                   now
+                 )
 
-          VilanoKernel.Storage.Supervision.maybe_apply_supervision_for_terminal_run!(
-            run["id"],
-            now
-          )
+                 VilanoKernel.Storage.AgentRelationships.wake_waiting_parents_for_child!(
+                   run["id"],
+                   "completed",
+                   result,
+                   now,
+                   child_wait_events
+                 )
 
-          VilanoKernel.Storage.AgentRelationships.maybe_trigger_relationships_for_terminal_run!(
-            run["id"],
-            now
-          )
+                 VilanoKernel.Storage.Supervision.maybe_apply_supervision_for_terminal_run!(
+                   run["id"],
+                   now,
+                   restart_events,
+                   supervision_cancellations,
+                   supervision_events
+                 )
 
-          VilanoKernel.Storage.get_run(run["id"])
+                 VilanoKernel.Storage.AgentRelationships.maybe_trigger_relationships_for_terminal_run!(
+                   run["id"],
+                   now,
+                   linked_exit_cancellations
+                 )
+
+                 VilanoKernel.Storage.get_run(run["id"])
+             end
+           end) do
+        {:ok, result} ->
+          result
+
+        {:error, :stale_cancellation_plan} when attempts_left > 1 ->
+          complete_run_lease_with_prepared_payload_retry(lease_id, result, attempts_left - 1)
+
+        {:error, error} ->
+          unwrap_transaction_result({:error, error})
       end
-    end)
-    |> unwrap_transaction_result()
+    after
+      discard_prepared_payload(completed_event)
+
+      VilanoKernel.Storage.AgentRelationships.discard_prepared_child_result_wait_events(
+        child_wait_events
+      )
+
+      VilanoKernel.Storage.Supervision.discard_prepared_restart_events(restart_events)
+
+      VilanoKernel.Storage.Supervision.discard_prepared_sibling_cancellations(
+        supervision_cancellations
+      )
+
+      VilanoKernel.Storage.Supervision.discard_prepared_terminal_supervision_events(
+        supervision_events
+      )
+
+      VilanoKernel.Storage.AgentRelationships.discard_prepared_linked_exit_cancellations(
+        linked_exit_cancellations
+      )
+    end
   end
 
   def fail_run_lease(lease_id, error_body) do
+    fail_run_lease_with_prepared_payload_retry(lease_id, error_body, 3)
+  end
+
+  defp fail_run_lease_with_prepared_payload_retry(lease_id, error_body, attempts_left) do
     now = Infrastructure.now_iso8601()
 
-    Infrastructure.transaction_with_busy_retry(fn ->
-      case RunControl.get_fenced_run_by_lease(lease_id, now) do
-        nil ->
-          nil
+    {failed_event, child_wait_events, restart_events, supervision_cancellations,
+     supervision_events,
+     linked_exit_cancellations} =
+      prepare_terminal_event_and_restart_events!(
+        lease_id,
+        %{"error" => error_body},
+        "failed",
+        now
+      )
 
-        run ->
-          RunControl.ensure_fenced_run_write!(
-            run["id"],
-            lease_id,
-            now,
-            """
-            update runs
-            set
-              status = 'failed',
-              lease_id = null,
-              lease_auth_token = null,
-              lease_worker_id = null,
-              lease_expires_at = null,
-              error_json = ?,
-              updated_at = ?
-            where id = ?
-            """,
-            [Jason.encode!(error_body), now, run["id"]]
-          )
+    try do
+      case Infrastructure.transaction_with_busy_retry(fn ->
+             case RunControl.get_fenced_run_by_lease(lease_id, now) do
+               nil ->
+                 nil
 
-          append_event!(run["id"], "RunFailed", %{"error" => error_body}, now)
+               run ->
+                 RunControl.ensure_fenced_run_write!(
+                   run["id"],
+                   lease_id,
+                   now,
+                   """
+                   update runs
+                   set
+                     status = 'failed',
+                     lease_id = null,
+                     lease_auth_token = null,
+                     lease_worker_id = null,
+                     lease_expires_at = null,
+                     error_json = ?,
+                     updated_at = ?
+                   where id = ?
+                   """,
+                   [Jason.encode!(error_body), now, run["id"]]
+                 )
 
-          VilanoKernel.Storage.AgentRelationships.wake_waiting_parents_for_child!(
-            run["id"],
-            "failed",
-            error_body,
-            now
-          )
+                 SqlSupport.append_prepared_event!(run["id"], "RunFailed", failed_event, now)
 
-          VilanoKernel.Storage.Supervision.maybe_apply_supervision_for_terminal_run!(
-            run["id"],
-            now
-          )
+                 VilanoKernel.Storage.AgentRelationships.wake_waiting_parents_for_child!(
+                   run["id"],
+                   "failed",
+                   error_body,
+                   now,
+                   child_wait_events
+                 )
 
-          VilanoKernel.Storage.AgentRelationships.maybe_trigger_relationships_for_terminal_run!(
-            run["id"],
-            now
-          )
+                 VilanoKernel.Storage.Supervision.maybe_apply_supervision_for_terminal_run!(
+                   run["id"],
+                   now,
+                   restart_events,
+                   supervision_cancellations,
+                   supervision_events
+                 )
 
-          VilanoKernel.Storage.get_run(run["id"])
+                 VilanoKernel.Storage.AgentRelationships.maybe_trigger_relationships_for_terminal_run!(
+                   run["id"],
+                   now,
+                   linked_exit_cancellations
+                 )
+
+                 VilanoKernel.Storage.get_run(run["id"])
+             end
+           end) do
+        {:ok, result} ->
+          result
+
+        {:error, :stale_cancellation_plan} when attempts_left > 1 ->
+          fail_run_lease_with_prepared_payload_retry(lease_id, error_body, attempts_left - 1)
+
+        {:error, error} ->
+          unwrap_transaction_result({:error, error})
       end
-    end)
-    |> unwrap_transaction_result()
+    after
+      discard_prepared_payload(failed_event)
+
+      VilanoKernel.Storage.AgentRelationships.discard_prepared_child_result_wait_events(
+        child_wait_events
+      )
+
+      VilanoKernel.Storage.Supervision.discard_prepared_restart_events(restart_events)
+
+      VilanoKernel.Storage.Supervision.discard_prepared_sibling_cancellations(
+        supervision_cancellations
+      )
+
+      VilanoKernel.Storage.Supervision.discard_prepared_terminal_supervision_events(
+        supervision_events
+      )
+
+      VilanoKernel.Storage.AgentRelationships.discard_prepared_linked_exit_cancellations(
+        linked_exit_cancellations
+      )
+    end
   end
+
+  defp prepare_terminal_restart_events_for_lease(lease_id, terminal_status, now) do
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        case RunControl.get_fenced_run_by_lease(lease_id, now) do
+          nil ->
+            %{}
+
+          run ->
+            VilanoKernel.Storage.Supervision.prepare_terminal_restart_run_started_events(
+              run["id"],
+              terminal_status,
+              now
+            )
+        end
+      end,
+      :public_read
+    )
+  end
+
+  defp prepare_child_result_wait_events_for_lease(lease_id, terminal_status, payload, now) do
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        case RunControl.get_fenced_run_by_lease(lease_id, now) do
+          nil ->
+            %{}
+
+          run ->
+            VilanoKernel.Storage.AgentRelationships.prepare_child_result_wait_satisfied_events(
+              run["id"],
+              terminal_status,
+              payload
+            )
+        end
+      end,
+      :public_read
+    )
+  end
+
+  defp prepare_terminal_sibling_cancellations_for_lease(lease_id, terminal_status, now) do
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        case RunControl.get_fenced_run_by_lease(lease_id, now) do
+          nil ->
+            %{}
+
+          run ->
+            VilanoKernel.Storage.Supervision.prepare_terminal_sibling_cancellations(
+              run["id"],
+              terminal_status,
+              now
+            )
+        end
+      end,
+      :public_read
+    )
+  end
+
+  defp prepare_terminal_supervision_events_for_lease(lease_id, terminal_status, payload, now) do
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        case RunControl.get_fenced_run_by_lease(lease_id, now) do
+          nil ->
+            %{}
+
+          run ->
+            VilanoKernel.Storage.Supervision.prepare_terminal_supervision_events(
+              run["id"],
+              terminal_status,
+              payload,
+              now
+            )
+        end
+      end,
+      :public_read
+    )
+  end
+
+  defp prepare_terminal_linked_exit_cancellations_for_lease(
+         lease_id,
+         terminal_status,
+         payload,
+         now
+       ) do
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        case RunControl.get_fenced_run_by_lease(lease_id, now) do
+          nil ->
+            %{}
+
+          run ->
+            VilanoKernel.Storage.AgentRelationships.prepare_terminal_linked_exit_cancellations(
+              run["id"],
+              terminal_status,
+              now,
+              MapSet.new(),
+              payload
+            )
+        end
+      end,
+      :public_read
+    )
+  end
+
+  defp prepare_terminal_event_and_restart_events!(lease_id, event_body, terminal_status, now) do
+    terminal_event = EventPayloads.prepare_body_for_storage!(event_body)
+
+    payload = Map.get(event_body, "result", Map.get(event_body, "error"))
+
+    child_wait_events =
+      try do
+        prepare_child_result_wait_events_for_lease(lease_id, terminal_status, payload, now)
+      rescue
+        error ->
+          discard_prepared_payload(terminal_event)
+          reraise error, __STACKTRACE__
+      end
+
+    restart_events =
+      try do
+        prepare_terminal_restart_events_for_lease(lease_id, terminal_status, now)
+      rescue
+        error ->
+          VilanoKernel.Storage.AgentRelationships.discard_prepared_child_result_wait_events(
+            child_wait_events
+          )
+
+          discard_prepared_payload(terminal_event)
+          reraise error, __STACKTRACE__
+      end
+
+    supervision_cancellations =
+      try do
+        prepare_terminal_sibling_cancellations_for_lease(lease_id, terminal_status, now)
+      rescue
+        error ->
+          VilanoKernel.Storage.Supervision.discard_prepared_restart_events(restart_events)
+
+          VilanoKernel.Storage.AgentRelationships.discard_prepared_child_result_wait_events(
+            child_wait_events
+          )
+
+          discard_prepared_payload(terminal_event)
+          reraise error, __STACKTRACE__
+      end
+
+    supervision_events =
+      try do
+        prepare_terminal_supervision_events_for_lease(lease_id, terminal_status, payload, now)
+      rescue
+        error ->
+          VilanoKernel.Storage.Supervision.discard_prepared_sibling_cancellations(
+            supervision_cancellations
+          )
+
+          VilanoKernel.Storage.Supervision.discard_prepared_restart_events(restart_events)
+
+          VilanoKernel.Storage.AgentRelationships.discard_prepared_child_result_wait_events(
+            child_wait_events
+          )
+
+          discard_prepared_payload(terminal_event)
+          reraise error, __STACKTRACE__
+      end
+
+    try do
+      linked_exit_cancellations =
+        prepare_terminal_linked_exit_cancellations_for_lease(
+          lease_id,
+          terminal_status,
+          payload,
+          now
+        )
+
+      {terminal_event, child_wait_events, restart_events, supervision_cancellations,
+       supervision_events, linked_exit_cancellations}
+    rescue
+      error ->
+        VilanoKernel.Storage.Supervision.discard_prepared_terminal_supervision_events(
+          supervision_events
+        )
+
+        VilanoKernel.Storage.Supervision.discard_prepared_sibling_cancellations(
+          supervision_cancellations
+        )
+
+        VilanoKernel.Storage.Supervision.discard_prepared_restart_events(restart_events)
+
+        VilanoKernel.Storage.AgentRelationships.discard_prepared_child_result_wait_events(
+          child_wait_events
+        )
+
+        discard_prepared_payload(terminal_event)
+        reraise error, __STACKTRACE__
+    end
+  end
+
+  defp discard_prepared_payload(storage), do: EventPayloads.discard_prepared_payload!(storage)
 
   def runnable_activation_available? do
     now = Infrastructure.now_iso8601()

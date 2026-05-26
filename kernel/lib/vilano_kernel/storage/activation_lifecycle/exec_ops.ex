@@ -215,8 +215,38 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.ExecOps do
   end
 
   def fail_exec(lease_id, name, op_key, body) do
-    now = Infrastructure.now_iso8601()
+    fail_exec_with_prepared_failure_retry(lease_id, name, op_key, body, 3)
+  end
 
+  defp fail_exec_with_prepared_failure_retry(lease_id, name, op_key, body, attempts_left) do
+    now = Infrastructure.now_iso8601()
+    prepared_failure = prepare_exec_failure_plan!(lease_id, name, op_key, body, now)
+
+    try do
+      case fail_exec_transaction(lease_id, name, op_key, body, now, prepared_failure) do
+        {:ok, result} ->
+          result
+
+        {:error, :stale_cancellation_plan} when attempts_left > 1 ->
+          fail_exec_with_prepared_failure_retry(
+            lease_id,
+            name,
+            op_key,
+            body,
+            attempts_left - 1
+          )
+
+        {:error, error} ->
+          unwrap_transaction_result({:error, error})
+      end
+    after
+      VilanoKernel.Storage.FailureRecovery.RetryRecovery.discard_prepared_exec_attempt_failure(
+        prepared_failure
+      )
+    end
+  end
+
+  defp fail_exec_transaction(lease_id, name, op_key, body, now, prepared_failure) do
     Infrastructure.transaction_with_busy_retry(fn ->
       case RunControl.get_fenced_run_by_lease(lease_id, now) do
         nil ->
@@ -225,9 +255,12 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.ExecOps do
         run ->
           case get_run_exec(run["id"], op_key) do
             nil ->
+              if is_map(prepared_failure), do: Repo.rollback(:stale_cancellation_plan)
               nil
 
             existing ->
+              if is_nil(prepared_failure), do: Repo.rollback(:stale_cancellation_plan)
+
               VilanoKernel.Storage.FailureRecovery.fail_exec_attempt!(
                 run,
                 existing,
@@ -235,11 +268,39 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.ExecOps do
                 op_key,
                 body,
                 now,
-                lease_id
+                lease_id,
+                prepared_failure
               )
           end
       end
     end)
-    |> unwrap_transaction_result()
+  end
+
+  defp prepare_exec_failure_plan!(lease_id, name, op_key, body, now) do
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        case RunControl.get_run_by_lease(lease_id) do
+          nil ->
+            nil
+
+          run ->
+            case get_run_exec(run["id"], op_key) do
+              nil ->
+                nil
+
+              existing ->
+                VilanoKernel.Storage.FailureRecovery.RetryRecovery.prepare_exec_attempt_failure!(
+                  run,
+                  existing,
+                  name,
+                  op_key,
+                  body,
+                  now
+                )
+            end
+        end
+      end,
+      :public_read
+    )
   end
 end

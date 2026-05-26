@@ -88,31 +88,51 @@ defmodule VilanoKernel.Storage do
           """
       end
 
-    Repo
-    |> SQL.query!(
-      """
-      select distinct snapshot_path
-      from projects
-      #{where_clause}
-      order by snapshot_path asc
-      """,
-      args
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        Repo
+        |> SQL.query!(
+          """
+          select distinct snapshot_path
+          from projects
+          #{where_clause}
+          order by snapshot_path asc
+          """,
+          args
+        )
+        |> rows_to_maps()
+        |> Enum.map(& &1["snapshot_path"])
+        |> Enum.filter(&is_binary/1)
+      end,
+      :public_read
     )
-    |> rows_to_maps()
-    |> Enum.map(& &1["snapshot_path"])
-    |> Enum.filter(&is_binary/1)
   end
 
   def create_workflow_run!(project, definition, input) do
     now = Infrastructure.now_iso8601()
     run_id = "run_" <> Ecto.UUID.generate()
+    input = input || %{}
 
-    Infrastructure.transaction_with_busy_retry(
-      fn ->
-        insert_workflow_run!(run_id, project, definition, input || %{}, now)
-      end,
-      :run_creation
-    )
+    run_started_event =
+      Support.Sql.prepare_workflow_run_started_event!(project, definition, input)
+
+    try do
+      Infrastructure.transaction_with_busy_retry(
+        fn ->
+          Support.Sql.insert_workflow_run!(
+            run_id,
+            project,
+            definition,
+            input,
+            now,
+            run_started_event
+          )
+        end,
+        :run_creation
+      )
+    after
+      EventPayloads.discard_prepared_payload!(run_started_event)
+    end
 
     get_run(run_id)
   end
@@ -232,53 +252,235 @@ defmodule VilanoKernel.Storage do
   def stop_service_run(project_name, definition_name, service_key) do
     initial_run = get_service_run(project_name, definition_name, service_key)
 
-    admin_control_with_optional_preemption(initial_run, fn ->
-      now = Infrastructure.now_iso8601()
+    stop_service_run_with_prepared_payload_retry(
+      initial_run,
+      project_name,
+      definition_name,
+      service_key,
+      3
+    )
+  end
 
-      case get_service_run(project_name, definition_name, service_key) do
-        nil ->
-          nil
+  defp stop_service_run_with_prepared_payload_retry(
+         initial_run,
+         project_name,
+         definition_name,
+         service_key,
+         attempts_left
+       ) do
+    now = Infrastructure.now_iso8601()
+    reason = "cli_stop"
+    error_body = FailureRecovery.cancellation_error("Service stopped", reason)
 
-        service_run ->
-          FailureRecovery.stop_service_run_instance!(
-            service_run,
-            FailureRecovery.cancellation_error("Service stopped", "cli_stop"),
-            "cli_stop",
-            now
+    prepared_stop =
+      prepare_service_stop_for_admin(
+        project_name,
+        definition_name,
+        service_key,
+        error_body,
+        reason,
+        now
+      )
+
+    try do
+      case admin_control_transaction_with_optional_preemption(initial_run, fn ->
+             case get_service_run(project_name, definition_name, service_key) do
+               nil ->
+                 nil
+
+               service_run ->
+                 if is_nil(prepared_stop) and service_run["status"] != "stopped" do
+                   Repo.rollback(:stale_cancellation_plan)
+                 end
+
+                 FailureRecovery.stop_service_run_instance!(
+                   service_run,
+                   error_body,
+                   reason,
+                   now,
+                   nil,
+                   prepared_stop
+                 )
+             end
+           end) do
+        {:ok, result} ->
+          result
+
+        {:error, :stale_cancellation_plan} when attempts_left > 1 ->
+          stop_service_run_with_prepared_payload_retry(
+            initial_run,
+            project_name,
+            definition_name,
+            service_key,
+            attempts_left - 1
           )
+
+        {:error, error} ->
+          unwrap_transaction_result({:error, error})
       end
-    end)
+    after
+      FailureRecovery.ServiceFailure.discard_prepared_service_stop(prepared_stop)
+    end
   end
 
   def cancel_run(run_id, reason \\ "cli_cancel") do
     initial_run = get_run(run_id)
 
-    admin_control_with_optional_preemption(initial_run, fn ->
-      now = Infrastructure.now_iso8601()
+    cancel_run_with_prepared_payload_retry(initial_run, run_id, reason, 3)
+  end
 
-      case get_run(run_id) do
-        nil ->
-          nil
+  defp cancel_run_with_prepared_payload_retry(initial_run, run_id, reason, attempts_left) do
+    now = Infrastructure.now_iso8601()
+    prepared_cancellation = prepare_cancellation_for_cancel_run(run_id, reason, now)
 
-        %{"definitionKind" => "service"} ->
-          service_run = get_service_run_by_id(run_id)
+    try do
+      case admin_control_transaction_with_optional_preemption(initial_run, fn ->
+             cancel_run_in_transaction(run_id, reason, now, prepared_cancellation)
+           end) do
+        {:ok, result} ->
+          result
 
-          FailureRecovery.stop_service_run_instance!(
-            service_run,
-            FailureRecovery.cancellation_error("Service stopped", reason),
-            reason,
-            now
-          )
+        {:error, :stale_cancellation_plan} when attempts_left > 1 ->
+          cancel_run_with_prepared_payload_retry(initial_run, run_id, reason, attempts_left - 1)
 
-        run ->
-          FailureRecovery.cancel_workflow_run_instance!(
-            run,
-            FailureRecovery.cancellation_error("Run cancelled", reason),
-            reason,
-            now
-          )
+        {:error, error} ->
+          unwrap_transaction_result({:error, error})
       end
-    end)
+    after
+      discard_prepared_cancel_run(prepared_cancellation)
+    end
+  end
+
+  defp prepare_cancellation_for_cancel_run(run_id, reason, now) do
+    case get_run(run_id) do
+      %{"definitionKind" => "workflow"} = run ->
+        if FailureRecovery.terminal_run_status?(run["status"]) do
+          nil
+        else
+          %{
+            kind: :workflow_cancellation,
+            prepared:
+              FailureRecovery.prepare_workflow_cancellation!(
+                run,
+                FailureRecovery.cancellation_error("Run cancelled", reason),
+                reason,
+                now
+              )
+          }
+        end
+
+      %{"definitionKind" => "service"} = run ->
+        if FailureRecovery.terminal_run_status?(run["status"]) do
+          nil
+        else
+          case get_service_run_by_id(run["id"]) do
+            nil ->
+              nil
+
+            service_run ->
+              %{
+                kind: :service_stop,
+                prepared:
+                  FailureRecovery.ServiceFailure.prepare_service_stop!(
+                    service_run,
+                    FailureRecovery.cancellation_error("Service stopped", reason),
+                    reason,
+                    now
+                  )
+              }
+          end
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp cancel_run_in_transaction(run_id, reason, now, prepared_cancellation) do
+    case get_run(run_id) do
+      nil ->
+        nil
+
+      %{"definitionKind" => "service"} ->
+        service_run = get_service_run_by_id(run_id)
+
+        if (is_nil(prepared_cancellation) and service_run) && service_run["status"] != "stopped" do
+          Repo.rollback(:stale_cancellation_plan)
+        end
+
+        FailureRecovery.stop_service_run_instance!(
+          service_run,
+          FailureRecovery.cancellation_error("Service stopped", reason),
+          reason,
+          now,
+          nil,
+          prepared_service_stop_for_cancel_run!(prepared_cancellation)
+        )
+
+      run ->
+        FailureRecovery.cancel_workflow_run_instance!(
+          run,
+          FailureRecovery.cancellation_error("Run cancelled", reason),
+          reason,
+          now,
+          prepared_workflow_cancellation_for_cancel_run!(prepared_cancellation)
+        )
+    end
+  end
+
+  defp prepare_service_stop_for_admin(
+         project_name,
+         definition_name,
+         service_key,
+         error_body,
+         reason,
+         now
+       ) do
+    case get_service_run(project_name, definition_name, service_key) do
+      nil ->
+        nil
+
+      service_run ->
+        if service_run["status"] == "stopped" do
+          nil
+        else
+          FailureRecovery.ServiceFailure.prepare_service_stop!(
+            service_run,
+            error_body,
+            reason,
+            now
+          )
+        end
+    end
+  end
+
+  defp prepared_workflow_cancellation_for_cancel_run!(nil), do: nil
+
+  defp prepared_workflow_cancellation_for_cancel_run!(%{
+         kind: :workflow_cancellation,
+         prepared: prepared
+       }),
+       do: prepared
+
+  defp prepared_workflow_cancellation_for_cancel_run!(_prepared),
+    do: Repo.rollback(:stale_cancellation_plan)
+
+  defp prepared_service_stop_for_cancel_run!(nil), do: nil
+
+  defp prepared_service_stop_for_cancel_run!(%{kind: :service_stop, prepared: prepared}),
+    do: prepared
+
+  defp prepared_service_stop_for_cancel_run!(_prepared),
+    do: Repo.rollback(:stale_cancellation_plan)
+
+  defp discard_prepared_cancel_run(nil), do: :ok
+
+  defp discard_prepared_cancel_run(%{kind: :workflow_cancellation, prepared: prepared}) do
+    FailureRecovery.discard_prepared_workflow_cancellation(prepared)
+  end
+
+  defp discard_prepared_cancel_run(%{kind: :service_stop, prepared: prepared}) do
+    FailureRecovery.ServiceFailure.discard_prepared_service_stop(prepared)
   end
 
   def purge_project_runtime(project_name) do
@@ -567,7 +769,7 @@ defmodule VilanoKernel.Storage do
     end
   end
 
-  defp admin_control_with_optional_preemption(run, fun) do
+  defp admin_control_transaction_with_optional_preemption(run, fun) do
     result =
       try do
         Infrastructure.transaction_with_busy_retry(fun, :admin_control)
@@ -582,7 +784,7 @@ defmodule VilanoKernel.Storage do
       end
 
     maybe_preempt_active_managed_worker(run)
-    unwrap_transaction_result(result)
+    result
   end
 
   defp managed_worker_run?(%{"leaseWorkerId" => "managed-local-" <> _rest}), do: true

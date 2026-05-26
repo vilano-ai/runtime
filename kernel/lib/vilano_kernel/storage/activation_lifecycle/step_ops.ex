@@ -382,32 +382,8 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.StepOps do
   end
 
   def fail_step(lease_id, name, op_key, error_body) do
-    now = Infrastructure.now_iso8601()
-
     result =
-      Infrastructure.transaction_with_busy_retry(fn ->
-        case RunControl.get_fenced_run_by_lease(lease_id, now) do
-          nil ->
-            nil
-
-          run ->
-            case get_run_step_row(run["id"], op_key) do
-              nil ->
-                nil
-
-              step ->
-                VilanoKernel.Storage.FailureRecovery.fail_step_attempt!(
-                  run,
-                  step,
-                  name,
-                  error_body,
-                  now,
-                  lease_id
-                )
-            end
-        end
-      end)
-      |> unwrap_transaction_result()
+      fail_step_with_prepared_failure_retry(lease_id, name, op_key, error_body, 3)
 
     if is_map(result) && result["status"] in ["failed", "retry_waiting"] do
       VilanoKernel.StepDeadlineManager.clear_step(result["runId"], result["key"])
@@ -416,12 +392,67 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.StepOps do
     result
   end
 
-  def timeout_step(lease_id, op_key, expected_attempt, error_body) do
+  defp fail_step_with_prepared_failure_retry(lease_id, name, op_key, error_body, attempts_left) do
     now = Infrastructure.now_iso8601()
+    prepared_failure = prepare_step_failure_plan!(lease_id, name, op_key, error_body, now)
 
-    result =
-      Infrastructure.transaction_with_busy_retry(fn ->
-        case RunControl.get_fenced_run_by_lease(lease_id, now) do
+    try do
+      case fail_step_transaction(lease_id, name, op_key, error_body, now, prepared_failure) do
+        {:ok, result} ->
+          result
+
+        {:error, :stale_cancellation_plan} when attempts_left > 1 ->
+          fail_step_with_prepared_failure_retry(
+            lease_id,
+            name,
+            op_key,
+            error_body,
+            attempts_left - 1
+          )
+
+        {:error, error} ->
+          unwrap_transaction_result({:error, error})
+      end
+    after
+      VilanoKernel.Storage.FailureRecovery.RetryRecovery.discard_prepared_step_attempt_failure(
+        prepared_failure
+      )
+    end
+  end
+
+  defp fail_step_transaction(lease_id, name, op_key, error_body, now, prepared_failure) do
+    Infrastructure.transaction_with_busy_retry(fn ->
+      case RunControl.get_fenced_run_by_lease(lease_id, now) do
+        nil ->
+          nil
+
+        run ->
+          case get_run_step_row(run["id"], op_key) do
+            nil ->
+              if is_map(prepared_failure), do: Repo.rollback(:stale_cancellation_plan)
+              nil
+
+            step ->
+              if is_nil(prepared_failure), do: Repo.rollback(:stale_cancellation_plan)
+
+              VilanoKernel.Storage.FailureRecovery.fail_step_attempt!(
+                run,
+                step,
+                name,
+                error_body,
+                now,
+                lease_id,
+                prepared_failure
+              )
+          end
+      end
+    end)
+  end
+
+  defp prepare_step_failure_plan!(lease_id, name, op_key, error_body, now) do
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        case RunControl.get_run_by_lease(lease_id) do
           nil ->
             nil
 
@@ -431,38 +462,23 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.StepOps do
                 nil
 
               step ->
-                if step["status"] != "running" or step["attempt"] != expected_attempt do
-                  nil
-                else
-                  case VilanoKernel.Storage.FailureRecovery.fail_step_attempt!(
-                         run,
-                         step,
-                         step["name"],
-                         error_body,
-                         now,
-                         lease_id
-                       ) do
-                    %{"status" => "retry_waiting", "wait" => wait} ->
-                      %{
-                        "run" => VilanoKernel.Storage.get_run(run["id"]),
-                        "status" => "waiting",
-                        "activeLeaseWorkerId" => run["leaseWorkerId"],
-                        "wait" => wait
-                      }
-
-                    _ ->
-                      VilanoKernel.Storage.FailureRecovery.timeout_result_for_run!(
-                        run,
-                        error_body,
-                        now,
-                        lease_id
-                      )
-                  end
-                end
+                VilanoKernel.Storage.FailureRecovery.RetryRecovery.prepare_step_attempt_failure!(
+                  run,
+                  step,
+                  name,
+                  error_body,
+                  now
+                )
             end
         end
-      end)
-      |> unwrap_transaction_result()
+      end,
+      :public_read
+    )
+  end
+
+  def timeout_step(lease_id, op_key, expected_attempt, error_body) do
+    result =
+      timeout_step_with_prepared_result_retry(lease_id, op_key, expected_attempt, error_body, 3)
 
     if is_map(result) && result["status"] in ["failed", "idle", "pending", "waiting"] do
       VilanoKernel.StepDeadlineManager.clear_step(result["run"]["id"], op_key)
@@ -470,4 +486,169 @@ defmodule VilanoKernel.Storage.ActivationLifecycle.StepOps do
 
     result
   end
+
+  defp timeout_step_with_prepared_result_retry(
+         lease_id,
+         op_key,
+         expected_attempt,
+         error_body,
+         attempts_left
+       ) do
+    now = Infrastructure.now_iso8601()
+
+    prepared_timeout =
+      prepare_timeout_step_plan!(lease_id, op_key, expected_attempt, error_body, now)
+
+    try do
+      case timeout_step_transaction(
+             lease_id,
+             op_key,
+             expected_attempt,
+             error_body,
+             now,
+             prepared_timeout
+           ) do
+        {:ok, result} ->
+          result
+
+        {:error, :stale_cancellation_plan} when attempts_left > 1 ->
+          timeout_step_with_prepared_result_retry(
+            lease_id,
+            op_key,
+            expected_attempt,
+            error_body,
+            attempts_left - 1
+          )
+
+        {:error, error} ->
+          unwrap_transaction_result({:error, error})
+      end
+    after
+      VilanoKernel.Storage.FailureRecovery.ServiceFailure.discard_prepared_timeout_result(
+        prepared_timeout_result(prepared_timeout)
+      )
+
+      VilanoKernel.Storage.FailureRecovery.RetryRecovery.discard_prepared_step_attempt_failure(
+        prepared_step_failure(prepared_timeout)
+      )
+    end
+  end
+
+  defp timeout_step_transaction(
+         lease_id,
+         op_key,
+         expected_attempt,
+         error_body,
+         now,
+         prepared_timeout
+       ) do
+    Infrastructure.transaction_with_busy_retry(fn ->
+      case RunControl.get_fenced_run_by_lease(lease_id, now) do
+        nil ->
+          nil
+
+        run ->
+          case get_run_step_row(run["id"], op_key) do
+            nil ->
+              nil
+
+            step ->
+              if step["status"] != "running" or step["attempt"] != expected_attempt do
+                nil
+              else
+                if is_nil(prepared_step_failure(prepared_timeout)) do
+                  Repo.rollback(:stale_cancellation_plan)
+                end
+
+                case VilanoKernel.Storage.FailureRecovery.fail_step_attempt!(
+                       run,
+                       step,
+                       step["name"],
+                       error_body,
+                       now,
+                       lease_id,
+                       prepared_step_failure(prepared_timeout)
+                     ) do
+                  %{"status" => "retry_waiting", "wait" => wait} ->
+                    %{
+                      "run" => VilanoKernel.Storage.get_run(run["id"]),
+                      "status" => "waiting",
+                      "activeLeaseWorkerId" => run["leaseWorkerId"],
+                      "wait" => wait
+                    }
+
+                  _ ->
+                    if is_nil(prepared_timeout_result(prepared_timeout)) do
+                      Repo.rollback(:stale_cancellation_plan)
+                    end
+
+                    VilanoKernel.Storage.FailureRecovery.timeout_result_for_run!(
+                      run,
+                      error_body,
+                      now,
+                      lease_id,
+                      prepared_timeout_result(prepared_timeout)
+                    )
+                end
+              end
+          end
+      end
+    end)
+  end
+
+  defp prepare_timeout_step_plan!(lease_id, op_key, expected_attempt, error_body, now) do
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        case RunControl.get_run_by_lease(lease_id) do
+          nil ->
+            nil
+
+          run ->
+            case get_run_step_row(run["id"], op_key) do
+              %{"status" => "running", "attempt" => ^expected_attempt} = step ->
+                step_failure =
+                  VilanoKernel.Storage.FailureRecovery.RetryRecovery.prepare_step_attempt_failure!(
+                    run,
+                    step,
+                    step["name"],
+                    error_body,
+                    now
+                  )
+
+                timeout_result =
+                  try do
+                    unless VilanoKernel.Storage.FailureRecovery.RetryRecovery.prepared_step_attempt_will_retry?(
+                             step_failure
+                           ) do
+                      VilanoKernel.Storage.FailureRecovery.ServiceFailure.prepare_timeout_result_for_run!(
+                        run,
+                        error_body,
+                        now
+                      )
+                    end
+                  rescue
+                    error ->
+                      VilanoKernel.Storage.FailureRecovery.RetryRecovery.discard_prepared_step_attempt_failure(
+                        step_failure
+                      )
+
+                      reraise error, __STACKTRACE__
+                  end
+
+                %{step_failure: step_failure, timeout_result: timeout_result}
+
+              _ ->
+                nil
+            end
+        end
+      end,
+      :public_read
+    )
+  end
+
+  defp prepared_step_failure(nil), do: nil
+  defp prepared_step_failure(%{step_failure: step_failure}), do: step_failure
+
+  defp prepared_timeout_result(nil), do: nil
+  defp prepared_timeout_result(%{timeout_result: timeout_result}), do: timeout_result
 end

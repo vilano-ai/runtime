@@ -4,79 +4,125 @@ defmodule VilanoKernel.Storage.WorkflowOps do
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
 
-  alias VilanoKernel.Storage.{Infrastructure, RunControl, Support}
+  alias VilanoKernel.Storage.{EventPayloads, Infrastructure, RunControl, Support}
+  alias VilanoKernel.Storage.Support.Sql, as: SqlSupport
 
   import Support
   import VilanoKernel.Storage.ServiceSupport
 
   def resolve_spawn(lease_id, definition_name, op_key, child_run_id, input) do
     now = Infrastructure.now_iso8601()
+    input = input || %{}
+    run_started_event = prepare_child_run_started_event(lease_id, definition_name, op_key, input)
 
-    Infrastructure.transaction_with_busy_retry(fn ->
-      case RunControl.get_fenced_run_by_lease(lease_id, now) do
-        nil ->
-          nil
+    try do
+      Infrastructure.transaction_with_busy_retry(fn ->
+        case RunControl.get_fenced_run_by_lease(lease_id, now) do
+          nil ->
+            nil
 
-        parent_run ->
-          existing_child = get_run_child(parent_run["id"], op_key)
+          parent_run ->
+            existing_child = get_run_child(parent_run["id"], op_key)
 
-          if existing_child do
-            %{
-              "status" => "existing",
-              "childRun" => VilanoKernel.Storage.get_run(existing_child["child_run_id"])
-            }
-          else
-            RunControl.ensure_fenced_run_ownership!(parent_run["id"], lease_id, now)
+            cond do
+              existing_child ->
+                %{
+                  "status" => "existing",
+                  "childRun" => VilanoKernel.Storage.get_run(existing_child["child_run_id"])
+                }
 
-            definition =
-              parent_run
-              |> project_definitions_for_run()
-              |> definition_from_project_definitions!("workflow", definition_name)
+              is_nil(run_started_event) ->
+                nil
 
-            insert_workflow_run!(
-              child_run_id,
-              project_record_for_run(parent_run),
-              definition,
-              input || %{},
-              now
-            )
+              true ->
+                RunControl.ensure_fenced_run_ownership!(parent_run["id"], lease_id, now)
 
-            SQL.query!(
-              Repo,
-              """
-              insert into run_children (
-                parent_run_id,
-                op_key,
-                child_run_id,
-                definition_name,
-                status,
-                created_at,
-                updated_at
-              ) values (?, ?, ?, ?, 'pending', ?, ?)
-              """,
-              [parent_run["id"], op_key, child_run_id, definition_name, now, now]
-            )
+                definition =
+                  parent_run
+                  |> project_definitions_for_run()
+                  |> definition_from_project_definitions!("workflow", definition_name)
 
-            append_event!(
-              parent_run["id"],
-              "ChildRunSpawned",
-              %{
-                "key" => op_key,
-                "childRunId" => child_run_id,
-                "definitionName" => definition_name,
-                "input" => input || %{}
-              },
-              now
-            )
+                SqlSupport.insert_workflow_run!(
+                  child_run_id,
+                  project_record_for_run(parent_run),
+                  definition,
+                  input,
+                  now,
+                  run_started_event
+                )
 
-            RunControl.ensure_fenced_run_ownership!(parent_run["id"], lease_id, now)
+                SQL.query!(
+                  Repo,
+                  """
+                  insert into run_children (
+                    parent_run_id,
+                    op_key,
+                    child_run_id,
+                    definition_name,
+                    status,
+                    created_at,
+                    updated_at
+                  ) values (?, ?, ?, ?, 'pending', ?, ?)
+                  """,
+                  [parent_run["id"], op_key, child_run_id, definition_name, now, now]
+                )
 
-            %{"status" => "created", "childRun" => VilanoKernel.Storage.get_run(child_run_id)}
-          end
-      end
-    end)
-    |> unwrap_transaction_result()
+                append_event!(
+                  parent_run["id"],
+                  "ChildRunSpawned",
+                  %{
+                    "key" => op_key,
+                    "childRunId" => child_run_id,
+                    "definitionName" => definition_name,
+                    "input" => input
+                  },
+                  now
+                )
+
+                RunControl.ensure_fenced_run_ownership!(parent_run["id"], lease_id, now)
+
+                %{"status" => "created", "childRun" => VilanoKernel.Storage.get_run(child_run_id)}
+            end
+        end
+      end)
+      |> unwrap_transaction_result()
+    after
+      discard_prepared_payload(run_started_event)
+    end
   end
+
+  defp prepare_child_run_started_event(lease_id, definition_name, op_key, input) do
+    now = Infrastructure.now_iso8601()
+
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        case RunControl.get_fenced_run_by_lease(lease_id, now) do
+          nil ->
+            nil
+
+          parent_run ->
+            if get_run_child(parent_run["id"], op_key) do
+              nil
+            else
+              definition =
+                parent_run
+                |> project_definitions_for_run()
+                |> definition_from_project_definitions!("workflow", definition_name)
+
+              SqlSupport.prepare_workflow_run_started_event!(
+                project_record_for_run(parent_run),
+                definition,
+                input
+              )
+            end
+        end
+      end,
+      :public_read
+    )
+  end
+
+  defp discard_prepared_payload(nil), do: :ok
+  defp discard_prepared_payload(storage), do: EventPayloads.discard_prepared_payload!(storage)
 
   def resolve_child_result_wait(lease_id, child_run_id, op_key) do
     now = Infrastructure.now_iso8601()
