@@ -17,6 +17,7 @@ export function renderDaemonStatus(body: DaemonStatusResponse): string {
     `managed_workers: ${body.managedWorkerCount}`,
     `managed_worker_runtime: ${body.managedWorkerRuntime}`,
     `lease_duration_seconds: ${body.leaseDurationSeconds}`,
+    `sqlite_busy_timeout_ms: ${body.sqliteBusyTimeoutMs}`,
     `projects: ${body.projectCount}`,
   ].join("\n");
 }

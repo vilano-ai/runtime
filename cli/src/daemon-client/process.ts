@@ -253,6 +253,7 @@ export async function stopDaemon(): Promise<DaemonStatusResponse | null> {
         managedWorkerCount: 0,
         managedWorkerRuntime: "unknown",
         leaseDurationSeconds: 0,
+        sqliteBusyTimeoutMs: 0,
         projectCount: 0,
       };
     }

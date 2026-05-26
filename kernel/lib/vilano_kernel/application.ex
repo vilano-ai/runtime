@@ -15,11 +15,18 @@ defmodule VilanoKernel.Application do
 
     Application.put_env(:vilano_kernel, :runtime, runtime)
 
-    repo_config = runtime_repo_config(runtime.runtime_db_path, repo_pool_size())
+    repo_config =
+      runtime_repo_config(
+        runtime.runtime_db_path,
+        repo_pool_size(),
+        runtime.sqlite_busy_timeout_ms
+      )
 
     Application.put_env(:vilano_kernel, VilanoKernel.Repo, repo_config)
 
-    bootstrap_storage!(bootstrap_repo_config(runtime.runtime_db_path))
+    bootstrap_storage!(
+      bootstrap_repo_config(runtime.runtime_db_path, runtime.sqlite_busy_timeout_ms)
+    )
 
     children = [
       VilanoKernel.RuntimeSupervisor
@@ -41,30 +48,29 @@ defmodule VilanoKernel.Application do
     end
   end
 
-  defp runtime_repo_config(database, pool_size) do
-    common_repo_config(database, pool_size)
+  defp runtime_repo_config(database, pool_size, busy_timeout_ms) do
+    common_repo_config(database, pool_size, busy_timeout_ms)
     |> Keyword.put(:journal_mode, nil)
   end
 
-  defp bootstrap_repo_config(database) do
-    common_repo_config(database, 1)
+  defp bootstrap_repo_config(database, busy_timeout_ms) do
+    common_repo_config(database, 1, busy_timeout_ms)
     |> Keyword.put(:journal_mode, :wal)
   end
 
-  defp common_repo_config(database, pool_size) do
+  defp common_repo_config(database, pool_size, busy_timeout_ms) do
     [
       database: database,
       pool_size: pool_size,
-      busy_timeout: 5_000,
-      custom_pragmas: [busy_timeout: 5_000]
+      default_transaction_mode: :immediate,
+      busy_timeout: busy_timeout_ms,
+      custom_pragmas: [busy_timeout: busy_timeout_ms]
     ]
   end
 
   defp bootstrap_storage!(repo_config) do
     {:ok, repo_pid} =
-      VilanoKernel.Repo.start_link(
-        Keyword.put(repo_config, :pool_size, 1)
-      )
+      VilanoKernel.Repo.start_link(Keyword.put(repo_config, :pool_size, 1))
 
     try do
       VilanoKernel.Storage.init!()

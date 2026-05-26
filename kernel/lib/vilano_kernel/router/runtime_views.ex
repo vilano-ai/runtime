@@ -24,6 +24,7 @@ defmodule VilanoKernel.Router.RuntimeViews do
       managedWorkerCount: runtime.managed_worker_count,
       managedWorkerRuntime: runtime.managed_worker_runtime,
       leaseDurationSeconds: runtime.lease_duration_seconds,
+      sqliteBusyTimeoutMs: runtime.sqlite_busy_timeout_ms,
       projectCount: Storage.project_count()
     }
   end
@@ -71,6 +72,9 @@ defmodule VilanoKernel.Router.RuntimeViews do
           {"runtime_cache", Path.join(runtime.home_dir, "runtime-cache"), "directory"},
           {"artifacts", runtime.artifact_home_dir, "directory"},
           {"event_payloads", Path.join(runtime.home_dir, "event-payloads"), "directory"},
+          {"event_payload_staging", Path.join(runtime.home_dir, "event-payloads-staging"),
+           "directory"},
+          {"event_payload_gc", Path.join(runtime.home_dir, "event-payloads-gc"), "directory"},
           {"project_snapshots", Path.join(runtime.execution_home_dir, "project-snapshots"),
            "directory"},
           {"worker_run_workspaces",

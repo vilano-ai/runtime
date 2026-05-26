@@ -13,6 +13,7 @@ export interface VilanoProjectConfig {
     managed_worker_mode?: "per_activation" | "pooled";
     repo_pool_size?: number;
     lease_duration_seconds?: number;
+    sqlite_busy_timeout_ms?: number;
   };
   project?: {
     env_file?: string | string[];
@@ -41,6 +42,7 @@ const RUNTIME_ENV_MAP = {
   managed_worker_mode: "VILANO_MANAGED_WORKER_MODE",
   repo_pool_size: "VILANO_REPO_POOL_SIZE",
   lease_duration_seconds: "VILANO_LEASE_DURATION_SECONDS",
+  sqlite_busy_timeout_ms: "VILANO_SQLITE_BUSY_TIMEOUT_MS",
 } as const;
 
 export async function loadProjectConfigForCwd(
@@ -205,6 +207,12 @@ function normalizeRuntimeConfig(
     "runtime.lease_duration_seconds",
     configPath,
     { min: 1 }
+  );
+  runtime.sqlite_busy_timeout_ms = readOptionalInteger(
+    record.sqlite_busy_timeout_ms,
+    "runtime.sqlite_busy_timeout_ms",
+    configPath,
+    { min: 0 }
   );
   runtime.execution_home = readOptionalString(record.execution_home, "runtime.execution_home", configPath);
   runtime.managed_worker_runtime = readOptionalEnum(

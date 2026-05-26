@@ -97,6 +97,7 @@ port = 4141
 execution_home = ".vilano/execution"
 managed_workers = 2
 repo_pool_size = 5
+sqlite_busy_timeout_ms = 5000
 
 [project]
 env_file = ".env"

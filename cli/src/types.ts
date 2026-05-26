@@ -72,6 +72,7 @@ export interface DaemonStatusResponse {
   managedWorkerCount: number;
   managedWorkerRuntime: string;
   leaseDurationSeconds: number;
+  sqliteBusyTimeoutMs: number;
   projectCount: number;
 }
 

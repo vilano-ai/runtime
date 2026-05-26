@@ -16,7 +16,8 @@ defmodule VilanoKernel.Runtime do
     :managed_worker_runtime,
     :managed_worker_mode,
     :lease_duration_seconds,
-    :event_payload_max_bytes
+    :event_payload_max_bytes,
+    :sqlite_busy_timeout_ms
   ]
 
   def load! do
@@ -62,6 +63,9 @@ defmodule VilanoKernel.Runtime do
     event_payload_max_bytes =
       parse_non_negative_integer_env("VILANO_EVENT_PAYLOAD_MAX_BYTES", 65_536)
 
+    sqlite_busy_timeout_ms =
+      parse_non_negative_integer_env("VILANO_SQLITE_BUSY_TIMEOUT_MS", 5_000)
+
     %__MODULE__{
       install_root_dir: install_root_dir,
       home_dir: home_dir,
@@ -77,7 +81,8 @@ defmodule VilanoKernel.Runtime do
       managed_worker_runtime: managed_worker_runtime,
       managed_worker_mode: managed_worker_mode,
       lease_duration_seconds: lease_duration_seconds,
-      event_payload_max_bytes: event_payload_max_bytes
+      event_payload_max_bytes: event_payload_max_bytes,
+      sqlite_busy_timeout_ms: sqlite_busy_timeout_ms
     }
   end
 

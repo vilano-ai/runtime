@@ -32,6 +32,7 @@ test("control status endpoint matches the published contract", async () => {
     expect(typeof body.projectRoot).toBe("string");
     expect(typeof body.runtimeDbPath).toBe("string");
     expect(typeof body.managedWorkerRuntime).toBe("string");
+    expect(typeof body.sqliteBusyTimeoutMs).toBe("number");
   } finally {
     await harness.dispose();
   }

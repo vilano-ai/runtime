@@ -3,41 +3,52 @@ defmodule VilanoKernel.Storage.RuntimeMetadata do
 
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
+  alias VilanoKernel.Storage.Infrastructure
   alias VilanoKernel.Storage.Migrations
   alias VilanoKernel.Version
 
   def schema_state do
-    %{
-      "version" => Migrations.current_version(),
-      "appliedMigrations" => Migrations.applied_migrations()
-    }
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        %{
+          "version" => Migrations.current_version(),
+          "appliedMigrations" => Migrations.applied_migrations()
+        }
+      end,
+      :public_read
+    )
   end
 
   def runtime_metadata do
-    Repo
-    |> SQL.query!(
-      """
-      select runtime_version, protocol_version, schema_version, applied_migrations_json, updated_at
-      from runtime_metadata
-      where id = 1
-      """,
-      []
-    )
-    |> rows_to_maps()
-    |> List.first()
-    |> case do
-      nil ->
-        nil
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        Repo
+        |> SQL.query!(
+          """
+          select runtime_version, protocol_version, schema_version, applied_migrations_json, updated_at
+          from runtime_metadata
+          where id = 1
+          """,
+          []
+        )
+        |> rows_to_maps()
+        |> List.first()
+        |> case do
+          nil ->
+            nil
 
-      row ->
-        %{
-          "runtimeVersion" => row["runtime_version"],
-          "protocolVersion" => row["protocol_version"],
-          "schemaVersion" => row["schema_version"],
-          "appliedMigrations" => decode_json_value(row["applied_migrations_json"], []),
-          "updatedAt" => row["updated_at"]
-        }
-    end
+          row ->
+            %{
+              "runtimeVersion" => row["runtime_version"],
+              "protocolVersion" => row["protocol_version"],
+              "schemaVersion" => row["schema_version"],
+              "appliedMigrations" => decode_json_value(row["applied_migrations_json"], []),
+              "updatedAt" => row["updated_at"]
+            }
+        end
+      end,
+      :public_read
+    )
   end
 
   def sync_runtime_metadata! do

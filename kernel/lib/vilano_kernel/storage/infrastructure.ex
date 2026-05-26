@@ -96,7 +96,7 @@ defmodule VilanoKernel.Storage.Infrastructure do
   def transaction_with_busy_retry(fun, retry) do
     run_with_busy_retry(
       fn ->
-        Repo.transaction(fun)
+        Repo.transaction(fun, mode: :immediate)
       end,
       retry
     )

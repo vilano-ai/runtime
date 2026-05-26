@@ -81,7 +81,7 @@ defmodule VilanoKernel.Storage.Projects do
   def create_project(project) do
     project_name = Map.fetch!(project, "name")
 
-    Repo.transaction(fn ->
+    write_project!(fn ->
       case get_project(project_name) do
         nil ->
           persist_project!(project, :upsert)
@@ -91,20 +91,18 @@ defmodule VilanoKernel.Storage.Projects do
           nil
       end
     end)
-    |> case do
-      {:ok, result} -> result
-      {:error, reason} -> raise(reason)
-    end
   end
 
   def remove_project(name) do
-    project = get_project(name)
+    write_project!(fn ->
+      project = get_project(name)
 
-    if project do
-      SQL.query!(Repo, "delete from projects where name = ?", [name])
-    end
+      if project do
+        SQL.query!(Repo, "delete from projects where name = ?", [name])
+      end
 
-    project
+      project
+    end)
   end
 
   defp persist_project!(project, mode) do
@@ -117,7 +115,7 @@ defmodule VilanoKernel.Storage.Projects do
     workflows_json = Jason.encode!(get_in(project, ["definitions", "workflows"]) || [])
     services_json = Jason.encode!(get_in(project, ["definitions", "services"]) || [])
 
-    Repo.transaction(fn ->
+    write_project!(fn ->
       SQL.query!(
         Repo,
         """
@@ -145,9 +143,16 @@ defmodule VilanoKernel.Storage.Projects do
 
       :ok
     end)
-    |> case do
-      {:ok, result} -> result
-      {:error, reason} -> raise(reason)
+  end
+
+  defp write_project!(fun) do
+    if Repo.in_transaction?() do
+      fun.()
+    else
+      case Infrastructure.transaction_with_busy_retry(fun, :admin_control) do
+        {:ok, result} -> result
+        {:error, reason} -> raise inspect(reason)
+      end
     end
   end
 

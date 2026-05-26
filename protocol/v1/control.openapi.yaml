@@ -572,6 +572,7 @@ components:
         - managedWorkerCount
         - managedWorkerRuntime
         - leaseDurationSeconds
+        - sqliteBusyTimeoutMs
         - projectCount
       properties:
         ok:
@@ -613,6 +614,8 @@ components:
         managedWorkerRuntime:
           type: string
         leaseDurationSeconds:
+          type: integer
+        sqliteBusyTimeoutMs:
           type: integer
         projectCount:
           type: integer

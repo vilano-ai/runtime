@@ -44,6 +44,7 @@ export function toDaemonStatus(
     managedWorkerCount: body.managedWorkerCount,
     managedWorkerRuntime: body.managedWorkerRuntime,
     leaseDurationSeconds: body.leaseDurationSeconds,
+    sqliteBusyTimeoutMs: body.sqliteBusyTimeoutMs,
     projectCount: body.projectCount,
   };
 }

@@ -1288,6 +1288,7 @@ export interface components {
             managedWorkerCount: number;
             managedWorkerRuntime: string;
             leaseDurationSeconds: number;
+            sqliteBusyTimeoutMs: number;
             projectCount: number;
         };
     };
