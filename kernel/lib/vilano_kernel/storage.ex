@@ -318,7 +318,7 @@ defmodule VilanoKernel.Storage do
       |> unwrap_transaction_result()
 
     if result do
-      EventPayloads.garbage_collect!()
+      EventPayloads.garbage_collect!(0)
     end
 
     result

@@ -121,7 +121,7 @@ defmodule VilanoKernel.Storage.EventPayloads do
     relative_path = payload_relative_path(sha256)
     absolute_path = payload_absolute_path!(relative_path)
 
-    write_payload_once!(absolute_path, body_json)
+    write_payload_once!(absolute_path, body_json, sha256, bytes)
 
     %{
       @ref_marker => @version,
@@ -131,14 +131,37 @@ defmodule VilanoKernel.Storage.EventPayloads do
     }
   end
 
-  defp write_payload_once!(path, body_json) do
+  defp write_payload_once!(path, body_json, sha256, bytes) do
     if File.exists?(path) do
-      refresh_payload_file!(path, body_json)
+      reuse_or_rewrite_payload_file!(path, body_json, sha256, bytes)
     else
       write_new_payload_file!(path, body_json)
     end
 
     :ok
+  end
+
+  defp reuse_or_rewrite_payload_file!(path, body_json, sha256, bytes) do
+    case File.read(path) do
+      {:ok, existing_body_json} ->
+        if payload_file_matches?(existing_body_json, body_json, sha256, bytes) do
+          refresh_payload_file!(path, body_json)
+        else
+          write_new_payload_file!(path, body_json)
+        end
+
+      {:error, :enoent} ->
+        write_new_payload_file!(path, body_json)
+
+      {:error, reason} ->
+        raise File.Error, reason: reason, action: "read", path: path
+    end
+  end
+
+  defp payload_file_matches?(existing_body_json, body_json, sha256, bytes) do
+    byte_size(existing_body_json) == bytes and
+      sha256_hex(existing_body_json) == sha256 and
+      existing_body_json == body_json
   end
 
   defp refresh_payload_file!(path, body_json) do
@@ -189,16 +212,40 @@ defmodule VilanoKernel.Storage.EventPayloads do
   end
 
   defp read_payload(ref) do
-    with {:ok, absolute_path} <- safe_payload_path(ref["path"]),
-         {:ok, body_json} <- read_payload_file(absolute_path),
-         :ok <- verify_payload_bytes(body_json, ref["bytes"]),
-         :ok <- verify_payload_sha256(body_json, ref["sha256"]),
-         {:ok, body} <- decode_payload_json(body_json) do
-      body
-    else
+    case read_payload_from_roots(ref) do
+      {:ok, body} -> body
       {:error, reason} -> unavailable_body(ref, reason)
     end
   end
+
+  defp read_payload_from_roots(ref) do
+    ref["path"]
+    |> payload_read_paths()
+    |> Enum.reduce_while({:error, "missing"}, fn absolute_path, fallback_error ->
+      case read_payload_from_path(absolute_path, ref) do
+        {:ok, body} ->
+          {:halt, {:ok, body}}
+
+        {:error, "missing"} ->
+          {:cont, fallback_error}
+
+        {:error, reason} ->
+          {:cont, first_non_missing_error(fallback_error, reason)}
+      end
+    end)
+  end
+
+  defp read_payload_from_path(absolute_path, ref) do
+    with {:ok, body_json} <- read_payload_file(absolute_path),
+         :ok <- verify_payload_bytes(body_json, ref["bytes"]),
+         :ok <- verify_payload_sha256(body_json, ref["sha256"]),
+         {:ok, body} <- decode_payload_json(body_json) do
+      {:ok, body}
+    end
+  end
+
+  defp first_non_missing_error({:error, "missing"}, reason), do: {:error, reason}
+  defp first_non_missing_error(error, _reason), do: error
 
   defp payload_ref(ref) do
     cond do
@@ -294,12 +341,32 @@ defmodule VilanoKernel.Storage.EventPayloads do
     absolute_path
   end
 
+  defp payload_read_paths(relative_path) do
+    [
+      safe_payload_path(relative_path),
+      safe_legacy_payload_path(relative_path)
+    ]
+    |> Enum.reduce([], fn
+      {:ok, absolute_path}, paths -> [absolute_path | paths]
+      {:error, _reason}, paths -> paths
+    end)
+    |> Enum.reverse()
+    |> Enum.uniq()
+  end
+
   defp payload_root do
-    Path.join(execution_home_dir(), @payload_dir)
+    Path.join(runtime_home_dir(), @payload_dir)
   end
 
   defp safe_payload_path(relative_path) do
-    root = execution_home_dir()
+    safe_payload_path(relative_path, runtime_home_dir())
+  end
+
+  defp safe_legacy_payload_path(relative_path) do
+    safe_payload_path(relative_path, execution_home_dir())
+  end
+
+  defp safe_payload_path(relative_path, root) when is_binary(relative_path) and is_binary(root) do
     expanded_root = Path.expand(root)
     expanded_path = Path.expand(Path.join(expanded_root, relative_path))
 
@@ -309,6 +376,8 @@ defmodule VilanoKernel.Storage.EventPayloads do
       {:error, "invalid_path"}
     end
   end
+
+  defp safe_payload_path(_relative_path, _root), do: {:error, "invalid_path"}
 
   defp relative_path?(path) do
     Path.type(path) == :relative and ".." not in Path.split(path)
@@ -344,7 +413,7 @@ defmodule VilanoKernel.Storage.EventPayloads do
          now_seconds,
          grace_seconds
        ) do
-    relative_path = Path.relative_to(absolute_path, execution_home_dir())
+    relative_path = Path.relative_to(absolute_path, runtime_home_dir())
 
     if valid_payload_file_path?(relative_path) and
          not MapSet.member?(referenced_paths, relative_path) and
@@ -392,6 +461,10 @@ defmodule VilanoKernel.Storage.EventPayloads do
       value when is_integer(value) and value >= 0 -> value
       _ -> @default_max_bytes
     end
+  end
+
+  defp runtime_home_dir do
+    Application.fetch_env!(:vilano_kernel, :runtime).home_dir
   end
 
   defp execution_home_dir do

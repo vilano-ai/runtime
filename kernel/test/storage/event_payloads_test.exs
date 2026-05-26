@@ -14,23 +14,29 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
 
   setup do
     runtime = Application.fetch_env!(:vilano_kernel, :runtime)
+
+    runtime_home =
+      Path.join(System.tmp_dir!(), "vilano-event-payloads-home-#{Ecto.UUID.generate()}")
+
     execution_home = Path.join(System.tmp_dir!(), "vilano-event-payloads-#{Ecto.UUID.generate()}")
 
     Application.put_env(:vilano_kernel, :runtime, %{
       runtime
-      | execution_home_dir: execution_home,
+      | home_dir: runtime_home,
+        execution_home_dir: execution_home,
         event_payload_max_bytes: 128
     })
 
     on_exit(fn ->
       Application.put_env(:vilano_kernel, :runtime, runtime)
+      File.rm_rf(runtime_home)
       File.rm_rf(execution_home)
     end)
 
-    {:ok, execution_home: execution_home}
+    {:ok, runtime_home: runtime_home, execution_home: execution_home}
   end
 
-  test "small events remain inline", %{execution_home: execution_home} do
+  test "small events remain inline", %{runtime_home: runtime_home} do
     run_id = run_id()
     body = %{"message" => "small"}
 
@@ -43,7 +49,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
       assert stored_body == body
       refute Map.has_key?(stored_body, @ref_marker)
       assert payload_ref_rows(run_id) == []
-      refute File.exists?(Path.join(execution_home, "event-payloads"))
+      refute File.exists?(Path.join(runtime_home, "event-payloads"))
 
       assert [event] = ReadModels.list_run_events(run_id)
       assert event["body"] == body
@@ -52,7 +58,10 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     end
   end
 
-  test "large events are externalized and hydrated", %{execution_home: execution_home} do
+  test "large events are externalized and hydrated", %{
+    runtime_home: runtime_home,
+    execution_home: execution_home
+  } do
     run_id = run_id()
     body = large_body()
     body_json = Jason.encode!(body)
@@ -76,8 +85,9 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
       assert payload_ref["sha256"] == ref["sha256"]
       assert payload_ref["bytes"] == ref["bytes"]
 
-      payload_path = Path.join(execution_home, ref["path"])
+      payload_path = Path.join(runtime_home, ref["path"])
       assert File.exists?(payload_path)
+      refute File.exists?(Path.join(execution_home, ref["path"]))
       assert File.read!(payload_path) == body_json
 
       assert [event] = ReadModels.list_run_events(run_id)
@@ -87,7 +97,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     end
   end
 
-  test "zero payload cap externalizes events", %{execution_home: execution_home} do
+  test "zero payload cap externalizes events", %{runtime_home: runtime_home} do
     runtime = Application.fetch_env!(:vilano_kernel, :runtime)
     Application.put_env(:vilano_kernel, :runtime, %{runtime | event_payload_max_bytes: 0})
 
@@ -104,10 +114,95 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
       assert ref[@ref_marker] == 1
       assert ref["bytes"] == byte_size(body_json)
       assert ref["sha256"] == sha256_hex(body_json)
-      assert File.read!(Path.join(execution_home, ref["path"])) == body_json
+      assert File.read!(Path.join(runtime_home, ref["path"])) == body_json
 
       assert [event] = ReadModels.list_run_events(run_id)
       assert event["body"] == body
+    after
+      cleanup_run_events(run_id)
+    end
+  end
+
+  test "externalized payload replay survives execution home changes", %{
+    runtime_home: runtime_home
+  } do
+    runtime = Application.fetch_env!(:vilano_kernel, :runtime)
+
+    new_execution_home =
+      Path.join(System.tmp_dir!(), "vilano-event-payloads-exec-#{Ecto.UUID.generate()}")
+
+    run_id = run_id()
+    body = large_body()
+
+    try do
+      Support.append_event!(run_id, "LargeEvent", body, now())
+
+      [row] = event_rows(run_id)
+      ref = Jason.decode!(row["body_json"])
+      assert File.exists?(Path.join(runtime_home, ref["path"]))
+
+      Application.put_env(:vilano_kernel, :runtime, %{
+        runtime
+        | execution_home_dir: new_execution_home
+      })
+
+      assert ReadModels.list_run_events(run_id) |> Enum.map(& &1["body"]) == [body]
+      refute File.exists?(Path.join(new_execution_home, ref["path"]))
+    after
+      Application.put_env(:vilano_kernel, :runtime, runtime)
+      File.rm_rf(new_execution_home)
+      cleanup_run_events(run_id)
+    end
+  end
+
+  test "hydrates pre-change execution-home payload refs after canonical root move", %{
+    runtime_home: runtime_home,
+    execution_home: execution_home
+  } do
+    run_id = run_id()
+    body = large_body()
+    body_json = Jason.encode!(body)
+    ref = payload_ref_for_body_json(body_json)
+
+    try do
+      legacy_payload_path = write_payload_file!(execution_home, ref, body_json)
+      event_id = insert_legacy_run_event!(run_id, Jason.encode!(ref))
+      EventPayloads.insert_payload_ref!(event_id, run_id, ref, now())
+
+      canonical_payload_path = Path.join(runtime_home, ref["path"])
+      refute File.exists?(canonical_payload_path)
+      assert [_payload_ref] = payload_ref_rows(run_id)
+
+      assert ReadModels.list_run_events(run_id) |> Enum.map(& &1["body"]) == [body]
+
+      EventPayloads.garbage_collect!(0)
+      assert File.exists?(legacy_payload_path)
+      refute File.exists?(canonical_payload_path)
+    after
+      cleanup_run_events(run_id)
+    end
+  end
+
+  test "falls back to legacy execution-home payload when canonical file is invalid", %{
+    runtime_home: runtime_home,
+    execution_home: execution_home
+  } do
+    run_id = run_id()
+    body = large_body()
+    body_json = Jason.encode!(body)
+    ref = payload_ref_for_body_json(body_json)
+
+    try do
+      write_payload_file!(execution_home, ref, body_json)
+
+      canonical_payload_path =
+        write_payload_file!(runtime_home, ref, String.duplicate("x", ref["bytes"]))
+
+      event_id = insert_legacy_run_event!(run_id, Jason.encode!(ref))
+      EventPayloads.insert_payload_ref!(event_id, run_id, ref, now())
+
+      assert ReadModels.list_run_events(run_id) |> Enum.map(& &1["body"]) == [body]
+      assert File.exists?(canonical_payload_path)
     after
       cleanup_run_events(run_id)
     end
@@ -139,7 +234,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
   end
 
   test "valid payload-ref-shaped event bodies are externalized to avoid replay collisions", %{
-    execution_home: execution_home
+    runtime_home: runtime_home
   } do
     runtime = Application.fetch_env!(:vilano_kernel, :runtime)
     Application.put_env(:vilano_kernel, :runtime, %{runtime | event_payload_max_bytes: 2_048})
@@ -157,7 +252,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
       assert ref[@ref_marker] == 1
       assert ref["bytes"] == byte_size(body_json)
       assert ref["sha256"] == sha256_hex(body_json)
-      assert File.read!(Path.join(execution_home, ref["path"])) == body_json
+      assert File.read!(Path.join(runtime_home, ref["path"])) == body_json
       assert [_payload_ref] = payload_ref_rows(run_id)
 
       assert ReadModels.list_run_events(run_id) |> Enum.map(& &1["body"]) == [body]
@@ -166,7 +261,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     end
   end
 
-  test "repeated large event bodies reuse one payload file", %{execution_home: execution_home} do
+  test "repeated large event bodies reuse one payload file", %{runtime_home: runtime_home} do
     run_id = run_id()
     body = large_body()
 
@@ -184,7 +279,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
       assert Enum.map(refs, & &1["sha256"]) |> Enum.uniq() |> length() == 1
       assert length(payload_ref_rows(run_id)) == 2
 
-      payload_files = Path.wildcard(Path.join([execution_home, "event-payloads", "*", "*.json"]))
+      payload_files = Path.wildcard(Path.join([runtime_home, "event-payloads", "*", "*.json"]))
       assert length(payload_files) == 1
 
       assert ReadModels.list_run_events(run_id) |> Enum.map(& &1["body"]) == [body, body]
@@ -194,7 +289,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
   end
 
   test "garbage collection waits for uncommitted payload event appends", %{
-    execution_home: execution_home
+    runtime_home: runtime_home
   } do
     run_id = run_id()
     body = large_body()
@@ -206,7 +301,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
           Support.append_event!(run_id, "LargeEvent", body, now())
 
           [ref] = event_rows(run_id) |> Enum.map(&Jason.decode!(&1["body_json"]))
-          payload_path = Path.join(execution_home, ref["path"])
+          payload_path = Path.join(runtime_home, ref["path"])
           send(parent, {:payload_written, payload_path})
 
           receive do
@@ -246,7 +341,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
   end
 
   test "reused unreferenced payloads refresh mtime before garbage collection", %{
-    execution_home: execution_home
+    runtime_home: runtime_home
   } do
     run_id = run_id()
     body = large_body()
@@ -255,7 +350,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
       Support.append_event!(run_id, "LargeEvent", body, now())
 
       [ref] = event_rows(run_id) |> Enum.map(&Jason.decode!(&1["body_json"]))
-      payload_path = Path.join(execution_home, ref["path"])
+      payload_path = Path.join(runtime_home, ref["path"])
 
       cleanup_run_events(run_id)
 
@@ -285,8 +380,32 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     end
   end
 
+  test "corrupt existing payload file is rewritten before reuse", %{runtime_home: runtime_home} do
+    run_id = run_id()
+    body = large_body()
+    body_json = Jason.encode!(body)
+
+    try do
+      Support.append_event!(run_id, "LargeEvent", body, now())
+
+      [ref] = event_rows(run_id) |> Enum.map(&Jason.decode!(&1["body_json"]))
+      payload_path = Path.join(runtime_home, ref["path"])
+      File.write!(payload_path, String.duplicate("x", ref["bytes"]))
+      cleanup_run_events(run_id)
+
+      Support.append_event!(run_id, "LargeEvent", body, now())
+
+      [reused_ref] = event_rows(run_id) |> Enum.map(&Jason.decode!(&1["body_json"]))
+      assert reused_ref["path"] == ref["path"]
+      assert File.read!(payload_path) == body_json
+      assert ReadModels.list_run_events(run_id) |> Enum.map(& &1["body"]) == [body]
+    after
+      cleanup_run_events(run_id)
+    end
+  end
+
   test "missing payload returns unavailable marker instead of crashing", %{
-    execution_home: execution_home
+    runtime_home: runtime_home
   } do
     run_id = run_id()
     body = large_body()
@@ -296,7 +415,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
 
       [row] = event_rows(run_id)
       ref = Jason.decode!(row["body_json"])
-      File.rm!(Path.join(execution_home, ref["path"]))
+      File.rm!(Path.join(runtime_home, ref["path"]))
 
       assert [event] = ReadModels.list_run_events(run_id)
       unavailable = event["body"]
@@ -312,7 +431,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
   end
 
   test "corrupt payload returns unavailable marker instead of crashing", %{
-    execution_home: execution_home
+    runtime_home: runtime_home
   } do
     run_id = run_id()
     body = large_body()
@@ -322,7 +441,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
 
       [row] = event_rows(run_id)
       ref = Jason.decode!(row["body_json"])
-      payload_path = Path.join(execution_home, ref["path"])
+      payload_path = Path.join(runtime_home, ref["path"])
       File.write!(payload_path, String.duplicate("x", ref["bytes"]))
 
       assert [event] = ReadModels.list_run_events(run_id)
@@ -339,7 +458,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
   end
 
   test "garbage collect keeps new unreferenced payloads during default grace", %{
-    execution_home: execution_home
+    runtime_home: runtime_home
   } do
     run_id = run_id()
     body = large_body()
@@ -349,7 +468,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
 
       [row] = event_rows(run_id)
       ref = Jason.decode!(row["body_json"])
-      payload_path = Path.join(execution_home, ref["path"])
+      payload_path = Path.join(runtime_home, ref["path"])
 
       cleanup_run_events(run_id)
 
@@ -363,7 +482,8 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     end
   end
 
-  test "project runtime purge removes only unreferenced payload files", %{
+  test "project runtime purge immediately removes only unreferenced payload files", %{
+    runtime_home: runtime_home,
     execution_home: execution_home
   } do
     project_a = project_name()
@@ -386,21 +506,19 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
       [ref_b] = event_rows(run_b) |> Enum.map(&Jason.decode!(&1["body_json"]))
       assert ref_a["path"] == ref_b["path"]
 
-      payload_path = Path.join(execution_home, ref_a["path"])
+      payload_path = Path.join(runtime_home, ref_a["path"])
       assert File.exists?(payload_path)
 
       assert %{"purgedRunCount" => 1} = Storage.purge_project_runtime(project_a)
       assert [] = payload_ref_rows(run_a)
       assert [_] = payload_ref_rows(run_b)
 
-      EventPayloads.garbage_collect!(0)
       assert File.exists?(payload_path)
       assert ReadModels.list_run_events(run_b) |> Enum.map(& &1["body"]) == [body]
 
       assert %{"purgedRunCount" => 1} = Storage.purge_project_runtime(project_b)
       assert [] = payload_ref_rows(run_b)
 
-      EventPayloads.garbage_collect!(0)
       refute File.exists?(payload_path)
     after
       cleanup_project_runtime(project_a)
@@ -409,7 +527,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
   end
 
   test "garbage collection removes orphan payloads with unrelated marker rows present", %{
-    execution_home: execution_home
+    runtime_home: runtime_home
   } do
     legacy_run_id = run_id()
     body = large_body()
@@ -423,7 +541,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     try do
       storage = EventPayloads.body_for_storage!(body)
       ref = Jason.decode!(storage.body_json)
-      payload_path = Path.join(execution_home, ref["path"])
+      payload_path = Path.join(runtime_home, ref["path"])
       assert File.exists?(payload_path)
 
       insert_legacy_run_event!(legacy_run_id, legacy_body_json)
@@ -438,7 +556,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
   end
 
   test "garbage collection treats unindexed externalized payload files as orphans after grace", %{
-    execution_home: execution_home
+    runtime_home: runtime_home
   } do
     run_id = run_id()
     body = large_body()
@@ -448,7 +566,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
       ref = Jason.decode!(storage.body_json)
       insert_legacy_run_event!(run_id, storage.body_json)
 
-      payload_path = Path.join(execution_home, ref["path"])
+      payload_path = Path.join(runtime_home, ref["path"])
       assert File.exists?(payload_path)
       assert payload_ref_rows(run_id) == []
 
@@ -559,6 +677,24 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     old_time = :calendar.system_time_to_universal_time(System.system_time(:second) - 600, :second)
 
     File.touch(path, old_time) == :ok
+  end
+
+  defp payload_ref_for_body_json(body_json) do
+    sha256 = sha256_hex(body_json)
+
+    %{
+      @ref_marker => 1,
+      "sha256" => sha256,
+      "bytes" => byte_size(body_json),
+      "path" => "event-payloads/#{String.slice(sha256, 0, 2)}/#{sha256}.json"
+    }
+  end
+
+  defp write_payload_file!(root, ref, body_json) do
+    path = Path.join(root, ref["path"])
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, body_json)
+    path
   end
 
   defp insert_project_runtime!(project_name, run_id, path) do

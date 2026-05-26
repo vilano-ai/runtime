@@ -78,23 +78,34 @@ test("materializeProjectSnapshot excludes runtime logs and caches by default", a
     await fs.mkdir(path.join(projectPath, "logs"), { recursive: true });
     await fs.mkdir(path.join(projectPath, ".assembly-runtime"), { recursive: true });
     await fs.mkdir(path.join(projectPath, ".cache"), { recursive: true });
+    await fs.mkdir(path.join(projectPath, "src", "logs"), { recursive: true });
+    await fs.mkdir(path.join(projectPath, "src", ".cache"), { recursive: true });
+    await fs.mkdir(path.join(projectPath, "fixtures"), { recursive: true });
     await fs.mkdir(path.join(projectPath, "node_modules", "pkg"), { recursive: true });
     await fs.writeFile(path.join(projectPath, "logs", "runtime.log"), "large log\n", "utf8");
     await fs.writeFile(path.join(projectPath, ".assembly-runtime", "state.jsonl"), "{}\n", "utf8");
     await fs.writeFile(path.join(projectPath, ".cache", "bundle.bin"), "cache\n", "utf8");
+    await fs.writeFile(path.join(projectPath, "root.log"), "root log\n", "utf8");
     await fs.writeFile(path.join(projectPath, "src", "debug.log"), "debug\n", "utf8");
+    await fs.writeFile(path.join(projectPath, "src", "logs", "source.txt"), "source log asset\n", "utf8");
+    await fs.writeFile(path.join(projectPath, "src", ".cache", "fixture.bin"), "fixture cache\n", "utf8");
     await fs.writeFile(path.join(projectPath, "src", "index.test.ts"), "export const test = 1;\n", "utf8");
+    await fs.writeFile(path.join(projectPath, "fixtures", "error.log"), "fixture log\n", "utf8");
     await fs.writeFile(path.join(projectPath, "node_modules", "pkg", "index.js"), "module.exports = 1;\n", "utf8");
 
     const snapshotPath = await materializeProjectSnapshot("project", projectPath);
 
     await fs.access(path.join(snapshotPath, "src", "index.ts"));
     await fs.access(path.join(snapshotPath, "src", "index.test.ts"));
+    await fs.access(path.join(snapshotPath, "src", "debug.log"));
+    await fs.access(path.join(snapshotPath, "src", "logs", "source.txt"));
+    await fs.access(path.join(snapshotPath, "src", ".cache", "fixture.bin"));
+    await fs.access(path.join(snapshotPath, "fixtures", "error.log"));
     await fs.access(path.join(snapshotPath, "node_modules", "pkg", "index.js"));
     await expect(fs.access(path.join(snapshotPath, "logs"))).rejects.toThrow();
     await expect(fs.access(path.join(snapshotPath, ".assembly-runtime"))).rejects.toThrow();
     await expect(fs.access(path.join(snapshotPath, ".cache"))).rejects.toThrow();
-    await expect(fs.access(path.join(snapshotPath, "src", "debug.log"))).rejects.toThrow();
+    await expect(fs.access(path.join(snapshotPath, "root.log"))).rejects.toThrow();
   } finally {
     restoreEnv("VILANO_HOME", previousHome);
     restoreEnv("VILANO_EXECUTION_HOME", previousExecutionHome);

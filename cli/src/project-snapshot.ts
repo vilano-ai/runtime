@@ -6,21 +6,23 @@ import process from "node:process";
 import { ensurePrivateDir } from "./json-file.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
 
-const DEFAULT_SNAPSHOT_EXCLUDED_NAMES = [
+const DEFAULT_SNAPSHOT_GLOBALLY_EXCLUDED_NAMES = [
   ".assembly-runtime",
-  ".cache",
   ".git",
   ".hg",
-  ".nuxt",
   ".svn",
+  ".vilano",
+];
+const DEFAULT_SNAPSHOT_ROOT_EXCLUDED_NAMES = [
+  ".cache",
+  ".nuxt",
   ".svelte-kit",
   ".turbo",
-  ".vilano",
   "coverage",
   "logs",
   "tmp",
 ];
-const DEFAULT_SNAPSHOT_EXCLUDED_FILE_SUFFIXES = [".log"];
+const DEFAULT_SNAPSHOT_ROOT_EXCLUDED_FILE_SUFFIXES = [".log"];
 
 export interface ProjectSnapshotOptions {
   excludes?: readonly string[];
@@ -30,6 +32,7 @@ export interface ProjectSnapshotOptions {
 interface NormalizedSnapshotOptions {
   excludedNames: Set<string>;
   excludedPaths: Set<string>;
+  rootExcludedNames: Set<string>;
   includeNodeModules: boolean;
 }
 
@@ -68,8 +71,9 @@ export function snapshotOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): Pr
 
 function normalizeSnapshotOptions(options: ProjectSnapshotOptions): NormalizedSnapshotOptions {
   const includeNodeModules = options.includeNodeModules ?? true;
-  const excludedNames = new Set(DEFAULT_SNAPSHOT_EXCLUDED_NAMES);
+  const excludedNames = new Set(DEFAULT_SNAPSHOT_GLOBALLY_EXCLUDED_NAMES);
   const excludedPaths = new Set<string>();
+  const rootExcludedNames = new Set(DEFAULT_SNAPSHOT_ROOT_EXCLUDED_NAMES);
 
   if (!includeNodeModules) {
     excludedNames.add("node_modules");
@@ -91,6 +95,7 @@ function normalizeSnapshotOptions(options: ProjectSnapshotOptions): NormalizedSn
   return {
     excludedNames,
     excludedPaths,
+    rootExcludedNames,
     includeNodeModules: includeNodeModules && !excludedNames.has("node_modules"),
   };
 }
@@ -110,7 +115,15 @@ function shouldCopySnapshotEntry(
     return false;
   }
 
-  if (DEFAULT_SNAPSHOT_EXCLUDED_FILE_SUFFIXES.some((suffix) => basename.endsWith(suffix))) {
+  const isRootEntry = !relativePath.includes("/");
+  if (isRootEntry && options.rootExcludedNames.has(basename)) {
+    return false;
+  }
+
+  if (
+    isRootEntry &&
+    DEFAULT_SNAPSHOT_ROOT_EXCLUDED_FILE_SUFFIXES.some((suffix) => basename.endsWith(suffix))
+  ) {
     return false;
   }
 
