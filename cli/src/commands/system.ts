@@ -8,6 +8,7 @@ import { runDoctor } from "../doctor.ts";
 import {
   ensureDaemonStarted,
   getRuntimeDebug,
+  getRuntimeStorage,
   getRunningDaemonStatus,
   readDaemonAuthState,
   resolveDefaultKernelPort,
@@ -17,6 +18,7 @@ import {
   renderRollbackResult,
   renderDaemonDebug,
   renderDaemonStatus,
+  renderDaemonStorage,
   renderDoctorReport,
   renderUpdateApply,
   renderUpdateCheck,
@@ -70,6 +72,11 @@ export async function handleDaemonCommand(
       writeOutput(flags, body, renderDaemonDebug);
       return 0;
     }
+    case "storage": {
+      const body = await getRuntimeStorage();
+      writeOutput(flags, body, renderDaemonStorage);
+      return 0;
+    }
     case "stop": {
       const stopped = await stopDaemon();
       if (!stopped) {
@@ -85,7 +92,7 @@ export async function handleDaemonCommand(
       return 0;
     }
     default:
-      throw new CliError("Usage: vilano daemon start|status|debug|stop");
+      throw new CliError("Usage: vilano daemon start|status|debug|storage|stop");
   }
 }
 

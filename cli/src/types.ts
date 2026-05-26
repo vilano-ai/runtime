@@ -165,6 +165,37 @@ export interface RuntimeDebugResponse {
   }>;
 }
 
+export interface RuntimeStoragePathUsage {
+  name: string;
+  path: string;
+  kind: "file" | "directory";
+  exists: boolean;
+  bytes: number;
+  files: number;
+  directories: number;
+  error?: string;
+}
+
+export interface RuntimeStorageResponse {
+  ok: true;
+  roots: {
+    homeDir: string;
+    executionHomeDir: string;
+    artifactHomeDir: string;
+    runtimeDbPath: string;
+  };
+  paths: RuntimeStoragePathUsage[];
+  database: {
+    projects: number;
+    runs: number;
+    runEvents: { count: number; bytes: number };
+    eventPayloadRefs: { count: number; bytes: number };
+    serviceStates: { count: number; bytes: number };
+    serviceEnvelopes: { count: number; bytes: number };
+    runExecs: { count: number; bytes: number };
+  };
+}
+
 export interface ProjectListResponse {
   ok: true;
   projects: ProjectRecord[];

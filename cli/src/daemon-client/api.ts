@@ -12,6 +12,7 @@ import type {
   RunReplayResponse,
   RunStartResponse,
   RuntimeDebugResponse,
+  RuntimeStorageResponse,
   ServiceEnsureResponse,
   ServiceEnvelopeResponse,
   ServiceMutationResponse,
@@ -34,6 +35,14 @@ export async function getRuntimeDebug(): Promise<RuntimeDebugResponse> {
   return requestJson<RuntimeDebugResponse>({
     method: "GET",
     pathname: "/v1/admin/runtime-debug",
+    autoStart: false,
+  });
+}
+
+export async function getRuntimeStorage(): Promise<RuntimeStorageResponse> {
+  return requestJson<RuntimeStorageResponse>({
+    method: "GET",
+    pathname: "/v1/admin/storage",
     autoStart: false,
   });
 }

@@ -2,6 +2,7 @@ defmodule VilanoKernel.Router.RuntimeViews do
   @moduledoc false
 
   alias VilanoKernel.Storage
+  alias VilanoKernel.Storage.Usage
 
   def status_payload do
     runtime = Application.fetch_env!(:vilano_kernel, :runtime)
@@ -49,6 +50,34 @@ defmodule VilanoKernel.Router.RuntimeViews do
       },
       runStatusCounts: Storage.count_runs_by_status(),
       projectRunStatusCounts: Storage.count_runs_by_project_and_status()
+    }
+  end
+
+  def runtime_storage_payload do
+    runtime = Application.fetch_env!(:vilano_kernel, :runtime)
+
+    %{
+      ok: true,
+      roots: %{
+        homeDir: runtime.home_dir,
+        executionHomeDir: runtime.execution_home_dir,
+        artifactHomeDir: runtime.artifact_home_dir,
+        runtimeDbPath: runtime.runtime_db_path
+      },
+      paths:
+        Usage.path_summary([
+          {"runtime_db", runtime.runtime_db_path, "file"},
+          {"daemon_startup_log", Path.join(runtime.home_dir, "kernel-startup.log"), "file"},
+          {"runtime_cache", Path.join(runtime.home_dir, "runtime-cache"), "directory"},
+          {"artifacts", runtime.artifact_home_dir, "directory"},
+          {"event_payloads", Path.join(runtime.execution_home_dir, "event-payloads"),
+           "directory"},
+          {"project_snapshots", Path.join(runtime.execution_home_dir, "project-snapshots"),
+           "directory"},
+          {"worker_run_workspaces",
+           Path.join([runtime.execution_home_dir, "worker-home", "run-workspaces"]), "directory"}
+        ]),
+      database: Usage.database_summary()
     }
   end
 

@@ -1,5 +1,9 @@
 export { writeOutput } from "./output/base.ts";
-export { renderDaemonDebug, renderDaemonStatus } from "./output/daemon.ts";
+export {
+  renderDaemonDebug,
+  renderDaemonStatus,
+  renderDaemonStorage,
+} from "./output/daemon.ts";
 export { renderDoctorReport, renderDoctorTool } from "./output/doctor.ts";
 export {
   renderDefinitionInspect,

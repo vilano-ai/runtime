@@ -4,6 +4,7 @@ export {
   cancelRun,
   ensureServiceRun,
   getRuntimeDebug,
+  getRuntimeStorage,
   inspectProject,
   inspectRun,
   inspectServiceEnvelope,

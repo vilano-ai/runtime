@@ -323,6 +323,42 @@ test("runtime debug endpoint reports queue heads, leases, and backlog counts", a
   }
 });
 
+test("runtime storage endpoint and CLI report disk usage categories", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const response = await harness.requestKernel("/v1/admin/storage");
+    expect(response.status).toBe(200);
+
+    const body = (await response.json()) as {
+      ok: true;
+      roots: { runtimeDbPath: string; executionHomeDir: string };
+      paths: Array<{ name: string; path: string; bytes: number; exists: boolean }>;
+      database: {
+        runs: number;
+        runEvents: { count: number; bytes: number };
+        eventPayloadRefs: { count: number; bytes: number };
+      };
+    };
+
+    expect(body.ok).toBe(true);
+    expect(body.roots.runtimeDbPath).toBeTruthy();
+    expect(body.roots.executionHomeDir).toBeTruthy();
+    expect(body.paths.some((entry) => entry.name === "runtime_db" && entry.exists)).toBe(true);
+    expect(body.paths.some((entry) => entry.name === "project_snapshots" && entry.exists)).toBe(true);
+    expect(body.paths.every((entry) => Number.isFinite(entry.bytes))).toBe(true);
+    expect(Number.isInteger(body.database.runs)).toBe(true);
+    expect(Number.isInteger(body.database.runEvents.count)).toBe(true);
+    expect(Number.isInteger(body.database.eventPayloadRefs.bytes)).toBe(true);
+
+    const cliBody = await harness.runCliJson<typeof body>(["daemon", "storage"]);
+    expect(cliBody.ok).toBe(true);
+    expect(cliBody.paths.some((entry) => entry.name === "runtime_db" && entry.exists)).toBe(true);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("project purge-runtime clears persisted runs and service state for one project", async () => {
   const harness = await RuntimeHarness.create();
 
