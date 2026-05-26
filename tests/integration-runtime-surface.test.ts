@@ -361,6 +361,7 @@ test("runtime storage endpoint and CLI report disk usage categories", async () =
 
 test("runtime prune removes unreferenced snapshots and stale run workspaces", async () => {
   const harness = await RuntimeHarness.create();
+  let failingSnapshotParent: string | null = null;
 
   try {
     const storage = await harness.runCliJson<{
@@ -369,19 +370,45 @@ test("runtime prune removes unreferenced snapshots and stale run workspaces", as
     }>(["daemon", "storage"]);
     const executionHome = storage.roots.executionHomeDir;
     const orphanSnapshot = path.join(executionHome, "project-snapshots", "orphan", "snapshot-1");
+    const freshSnapshot = path.join(executionHome, "project-snapshots", "fresh", "snapshot-1");
+    const failingSnapshot = path.join(executionHome, "project-snapshots", "failing", "snapshot-1");
     const staleWorkspace = path.join(executionHome, "worker-home", "run-workspaces", "lease-stale");
+    const oldEnoughForPrune = new Date(Date.now() - 10 * 60 * 1000);
 
     await fs.mkdir(orphanSnapshot, { recursive: true });
     await fs.writeFile(path.join(orphanSnapshot, "index.ts"), "export const orphan = true;\n", "utf8");
     await fs.chmod(orphanSnapshot, 0o555);
+    await fs.utimes(orphanSnapshot, oldEnoughForPrune, oldEnoughForPrune);
+    await fs.mkdir(freshSnapshot, { recursive: true });
+    await fs.writeFile(path.join(freshSnapshot, "index.ts"), "export const fresh = true;\n", "utf8");
+    const invalidDryRunSnapshot = path.join(
+      executionHome,
+      "project-snapshots",
+      "invalid-dry-run",
+      "snapshot-1"
+    );
+    await fs.mkdir(invalidDryRunSnapshot, { recursive: true });
+    await fs.writeFile(path.join(invalidDryRunSnapshot, "index.ts"), "export const invalid = true;\n", "utf8");
+    await fs.utimes(invalidDryRunSnapshot, oldEnoughForPrune, oldEnoughForPrune);
+    await fs.mkdir(failingSnapshot, { recursive: true });
+    await fs.writeFile(path.join(failingSnapshot, "index.ts"), "export const fail = true;\n", "utf8");
+    await fs.utimes(failingSnapshot, oldEnoughForPrune, oldEnoughForPrune);
+    failingSnapshotParent = path.dirname(failingSnapshot);
+    await fs.chmod(failingSnapshotParent, 0o555);
     await fs.mkdir(staleWorkspace, { recursive: true });
     await fs.writeFile(path.join(staleWorkspace, "workspace.txt"), "stale\n", "utf8");
 
     const dryRun = await harness.runCliJson<{
       ok: true;
       dryRun: boolean;
-      projectSnapshots: { candidateCount: number; removedCount: number };
-      runWorkspaces: { candidateCount: number; removedCount: number };
+      projectSnapshots: {
+        graceSeconds: number;
+        candidateCount: number;
+        removedCount: number;
+        failedCount: number;
+        failedPaths: Array<{ path: string; failedPath: string; reason: string; bytes: number }>;
+      };
+      runWorkspaces: { candidateCount: number; removedCount: number; failedCount: number };
       eventPayloads: { garbageCollected: boolean };
     }>([
       "daemon",
@@ -394,12 +421,31 @@ test("runtime prune removes unreferenced snapshots and stale run workspaces", as
     ]);
 
     expect(dryRun.projectSnapshots.candidateCount).toBeGreaterThanOrEqual(1);
+    expect(dryRun.projectSnapshots.graceSeconds).toBeGreaterThan(0);
     expect(dryRun.projectSnapshots.removedCount).toBe(0);
+    expect(dryRun.projectSnapshots.failedCount).toBe(0);
     expect(dryRun.runWorkspaces.candidateCount).toBeGreaterThanOrEqual(1);
     expect(dryRun.runWorkspaces.removedCount).toBe(0);
+    expect(dryRun.runWorkspaces.failedCount).toBe(0);
     expect(dryRun.eventPayloads.garbageCollected).toBe(false);
     await fs.access(orphanSnapshot);
+    await fs.access(freshSnapshot);
+    await fs.access(failingSnapshot);
     await fs.access(staleWorkspace);
+
+    const invalidDryRun = await harness.requestKernel("/v1/admin/prune", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dryRun: "yes", projectSnapshotGraceSeconds: 0 }),
+    });
+    expect(invalidDryRun.status).toBe(400);
+    expect(await invalidDryRun.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_prune_option",
+      },
+    });
+    await fs.access(invalidDryRunSnapshot);
 
     const pruned = await harness.runCliJson<typeof dryRun>([
       "daemon",
@@ -412,11 +458,44 @@ test("runtime prune removes unreferenced snapshots and stale run workspaces", as
 
     expect(pruned.dryRun).toBe(false);
     expect(pruned.projectSnapshots.removedCount).toBeGreaterThanOrEqual(1);
+    expect(pruned.projectSnapshots.failedCount).toBeGreaterThanOrEqual(1);
+    expect(pruned.projectSnapshots.failedPaths.some((entry) => entry.path === failingSnapshot)).toBe(true);
     expect(pruned.runWorkspaces.removedCount).toBeGreaterThanOrEqual(1);
     expect(pruned.eventPayloads.garbageCollected).toBe(true);
     await expect(fs.access(orphanSnapshot)).rejects.toThrow();
+    await expect(fs.access(invalidDryRunSnapshot)).rejects.toThrow();
+    await fs.access(freshSnapshot);
+    await fs.chmod(failingSnapshotParent, 0o755);
+    await fs.access(failingSnapshot);
     await expect(fs.access(staleWorkspace)).rejects.toThrow();
+
+    const zeroGracePruned = await harness.requestKernel("/v1/admin/prune", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectSnapshotGraceSeconds: 0 }),
+    });
+    expect(zeroGracePruned.status).toBe(200);
+    const zeroGraceBody = (await zeroGracePruned.json()) as typeof dryRun;
+    expect(zeroGraceBody.projectSnapshots.graceSeconds).toBe(0);
+    expect(zeroGraceBody.projectSnapshots.removedCount).toBeGreaterThanOrEqual(1);
+    await expect(fs.access(freshSnapshot)).rejects.toThrow();
+
+    const invalidPrune = await harness.requestKernel("/v1/admin/prune", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ runWorkspaceTtlSeconds: -1 }),
+    });
+    expect(invalidPrune.status).toBe(400);
+    expect(await invalidPrune.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_prune_option",
+      },
+    });
   } finally {
+    if (failingSnapshotParent) {
+      await fs.chmod(failingSnapshotParent, 0o755).catch(() => undefined);
+    }
     await harness.dispose();
   }
 });

@@ -202,10 +202,14 @@ export interface RuntimePruneResponse {
   prunedAt: string;
   projectSnapshots: {
     root: string;
+    graceSeconds: number;
     candidateCount: number;
     candidateBytes: number;
     removedCount: number;
     removedBytes: number;
+    failedCount: number;
+    failedBytes: number;
+    failedPaths: RuntimePruneFailedPath[];
   };
   runWorkspaces: {
     root: string;
@@ -214,11 +218,21 @@ export interface RuntimePruneResponse {
     candidateBytes: number;
     removedCount: number;
     removedBytes: number;
+    failedCount: number;
+    failedBytes: number;
+    failedPaths: RuntimePruneFailedPath[];
   };
   eventPayloads: {
     graceSeconds: number;
     garbageCollected: boolean;
   };
+}
+
+export interface RuntimePruneFailedPath {
+  path: string;
+  failedPath: string;
+  reason: string;
+  bytes: number;
 }
 
 export interface ProjectListResponse {

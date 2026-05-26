@@ -9,52 +9,79 @@ defmodule VilanoKernel.Storage.Prune do
 
   @default_run_workspace_ttl_seconds 86_400
   @default_event_payload_grace_seconds 300
+  @default_project_snapshot_grace_seconds 300
 
   def prune_runtime(opts \\ %{}) do
     runtime = Application.fetch_env!(:vilano_kernel, :runtime)
-    dry_run? = truthy?(Map.get(opts, "dryRun", Map.get(opts, :dry_run, false)))
 
-    run_workspace_ttl_seconds =
-      non_negative_integer(
-        Map.get(opts, "runWorkspaceTtlSeconds", Map.get(opts, :run_workspace_ttl_seconds)),
-        @default_run_workspace_ttl_seconds
-      )
-
-    event_payload_grace_seconds =
-      non_negative_integer(
-        Map.get(opts, "eventPayloadGraceSeconds", Map.get(opts, :event_payload_grace_seconds)),
-        @default_event_payload_grace_seconds
-      )
-
-    %{
-      ok: true,
-      dryRun: dry_run?,
-      prunedAt: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
-      projectSnapshots: prune_project_snapshots(runtime, dry_run?),
-      runWorkspaces: prune_run_workspaces(runtime, run_workspace_ttl_seconds, dry_run?),
-      eventPayloads: prune_event_payloads(event_payload_grace_seconds, dry_run?)
-    }
+    with {:ok, dry_run?} <- boolean_option(opts, "dryRun", :dry_run, false),
+         {:ok, project_snapshot_grace_seconds} <-
+           non_negative_integer(
+             opts,
+             "projectSnapshotGraceSeconds",
+             :project_snapshot_grace_seconds,
+             @default_project_snapshot_grace_seconds
+           ),
+         {:ok, run_workspace_ttl_seconds} <-
+           non_negative_integer(
+             opts,
+             "runWorkspaceTtlSeconds",
+             :run_workspace_ttl_seconds,
+             @default_run_workspace_ttl_seconds
+           ),
+         {:ok, event_payload_grace_seconds} <-
+           non_negative_integer(
+             opts,
+             "eventPayloadGraceSeconds",
+             :event_payload_grace_seconds,
+             @default_event_payload_grace_seconds
+           ) do
+      %{
+        ok: true,
+        dryRun: dry_run?,
+        prunedAt: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
+        projectSnapshots:
+          prune_project_snapshots(runtime, project_snapshot_grace_seconds, dry_run?),
+        runWorkspaces: prune_run_workspaces(runtime, run_workspace_ttl_seconds, dry_run?),
+        eventPayloads: prune_event_payloads(event_payload_grace_seconds, dry_run?)
+      }
+    else
+      {:error, message} ->
+        %{
+          ok: false,
+          error: %{
+            code: "invalid_prune_option",
+            message: message
+          }
+        }
+    end
   end
 
-  defp prune_project_snapshots(runtime, dry_run?) do
+  defp prune_project_snapshots(runtime, grace_seconds, dry_run?) do
     root = Path.join(runtime.execution_home_dir, "project-snapshots")
     retained = Storage.list_referenced_snapshot_paths(nil) |> MapSet.new(&Path.expand/1)
+    now_seconds = System.system_time(:second)
 
     candidates =
       root
       |> child_directories()
       |> Enum.flat_map(&child_directories/1)
       |> Enum.reject(&(Path.expand(&1) in retained))
+      |> Enum.filter(&older_than?(&1, now_seconds, grace_seconds))
       |> Enum.map(&candidate_summary/1)
 
-    remove_candidates(candidates, dry_run?)
+    removals = remove_candidates(candidates, dry_run?)
 
     %{
       "root" => root,
+      "graceSeconds" => grace_seconds,
       "candidateCount" => length(candidates),
       "candidateBytes" => sum_candidate_bytes(candidates),
-      "removedCount" => removed_count(candidates, dry_run?),
-      "removedBytes" => removed_bytes(candidates, dry_run?)
+      "removedCount" => removed_count(removals),
+      "removedBytes" => removed_bytes(removals),
+      "failedCount" => failed_count(removals),
+      "failedBytes" => failed_bytes(removals),
+      "failedPaths" => failed_paths(removals)
     }
   end
 
@@ -70,15 +97,18 @@ defmodule VilanoKernel.Storage.Prune do
       |> Enum.filter(&older_than?(&1, now_seconds, ttl_seconds))
       |> Enum.map(&candidate_summary/1)
 
-    remove_candidates(candidates, dry_run?)
+    removals = remove_candidates(candidates, dry_run?)
 
     %{
       "root" => root,
       "ttlSeconds" => ttl_seconds,
       "candidateCount" => length(candidates),
       "candidateBytes" => sum_candidate_bytes(candidates),
-      "removedCount" => removed_count(candidates, dry_run?),
-      "removedBytes" => removed_bytes(candidates, dry_run?)
+      "removedCount" => removed_count(removals),
+      "removedBytes" => removed_bytes(removals),
+      "failedCount" => failed_count(removals),
+      "failedBytes" => failed_bytes(removals),
+      "failedPaths" => failed_paths(removals)
     }
   end
 
@@ -141,12 +171,28 @@ defmodule VilanoKernel.Storage.Prune do
     }
   end
 
-  defp remove_candidates(candidates, true), do: candidates
+  defp remove_candidates(candidates, true) do
+    Enum.map(candidates, &Map.put(&1, "removalStatus", "dry_run"))
+  end
 
   defp remove_candidates(candidates, false) do
-    Enum.each(candidates, fn %{"path" => path} ->
+    Enum.map(candidates, fn %{"path" => path} = candidate ->
       make_writable_for_removal(path)
-      File.rm_rf(path)
+
+      case File.rm_rf(path) do
+        {:ok, removed_paths} when removed_paths != [] ->
+          Map.merge(candidate, %{"removalStatus" => "removed"})
+
+        {:ok, _removed_paths} ->
+          Map.merge(candidate, %{"removalStatus" => "missing"})
+
+        {:error, reason, failed_path} ->
+          Map.merge(candidate, %{
+            "removalStatus" => "failed",
+            "failedPath" => failed_path,
+            "failureReason" => reason
+          })
+      end
     end)
   end
 
@@ -171,15 +217,66 @@ defmodule VilanoKernel.Storage.Prune do
     Enum.reduce(candidates, 0, &(&2 + &1["bytes"]))
   end
 
-  defp removed_count(_candidates, true), do: 0
-  defp removed_count(candidates, false), do: length(candidates)
+  defp removed_count(removals), do: Enum.count(removals, &(&1["removalStatus"] == "removed"))
 
-  defp removed_bytes(_candidates, true), do: 0
-  defp removed_bytes(candidates, false), do: sum_candidate_bytes(candidates)
+  defp removed_bytes(removals) do
+    removals
+    |> Enum.filter(&(&1["removalStatus"] == "removed"))
+    |> sum_candidate_bytes()
+  end
 
-  defp non_negative_integer(value, _default) when is_integer(value) and value >= 0, do: value
-  defp non_negative_integer(_value, default), do: default
+  defp failed_count(removals), do: Enum.count(removals, &(&1["removalStatus"] == "failed"))
 
-  defp truthy?(value) when value in [true, "true", "1", 1], do: true
-  defp truthy?(_value), do: false
+  defp failed_bytes(removals) do
+    removals
+    |> Enum.filter(&(&1["removalStatus"] == "failed"))
+    |> sum_candidate_bytes()
+  end
+
+  defp failed_paths(removals) do
+    removals
+    |> Enum.filter(&(&1["removalStatus"] == "failed"))
+    |> Enum.map(fn removal ->
+      %{
+        "path" => removal["path"],
+        "failedPath" => to_string(removal["failedPath"]),
+        "reason" => to_string(removal["failureReason"]),
+        "bytes" => removal["bytes"]
+      }
+    end)
+  end
+
+  defp non_negative_integer(opts, string_key, atom_key, default) do
+    case fetch_option(opts, string_key, atom_key) do
+      :missing ->
+        {:ok, default}
+
+      value when is_integer(value) and value >= 0 ->
+        {:ok, value}
+
+      _value ->
+        {:error, "#{string_key} must be a non-negative integer"}
+    end
+  end
+
+  defp fetch_option(opts, string_key, atom_key) do
+    case Map.fetch(opts, string_key) do
+      {:ok, value} ->
+        value
+
+      :error ->
+        case Map.fetch(opts, atom_key) do
+          {:ok, value} -> value
+          :error -> :missing
+        end
+    end
+  end
+
+  defp boolean_option(opts, string_key, atom_key, default) do
+    case fetch_option(opts, string_key, atom_key) do
+      :missing -> {:ok, default}
+      value when is_boolean(value) -> {:ok, value}
+      _value -> {:error, "#{string_key} must be a boolean"}
+    end
+  end
 end
