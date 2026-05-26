@@ -17,6 +17,10 @@ export interface VilanoProjectConfig {
   project?: {
     env_file?: string | string[];
   };
+  storage?: {
+    snapshot_excludes?: string[];
+    snapshot_include_node_modules?: boolean;
+  };
 }
 
 export interface LoadedVilanoProjectConfig {
@@ -94,6 +98,18 @@ export async function applyProjectConfig(
 
     env[envName] = String(value);
   }
+
+  const storageConfig = loaded.config.storage ?? {};
+  if (env.VILANO_SNAPSHOT_EXCLUDES === undefined && storageConfig.snapshot_excludes !== undefined) {
+    env.VILANO_SNAPSHOT_EXCLUDES = JSON.stringify(storageConfig.snapshot_excludes);
+  }
+
+  if (
+    env.VILANO_SNAPSHOT_INCLUDE_NODE_MODULES === undefined &&
+    storageConfig.snapshot_include_node_modules !== undefined
+  ) {
+    env.VILANO_SNAPSHOT_INCLUDE_NODE_MODULES = String(storageConfig.snapshot_include_node_modules);
+  }
 }
 
 async function findProjectConfig(startDir: string): Promise<string | null> {
@@ -128,9 +144,11 @@ function normalizeProjectConfig(value: unknown, configPath: string): VilanoProje
   const record = value as Record<string, unknown>;
   const runtime = normalizeRuntimeConfig(record.runtime, configPath);
   const project = normalizeProjectSection(record.project, configPath);
+  const storage = normalizeStorageSection(record.storage, configPath);
   return {
     ...(runtime ? { runtime } : {}),
     ...(project ? { project } : {}),
+    ...(storage ? { storage } : {}),
   };
 }
 
@@ -200,6 +218,35 @@ function normalizeProjectSection(
   return { env_file: envFile };
 }
 
+function normalizeStorageSection(
+  value: unknown,
+  configPath: string
+): VilanoProjectConfig["storage"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`[storage] in ${PROJECT_CONFIG_FILE} must be a table: ${configPath}`);
+  }
+
+  const record = value as Record<string, unknown>;
+  const storage: NonNullable<VilanoProjectConfig["storage"]> = {};
+
+  storage.snapshot_excludes = readOptionalSnapshotExcludes(
+    record.snapshot_excludes,
+    "storage.snapshot_excludes",
+    configPath
+  );
+  storage.snapshot_include_node_modules = readOptionalBoolean(
+    record.snapshot_include_node_modules,
+    "storage.snapshot_include_node_modules",
+    configPath
+  );
+
+  return Object.keys(storage).length > 0 ? storage : undefined;
+}
+
 function normalizeEnvFiles(value: string | string[] | undefined): string[] {
   if (value === undefined) {
     return [];
@@ -231,6 +278,50 @@ function readOptionalString(value: unknown, field: string, configPath: string): 
 
   if (typeof value !== "string" || value.trim() === "") {
     throw new Error(`${field} in ${PROJECT_CONFIG_FILE} must be a non-empty string: ${configPath}`);
+  }
+
+  return value;
+}
+
+function readOptionalStringArray(value: unknown, field: string, configPath: string): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string" && entry.trim() !== "")) {
+    throw new Error(`${field} in ${PROJECT_CONFIG_FILE} must be an array of non-empty strings: ${configPath}`);
+  }
+
+  return value;
+}
+
+function readOptionalSnapshotExcludes(value: unknown, field: string, configPath: string): string[] | undefined {
+  const entries = readOptionalStringArray(value, field, configPath);
+  if (entries === undefined) {
+    return undefined;
+  }
+
+  for (const entry of entries) {
+    if (path.isAbsolute(entry) || /^[A-Za-z]:[\\/]/.test(entry)) {
+      throw new Error(`${field} in ${PROJECT_CONFIG_FILE} must contain relative paths or names: ${configPath}`);
+    }
+
+    const parts = entry.split(/[\\/]+/).filter(Boolean);
+    if (parts.length === 0 || parts.includes(".") || parts.includes("..")) {
+      throw new Error(`${field} in ${PROJECT_CONFIG_FILE} must not contain . or .. segments: ${configPath}`);
+    }
+  }
+
+  return entries;
+}
+
+function readOptionalBoolean(value: unknown, field: string, configPath: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "boolean") {
+    throw new Error(`${field} in ${PROJECT_CONFIG_FILE} must be a boolean: ${configPath}`);
   }
 
   return value;

@@ -1,18 +1,46 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import process from "node:process";
 
 import { ensurePrivateDir } from "./json-file.ts";
 import { getRuntimePaths } from "./runtime-home.ts";
 
-const SNAPSHOT_EXCLUDED_NAMES = new Set([".git", ".hg", ".svn", ".vilano", "tmp"]);
+const DEFAULT_SNAPSHOT_EXCLUDED_NAMES = [
+  ".assembly-runtime",
+  ".cache",
+  ".git",
+  ".hg",
+  ".nuxt",
+  ".svn",
+  ".svelte-kit",
+  ".turbo",
+  ".vilano",
+  "coverage",
+  "logs",
+  "tmp",
+];
+const DEFAULT_SNAPSHOT_EXCLUDED_FILE_SUFFIXES = [".log"];
+
+export interface ProjectSnapshotOptions {
+  excludes?: readonly string[];
+  includeNodeModules?: boolean;
+}
+
+interface NormalizedSnapshotOptions {
+  excludedNames: Set<string>;
+  excludedPaths: Set<string>;
+  includeNodeModules: boolean;
+}
 
 export async function materializeProjectSnapshot(
   projectName: string,
-  projectPath: string
+  projectPath: string,
+  options: ProjectSnapshotOptions = snapshotOptionsFromEnv()
 ): Promise<string> {
   const runtimePaths = getRuntimePaths();
   const sourcePath = path.resolve(projectPath);
+  const snapshotOptions = normalizeSnapshotOptions(options);
   const snapshotId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}`;
   const snapshotRoot = path.join(runtimePaths.projectSnapshotsDir, projectName, snapshotId);
 
@@ -21,12 +49,141 @@ export async function materializeProjectSnapshot(
     recursive: true,
     force: true,
     dereference: true,
-    filter: (_src, dest) => !SNAPSHOT_EXCLUDED_NAMES.has(path.basename(dest)),
+    filter: (src) => shouldCopySnapshotEntry(sourcePath, src, snapshotOptions),
   });
-  await ensureDependencyResolution(sourcePath, snapshotRoot);
+  if (snapshotOptions.includeNodeModules) {
+    await ensureDependencyResolution(sourcePath, snapshotRoot);
+  }
   await sealSnapshot(snapshotRoot);
 
   return snapshotRoot;
+}
+
+export function snapshotOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): ProjectSnapshotOptions {
+  return {
+    excludes: parseSnapshotExcludesEnv(env.VILANO_SNAPSHOT_EXCLUDES),
+    includeNodeModules: parseSnapshotBooleanEnv(env.VILANO_SNAPSHOT_INCLUDE_NODE_MODULES, true),
+  };
+}
+
+function normalizeSnapshotOptions(options: ProjectSnapshotOptions): NormalizedSnapshotOptions {
+  const includeNodeModules = options.includeNodeModules ?? true;
+  const excludedNames = new Set(DEFAULT_SNAPSHOT_EXCLUDED_NAMES);
+  const excludedPaths = new Set<string>();
+
+  if (!includeNodeModules) {
+    excludedNames.add("node_modules");
+  }
+
+  for (const exclude of options.excludes ?? []) {
+    const normalized = normalizeExcludeRule(exclude);
+    if (!normalized) {
+      continue;
+    }
+
+    if (normalized.includes("/")) {
+      excludedPaths.add(normalized);
+    } else {
+      excludedNames.add(normalized);
+    }
+  }
+
+  return {
+    excludedNames,
+    excludedPaths,
+    includeNodeModules: includeNodeModules && !excludedNames.has("node_modules"),
+  };
+}
+
+function shouldCopySnapshotEntry(
+  sourceRoot: string,
+  sourcePath: string,
+  options: NormalizedSnapshotOptions
+): boolean {
+  const relativePath = normalizeRelativePath(path.relative(sourceRoot, sourcePath));
+  if (relativePath === "") {
+    return true;
+  }
+
+  const basename = path.basename(sourcePath);
+  if (options.excludedNames.has(basename)) {
+    return false;
+  }
+
+  if (DEFAULT_SNAPSHOT_EXCLUDED_FILE_SUFFIXES.some((suffix) => basename.endsWith(suffix))) {
+    return false;
+  }
+
+  for (const excludedPath of options.excludedPaths) {
+    if (relativePath === excludedPath || relativePath.startsWith(`${excludedPath}/`)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function parseSnapshotExcludesEnv(value: string | undefined): string[] {
+  if (value === undefined || value.trim() === "") {
+    return [];
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed) && parsed.every((entry) => typeof entry === "string")) {
+        return parsed;
+      }
+    } catch {
+      return [];
+    }
+
+    return [];
+  }
+
+  return trimmed
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function parseSnapshotBooleanEnv(value: string | undefined, defaultValue: boolean): boolean {
+  if (value === undefined) {
+    return defaultValue;
+  }
+
+  switch (value.trim().toLowerCase()) {
+    case "1":
+    case "true":
+    case "yes":
+    case "on":
+      return true;
+    case "0":
+    case "false":
+    case "no":
+    case "off":
+      return false;
+    default:
+      return defaultValue;
+  }
+}
+
+function normalizeExcludeRule(value: string): string | null {
+  const normalized = normalizeRelativePath(value.trim());
+  if (normalized === "" || normalized === "." || normalized.startsWith("../") || normalized.includes("/../")) {
+    return null;
+  }
+
+  if (path.isAbsolute(value)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function normalizeRelativePath(value: string): string {
+  return value.split(path.sep).join("/").replace(/^\.\/+/, "").replace(/\/+$/, "");
 }
 
 export async function pruneProjectSnapshots(

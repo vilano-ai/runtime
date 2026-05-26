@@ -5,6 +5,11 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
+import {
+  materializeProjectSnapshot,
+  snapshotOptionsFromEnv,
+} from "../cli/src/project-snapshot.ts";
+
 test("pruneAllProjectSnapshots removes sealed snapshots across projects", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-project-snapshot-"));
   const runtimeHome = path.join(root, "runtime-home");
@@ -57,6 +62,96 @@ test("pruneAllProjectSnapshots removes sealed snapshots across projects", async 
   }
 });
 
+test("materializeProjectSnapshot excludes runtime logs and caches by default", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-project-snapshot-"));
+  const runtimeHome = path.join(root, "runtime-home");
+  const executionHome = path.join(root, "execution-home");
+  const projectPath = path.join(root, "project");
+  const previousHome = process.env.VILANO_HOME;
+  const previousExecutionHome = process.env.VILANO_EXECUTION_HOME;
+
+  try {
+    process.env.VILANO_HOME = runtimeHome;
+    process.env.VILANO_EXECUTION_HOME = executionHome;
+
+    await writeProject(projectPath, "export const project = 'default-excludes';\n");
+    await fs.mkdir(path.join(projectPath, "logs"), { recursive: true });
+    await fs.mkdir(path.join(projectPath, ".assembly-runtime"), { recursive: true });
+    await fs.mkdir(path.join(projectPath, ".cache"), { recursive: true });
+    await fs.mkdir(path.join(projectPath, "node_modules", "pkg"), { recursive: true });
+    await fs.writeFile(path.join(projectPath, "logs", "runtime.log"), "large log\n", "utf8");
+    await fs.writeFile(path.join(projectPath, ".assembly-runtime", "state.jsonl"), "{}\n", "utf8");
+    await fs.writeFile(path.join(projectPath, ".cache", "bundle.bin"), "cache\n", "utf8");
+    await fs.writeFile(path.join(projectPath, "src", "debug.log"), "debug\n", "utf8");
+    await fs.writeFile(path.join(projectPath, "src", "index.test.ts"), "export const test = 1;\n", "utf8");
+    await fs.writeFile(path.join(projectPath, "node_modules", "pkg", "index.js"), "module.exports = 1;\n", "utf8");
+
+    const snapshotPath = await materializeProjectSnapshot("project", projectPath);
+
+    await fs.access(path.join(snapshotPath, "src", "index.ts"));
+    await fs.access(path.join(snapshotPath, "src", "index.test.ts"));
+    await fs.access(path.join(snapshotPath, "node_modules", "pkg", "index.js"));
+    await expect(fs.access(path.join(snapshotPath, "logs"))).rejects.toThrow();
+    await expect(fs.access(path.join(snapshotPath, ".assembly-runtime"))).rejects.toThrow();
+    await expect(fs.access(path.join(snapshotPath, ".cache"))).rejects.toThrow();
+    await expect(fs.access(path.join(snapshotPath, "src", "debug.log"))).rejects.toThrow();
+  } finally {
+    restoreEnv("VILANO_HOME", previousHome);
+    restoreEnv("VILANO_EXECUTION_HOME", previousExecutionHome);
+    await makeTreeWritable(root).catch(() => undefined);
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("materializeProjectSnapshot honors custom excludes and node_modules opt out", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-project-snapshot-"));
+  const runtimeHome = path.join(root, "runtime-home");
+  const executionHome = path.join(root, "execution-home");
+  const projectPath = path.join(root, "project");
+  const previousHome = process.env.VILANO_HOME;
+  const previousExecutionHome = process.env.VILANO_EXECUTION_HOME;
+
+  try {
+    process.env.VILANO_HOME = runtimeHome;
+    process.env.VILANO_EXECUTION_HOME = executionHome;
+
+    await writeProject(projectPath, "export const project = 'custom-excludes';\n");
+    await fs.mkdir(path.join(projectPath, "artifacts", "cache"), { recursive: true });
+    await fs.mkdir(path.join(projectPath, "artifacts", "keep"), { recursive: true });
+    await fs.mkdir(path.join(projectPath, "node_modules", "pkg"), { recursive: true });
+    await fs.writeFile(path.join(projectPath, "artifacts", "cache", "large.bin"), "cache\n", "utf8");
+    await fs.writeFile(path.join(projectPath, "artifacts", "keep", "small.bin"), "keep\n", "utf8");
+    await fs.writeFile(path.join(projectPath, "node_modules", "pkg", "index.js"), "module.exports = 1;\n", "utf8");
+
+    const snapshotPath = await materializeProjectSnapshot("project", projectPath, {
+      excludes: ["artifacts/cache"],
+      includeNodeModules: false,
+    });
+
+    await fs.access(path.join(snapshotPath, "src", "index.ts"));
+    await fs.access(path.join(snapshotPath, "artifacts", "keep", "small.bin"));
+    await expect(fs.access(path.join(snapshotPath, "artifacts", "cache"))).rejects.toThrow();
+    await expect(fs.access(path.join(snapshotPath, "node_modules"))).rejects.toThrow();
+  } finally {
+    restoreEnv("VILANO_HOME", previousHome);
+    restoreEnv("VILANO_EXECUTION_HOME", previousExecutionHome);
+    await makeTreeWritable(root).catch(() => undefined);
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("snapshotOptionsFromEnv parses JSON excludes and boolean node_modules flag", () => {
+  expect(
+    snapshotOptionsFromEnv({
+      VILANO_SNAPSHOT_EXCLUDES: '["logs","artifacts/cache"]',
+      VILANO_SNAPSHOT_INCLUDE_NODE_MODULES: "0",
+    } as NodeJS.ProcessEnv)
+  ).toEqual({
+    excludes: ["logs", "artifacts/cache"],
+    includeNodeModules: false,
+  });
+});
+
 async function writeProject(projectPath: string, source: string): Promise<void> {
   await fs.mkdir(path.join(projectPath, "src"), { recursive: true });
   await fs.writeFile(path.join(projectPath, "src", "index.ts"), source, "utf8");
@@ -97,4 +192,13 @@ async function makeTreeWritable(rootPath: string): Promise<void> {
   if (stat.isFile()) {
     await fs.chmod(rootPath, stat.mode | 0o200);
   }
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+
+  process.env[name] = value;
 }

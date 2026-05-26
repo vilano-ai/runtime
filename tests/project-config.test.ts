@@ -61,6 +61,46 @@ test("applyProjectConfigForCwd maps runtime config into env defaults", async () 
   }
 });
 
+test("applyProjectConfigForCwd maps storage snapshot config into env defaults", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-project-config-"));
+
+  try {
+    await fs.writeFile(
+      path.join(root, "vilano.toml"),
+      [
+        "[storage]",
+        'snapshot_excludes = ["logs", "tmp/cache"]',
+        "snapshot_include_node_modules = false",
+      ].join("\n"),
+      "utf8"
+    );
+
+    const env: NodeJS.ProcessEnv = {};
+    await applyProjectConfigForCwd(root, env);
+
+    expect(env.VILANO_SNAPSHOT_EXCLUDES).toBe(JSON.stringify(["logs", "tmp/cache"]));
+    expect(env.VILANO_SNAPSHOT_INCLUDE_NODE_MODULES).toBe("false");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("loadProjectConfigForCwd rejects unsafe storage snapshot excludes", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-project-config-"));
+
+  try {
+    await fs.writeFile(
+      path.join(root, "vilano.toml"),
+      ["[storage]", 'snapshot_excludes = ["../outside"]'].join("\n"),
+      "utf8"
+    );
+
+    await expect(loadProjectConfigForCwd(root)).rejects.toThrow("must not contain . or .. segments");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("applyProjectConfigForCwd loads env files without overriding shell env", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-project-config-"));
 
