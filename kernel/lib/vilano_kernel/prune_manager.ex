@@ -109,9 +109,9 @@ defmodule VilanoKernel.PruneManager do
           "1" -> {Map.put(opts, option_key, true), errors}
           "true" -> {Map.put(opts, option_key, true), errors}
           "yes" -> {Map.put(opts, option_key, true), errors}
-          "0" -> {Map.put(opts, option_key, false), errors}
-          "false" -> {Map.put(opts, option_key, false), errors}
-          "no" -> {Map.put(opts, option_key, false), errors}
+          "0" -> {opts, errors}
+          "false" -> {opts, errors}
+          "no" -> {opts, errors}
           _ -> {opts, ["#{env_key} must be a boolean" | errors]}
         end
 
