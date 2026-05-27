@@ -611,8 +611,13 @@ defmodule VilanoKernel.Storage.Prune do
   defp retained_or_active_project_snapshot?(path, retained, now_seconds, grace_seconds) do
     expanded_path = Path.expand(path)
 
-    MapSet.member?(retained, expanded_path) or
+    project_snapshot_pending_directory?(path) or
+      MapSet.member?(retained, expanded_path) or
       active_project_snapshot_pending_marker?(path, now_seconds, grace_seconds)
+  end
+
+  defp project_snapshot_pending_directory?(path) do
+    Path.basename(path) == ".pending"
   end
 
   defp project_snapshot_pending_marker_path(path) do

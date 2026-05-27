@@ -1148,6 +1148,36 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     end
   end
 
+  test "runtime prune keeps active project snapshot pending markers", %{
+    execution_home: execution_home
+  } do
+    snapshot_root = Path.join([execution_home, "project-snapshots", "project"])
+    snapshot_path = Path.join(snapshot_root, "snapshot-active")
+    temp_snapshot_path = Path.join(snapshot_root, "snapshot-active.tmp-copy")
+    pending_dir = Path.join(snapshot_root, ".pending")
+    pending_marker = Path.join(pending_dir, "snapshot-active.pending")
+
+    File.mkdir_p!(snapshot_path)
+    File.mkdir_p!(temp_snapshot_path)
+    File.mkdir_p!(pending_dir)
+    File.write!(Path.join(snapshot_path, "index.ts"), "export const active = true;\n")
+    File.write!(Path.join(temp_snapshot_path, "index.ts"), "export const active = true;\n")
+    File.write!(pending_marker, snapshot_path)
+    assert force_old_mtime(snapshot_path)
+    assert force_old_mtime(temp_snapshot_path)
+    assert force_old_mtime(pending_dir)
+
+    pruned =
+      Storage.prune_runtime(%{
+        "projectSnapshotGraceSeconds" => 0
+      })
+
+    assert pruned.ok == true
+    assert File.exists?(pending_marker)
+    assert File.dir?(snapshot_path)
+    assert File.dir?(temp_snapshot_path)
+  end
+
   test "runtime prune keeps completed workflow runs with live service traffic", %{
     execution_home: execution_home
   } do
