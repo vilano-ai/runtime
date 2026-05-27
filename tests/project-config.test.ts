@@ -73,6 +73,7 @@ test("applyProjectConfigForCwd maps storage snapshot config into env defaults", 
         "[storage]",
         'snapshot_excludes = ["logs", "tmp/cache"]',
         "snapshot_include_node_modules = false",
+        "prune_project_snapshot_grace_seconds = 90",
         "prune_run_workspace_ttl_seconds = 3600",
         "prune_completed_run_ttl_seconds = 604800",
         "prune_service_envelope_ttl_seconds = 259200",
@@ -93,6 +94,7 @@ test("applyProjectConfigForCwd maps storage snapshot config into env defaults", 
 
     expect(env.VILANO_SNAPSHOT_EXCLUDES).toBe(JSON.stringify(["logs", "tmp/cache"]));
     expect(env.VILANO_SNAPSHOT_INCLUDE_NODE_MODULES).toBe("false");
+    expect(env.VILANO_PRUNE_PROJECT_SNAPSHOT_GRACE_SECONDS).toBe("90");
     expect(env.VILANO_PRUNE_RUN_WORKSPACE_TTL_SECONDS).toBe("3600");
     expect(env.VILANO_PRUNE_COMPLETED_RUN_TTL_SECONDS).toBe("604800");
     expect(env.VILANO_PRUNE_SERVICE_ENVELOPE_TTL_SECONDS).toBe("259200");

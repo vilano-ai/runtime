@@ -30,7 +30,7 @@ defmodule VilanoKernel.PruneManager do
   defp config_from_env do
     case prune_opts_from_env() do
       {:ok, opts} ->
-        if map_size_without_vacuum(opts) > 0 do
+        if prune_option_count(opts) > 0 do
           %{
             interval_ms: prune_interval_ms(),
             opts: opts
@@ -54,15 +54,17 @@ defmodule VilanoKernel.PruneManager do
     seconds * 1_000
   end
 
-  defp map_size_without_vacuum(opts) do
-    opts
-    |> Map.delete("vacuumDatabase")
-    |> map_size()
+  defp prune_option_count(opts) do
+    map_size(opts)
   end
 
   defp prune_opts_from_env do
     {opts, errors} =
       {%{}, []}
+      |> put_optional_integer(
+        "projectSnapshotGraceSeconds",
+        "VILANO_PRUNE_PROJECT_SNAPSHOT_GRACE_SECONDS"
+      )
       |> put_optional_integer("runWorkspaceTtlSeconds", "VILANO_PRUNE_RUN_WORKSPACE_TTL_SECONDS")
       |> put_optional_integer("completedRunTtlSeconds", "VILANO_PRUNE_COMPLETED_RUN_TTL_SECONDS")
       |> put_optional_integer(

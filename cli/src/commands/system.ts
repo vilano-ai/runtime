@@ -82,6 +82,11 @@ export async function handleDaemonCommand(
     case "prune": {
       const body = await pruneRuntimeStorage({
         dryRun: Boolean(flags["dry-run"]),
+        projectSnapshotGraceSeconds: readOptionalNonNegativeSeconds(
+          flags["project-snapshot-grace-seconds"],
+          "project-snapshot-grace-seconds",
+          process.env.VILANO_PRUNE_PROJECT_SNAPSHOT_GRACE_SECONDS
+        ),
         runWorkspaceTtlSeconds: readOptionalNonNegativeSeconds(
           flags["workspace-ttl-seconds"],
           "workspace-ttl-seconds",

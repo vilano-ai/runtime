@@ -49,8 +49,9 @@ export async function getRuntimeStorage(): Promise<RuntimeStorageResponse> {
 }
 
 export async function pruneRuntimeStorage(options: {
-  dryRun?: boolean;
-  runWorkspaceTtlSeconds?: number;
+	  dryRun?: boolean;
+	  projectSnapshotGraceSeconds?: number;
+	  runWorkspaceTtlSeconds?: number;
   completedRunTtlSeconds?: number;
   serviceEnvelopeTtlSeconds?: number;
   artifactGraceSeconds?: number;

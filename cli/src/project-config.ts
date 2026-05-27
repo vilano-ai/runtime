@@ -21,6 +21,7 @@ export interface VilanoProjectConfig {
   storage?: {
     snapshot_excludes?: string[];
     snapshot_include_node_modules?: boolean;
+    prune_project_snapshot_grace_seconds?: number;
     prune_run_workspace_ttl_seconds?: number;
     prune_completed_run_ttl_seconds?: number;
     prune_service_envelope_ttl_seconds?: number;
@@ -122,6 +123,13 @@ export async function applyProjectConfig(
     storageConfig.snapshot_include_node_modules !== undefined
   ) {
     env.VILANO_SNAPSHOT_INCLUDE_NODE_MODULES = String(storageConfig.snapshot_include_node_modules);
+  }
+
+  if (
+    env.VILANO_PRUNE_PROJECT_SNAPSHOT_GRACE_SECONDS === undefined &&
+    storageConfig.prune_project_snapshot_grace_seconds !== undefined
+  ) {
+    env.VILANO_PRUNE_PROJECT_SNAPSHOT_GRACE_SECONDS = String(storageConfig.prune_project_snapshot_grace_seconds);
   }
 
   if (
@@ -332,6 +340,12 @@ function normalizeStorageSection(
     record.snapshot_include_node_modules,
     "storage.snapshot_include_node_modules",
     configPath
+  );
+  storage.prune_project_snapshot_grace_seconds = readOptionalInteger(
+    record.prune_project_snapshot_grace_seconds,
+    "storage.prune_project_snapshot_grace_seconds",
+    configPath,
+    { min: 0 }
   );
   storage.prune_run_workspace_ttl_seconds = readOptionalInteger(
     record.prune_run_workspace_ttl_seconds,
