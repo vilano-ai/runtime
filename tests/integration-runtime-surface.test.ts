@@ -395,6 +395,7 @@ test("runtime prune removes unreferenced snapshots and stale run workspaces", as
       "stdout.txt"
     );
     const oldEnoughForPrune = new Date(Date.now() - 10 * 60 * 1000);
+    const initialSnapshotGraceSeconds = 60;
     const serviceKey = { sessionId: "prune-runtime" };
     await harness.ensureService("demo/operator", serviceKey);
     const service = await harness.inspectService("demo/operator", serviceKey);
@@ -643,11 +644,11 @@ test("runtime prune removes unreferenced snapshots and stale run workspaces", as
       daemonLog: { truncated: boolean; removedBytes: number };
       database: { walCheckpointed: boolean; vacuumed: boolean; beforeBytes: number; afterBytes: number };
     }>([
-	      "daemon",
-	      "prune",
-	      "--project-snapshot-grace-seconds",
-	      "0",
-	      "--workspace-ttl-seconds",
+      "daemon",
+      "prune",
+      "--project-snapshot-grace-seconds",
+      String(initialSnapshotGraceSeconds),
+      "--workspace-ttl-seconds",
       "0",
       "--completed-run-ttl-seconds",
       "0",
@@ -665,7 +666,7 @@ test("runtime prune removes unreferenced snapshots and stale run workspaces", as
     ]);
 
     expect(dryRun.projectSnapshots.candidateCount).toBeGreaterThanOrEqual(1);
-    expect(dryRun.projectSnapshots.graceSeconds).toBe(0);
+    expect(dryRun.projectSnapshots.graceSeconds).toBe(initialSnapshotGraceSeconds);
     expect(dryRun.projectSnapshots.removedCount).toBe(0);
     expect(dryRun.projectSnapshots.failedCount).toBe(0);
     expect(dryRun.runWorkspaces.candidateCount).toBeGreaterThanOrEqual(1);
@@ -706,11 +707,11 @@ test("runtime prune removes unreferenced snapshots and stale run workspaces", as
     await fs.access(invalidDryRunSnapshot);
 
     const pruned = await harness.runCliJson<typeof dryRun>([
-	      "daemon",
-	      "prune",
-	      "--project-snapshot-grace-seconds",
-	      "0",
-	      "--workspace-ttl-seconds",
+      "daemon",
+      "prune",
+      "--project-snapshot-grace-seconds",
+      String(initialSnapshotGraceSeconds),
+      "--workspace-ttl-seconds",
       "0",
       "--completed-run-ttl-seconds",
       "0",
