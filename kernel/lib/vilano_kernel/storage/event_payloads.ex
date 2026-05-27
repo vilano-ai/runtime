@@ -283,7 +283,7 @@ defmodule VilanoKernel.Storage.EventPayloads do
     if not referenced_payload_path?(candidate.relative_path) and
          not pending_payload_file?(candidate.relative_path, pending_sha256s) and
          old_enough_for_gc?(candidate.absolute_path, now_seconds, grace_seconds) do
-      quarantine_payload_file(candidate)
+      quarantine_payload_file(candidate, grace_seconds)
     else
       :skip
     end
@@ -758,6 +758,28 @@ defmodule VilanoKernel.Storage.EventPayloads do
     end
   end
 
+  defp pending_payload_file?(relative_path) do
+    case payload_sha256_from_relative_path(relative_path) do
+      nil ->
+        false
+
+      sha256 ->
+        sha256
+        |> pending_payload_marker_paths()
+        |> Enum.any?()
+    end
+  end
+
+  defp pending_payload_marker_paths(sha256) do
+    Path.wildcard(
+      Path.join([
+        payload_staging_root(),
+        String.slice(sha256, 0, 2),
+        "#{sha256}.*#{@pending_marker_suffix}"
+      ])
+    )
+  end
+
   defp pending_payload_sha256(path) do
     case path |> Path.basename() |> String.split(".", parts: 2) do
       [sha256, _suffix] ->
@@ -768,10 +790,13 @@ defmodule VilanoKernel.Storage.EventPayloads do
     end
   end
 
-  defp quarantine_payload_file(%{
-         absolute_path: absolute_path,
-         relative_path: relative_path
-       }) do
+  defp quarantine_payload_file(
+         %{
+           absolute_path: absolute_path,
+           relative_path: relative_path
+         } = candidate,
+         grace_seconds
+       ) do
     case Path.split(relative_path) do
       [@payload_dir, prefix, filename] ->
         quarantine_path =
@@ -783,13 +808,64 @@ defmodule VilanoKernel.Storage.EventPayloads do
 
         File.mkdir_p!(Path.dirname(quarantine_path))
 
-        case File.rename(absolute_path, quarantine_path) do
-          :ok -> {:ok, quarantine_path}
-          {:error, _reason} -> :skip
+        if payload_retained_for_gc?(candidate, grace_seconds) do
+          :skip
+        else
+          case File.rename(absolute_path, quarantine_path) do
+            :ok ->
+              Support.run_storage_test_hook(:event_payload_quarantined, %{
+                absolute_path: absolute_path,
+                quarantine_path: quarantine_path,
+                relative_path: relative_path
+              })
+
+              quarantined_candidate = %{candidate | absolute_path: quarantine_path}
+
+              if payload_retained_for_gc?(quarantined_candidate, grace_seconds) do
+                restore_quarantined_payload_file(absolute_path, quarantine_path)
+                :skip
+              else
+                {:ok, quarantine_path}
+              end
+
+            {:error, _reason} ->
+              :skip
+          end
         end
 
       _ ->
         :skip
+    end
+  end
+
+  defp payload_retained_for_gc?(
+         %{absolute_path: absolute_path, relative_path: relative_path},
+         grace_seconds
+       ) do
+    now_seconds = System.system_time(:second)
+
+    referenced_payload_path?(relative_path) or
+      pending_payload_file?(relative_path) or
+      not old_enough_for_gc?(absolute_path, now_seconds, grace_seconds)
+  end
+
+  defp restore_quarantined_payload_file(absolute_path, quarantine_path) do
+    File.mkdir_p!(Path.dirname(absolute_path))
+
+    if File.exists?(absolute_path) do
+      remove_file(quarantine_path)
+    else
+      case File.rename(quarantine_path, absolute_path) do
+        :ok ->
+          :ok
+
+        {:error, _reason} ->
+          if File.exists?(absolute_path) do
+            remove_file(quarantine_path)
+          else
+            :ok
+          end
+      end
     end
   end
 

@@ -804,6 +804,63 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     end
   end
 
+  test "garbage collection restores payloads that become pending after quarantine", %{
+    runtime_home: runtime_home
+  } do
+    run_id = run_id()
+    body = large_body()
+    original_hooks = Application.get_env(:vilano_kernel, :storage_test_hooks)
+
+    try do
+      Support.append_event!(run_id, "LargeEvent", body, now())
+
+      [ref] = event_rows(run_id) |> Enum.map(&Jason.decode!(&1["body_json"]))
+      payload_path = Path.join(runtime_home, ref["path"])
+
+      pending_marker =
+        Path.join([
+          runtime_home,
+          "event-payloads-staging",
+          String.slice(ref["sha256"], 0, 2),
+          "#{ref["sha256"]}.race.pending"
+        ])
+
+      Process.put(:pending_marker, pending_marker)
+
+      cleanup_run_events(run_id)
+      assert force_old_mtime(payload_path)
+
+      parent = self()
+
+      Application.put_env(:vilano_kernel, :storage_test_hooks, %{
+        event_payload_quarantined: fn %{
+                                        absolute_path: ^payload_path,
+                                        relative_path: relative_path
+                                      } ->
+          File.mkdir_p!(Path.dirname(pending_marker))
+          File.write!(pending_marker, relative_path)
+          send(parent, {:payload_quarantined, relative_path})
+        end
+      })
+
+      assert EventPayloads.garbage_collect!(0) == :ok
+      assert_receive {:payload_quarantined, _relative_path}, 1_000
+      assert File.exists?(payload_path)
+    after
+      case original_hooks do
+        nil -> Application.delete_env(:vilano_kernel, :storage_test_hooks)
+        hooks -> Application.put_env(:vilano_kernel, :storage_test_hooks, hooks)
+      end
+
+      cleanup_run_events(run_id)
+
+      if pending_marker = Process.get(:pending_marker) do
+        File.rm(pending_marker)
+        Process.delete(:pending_marker)
+      end
+    end
+  end
+
   test "reused unreferenced payloads refresh mtime before garbage collection", %{
     runtime_home: runtime_home
   } do
