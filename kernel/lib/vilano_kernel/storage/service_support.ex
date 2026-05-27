@@ -287,7 +287,8 @@ defmodule VilanoKernel.Storage.ServiceSupport do
         payload,
         correlation_id,
         sender_run_id,
-        now
+        now,
+        prepared_event \\ nil
       ) do
     if service_run["status"] == "stopped" do
       {:error,
@@ -310,7 +311,8 @@ defmodule VilanoKernel.Storage.ServiceSupport do
              payload,
              correlation_id,
              sender_run_id,
-             now
+             now,
+             prepared_event
            )}
 
         {:error, error} ->
@@ -364,9 +366,11 @@ defmodule VilanoKernel.Storage.ServiceSupport do
         payload,
         correlation_id,
         sender_run_id,
-        now
+        now,
+        prepared_event \\ nil
       ) do
-    envelope_id = "env_" <> Ecto.UUID.generate()
+    envelope_id = prepared_service_envelope_id(prepared_event)
+    payload_json = prepared_service_envelope_payload_json(prepared_event, payload)
     current_run = ReadModels.get_run(service_run_id)
 
     next_status =
@@ -397,7 +401,7 @@ defmodule VilanoKernel.Storage.ServiceSupport do
         service_run_id,
         kind,
         name,
-        maybe_encode_json(payload),
+        payload_json,
         correlation_id,
         sender_run_id,
         now,
@@ -417,22 +421,133 @@ defmodule VilanoKernel.Storage.ServiceSupport do
       [next_status, now, service_run_id]
     )
 
-    append_event!(
+    append_inbound_enqueued_event!(
       service_run_id,
-      "InboundEnqueued",
-      %{
-        "envelopeId" => envelope_id,
-        "kind" => kind,
-        "name" => name,
-        "payload" => payload,
-        "correlationId" => correlation_id,
-        "senderRunId" => sender_run_id
-      },
-      now
+      kind,
+      name,
+      payload,
+      correlation_id,
+      sender_run_id,
+      envelope_id,
+      now,
+      prepared_event
     )
 
     envelope_id
   end
+
+  def prepare_service_envelope_enqueue_event(
+        service_run,
+        kind,
+        name,
+        payload,
+        correlation_id,
+        sender_run_id
+      ) do
+    service_run_id = service_run["id"] || service_run["run_id"]
+    envelope_id = "env_" <> Ecto.UUID.generate()
+    body = inbound_enqueued_body(envelope_id, kind, name, payload, correlation_id, sender_run_id)
+
+    %{
+      service_run_id: service_run_id,
+      envelope_id: envelope_id,
+      kind: kind,
+      name: name,
+      correlation_id: correlation_id,
+      sender_run_id: sender_run_id,
+      payload_json: maybe_encode_json(payload),
+      body: body,
+      storage: EventPayloads.prepare_body_for_storage!(body)
+    }
+  end
+
+  def discard_prepared_service_envelope_enqueue_event(nil), do: :ok
+
+  def discard_prepared_service_envelope_enqueue_event(%{storage: storage}) do
+    EventPayloads.discard_prepared_payload!(storage)
+  end
+
+  defp prepared_service_envelope_id(%{envelope_id: envelope_id}) when is_binary(envelope_id),
+    do: envelope_id
+
+  defp prepared_service_envelope_id(_prepared_event), do: "env_" <> Ecto.UUID.generate()
+
+  defp prepared_service_envelope_payload_json(%{payload_json: payload_json}, _payload)
+       when is_binary(payload_json) or is_nil(payload_json),
+       do: payload_json
+
+  defp prepared_service_envelope_payload_json(_prepared_event, payload),
+    do: maybe_encode_json(payload)
+
+  defp inbound_enqueued_body(envelope_id, kind, name, payload, correlation_id, sender_run_id) do
+    %{
+      "envelopeId" => envelope_id,
+      "kind" => kind,
+      "name" => name,
+      "payload" => payload,
+      "correlationId" => correlation_id,
+      "senderRunId" => sender_run_id
+    }
+  end
+
+  defp append_inbound_enqueued_event!(
+         service_run_id,
+         kind,
+         name,
+         payload,
+         correlation_id,
+         sender_run_id,
+         envelope_id,
+         now,
+         nil
+       ) do
+    append_event!(
+      service_run_id,
+      "InboundEnqueued",
+      inbound_enqueued_body(envelope_id, kind, name, payload, correlation_id, sender_run_id),
+      now
+    )
+  end
+
+  defp append_inbound_enqueued_event!(
+         service_run_id,
+         kind,
+         name,
+         payload,
+         correlation_id,
+         sender_run_id,
+         envelope_id,
+         now,
+         %{body: body, storage: storage} = prepared_event
+       ) do
+    expected_body =
+      inbound_enqueued_body(envelope_id, kind, name, payload, correlation_id, sender_run_id)
+
+    if prepared_event.service_run_id == service_run_id and
+         prepared_event.envelope_id == envelope_id and
+         prepared_event.kind == kind and
+         prepared_event.name == name and
+         prepared_event.correlation_id == correlation_id and
+         prepared_event.sender_run_id == sender_run_id and
+         body == expected_body do
+      SqlSupport.append_prepared_event!(service_run_id, "InboundEnqueued", storage, now)
+    else
+      Repo.rollback(:stale_cancellation_plan)
+    end
+  end
+
+  defp append_inbound_enqueued_event!(
+         _service_run_id,
+         _kind,
+         _name,
+         _payload,
+         _correlation_id,
+         _sender_run_id,
+         _envelope_id,
+         _now,
+         _prepared_event
+       ),
+       do: Repo.rollback(:stale_cancellation_plan)
 
   def prepare_service_turn_waiting_event(run, wait_body) do
     if run["definitionKind"] == "service" do

@@ -98,8 +98,8 @@ defmodule VilanoKernel.Storage.Supervision do
     now = Infrastructure.now_iso8601()
     input = input || %{}
 
-    run_started_event =
-      prepare_supervised_spawn_run_started_event(
+    prepared_spawn =
+      prepare_supervised_spawn_event(
         lease_id,
         group_id,
         definition_name,
@@ -123,7 +123,7 @@ defmodule VilanoKernel.Storage.Supervision do
                   nil
                 else
                   case AgentKernel.get_run_supervision_member(group_id, member_key) do
-                    nil when is_nil(run_started_event) ->
+                    nil when is_nil(prepared_spawn) ->
                       nil
 
                     nil ->
@@ -133,6 +133,16 @@ defmodule VilanoKernel.Storage.Supervision do
                         owner_run
                         |> project_definitions_for_run()
                         |> definition_from_project_definitions!("workflow", definition_name)
+
+                      prepared_spawn =
+                        prepared_supervised_spawn_event!(
+                          prepared_spawn,
+                          owner_run,
+                          group,
+                          member_key,
+                          definition,
+                          input
+                        )
 
                       member =
                         create_supervision_member_generation!(
@@ -144,7 +154,7 @@ defmodule VilanoKernel.Storage.Supervision do
                           1,
                           now,
                           "SupervisionMemberSpawned",
-                          run_started_event
+                          prepared_spawn
                         )
 
                       AgentKernel.supervision_member_runtime_state(
@@ -164,11 +174,11 @@ defmodule VilanoKernel.Storage.Supervision do
       end)
       |> unwrap_transaction_result()
     after
-      discard_prepared_payload(run_started_event)
+      discard_prepared_supervised_spawn_event(prepared_spawn)
     end
   end
 
-  defp prepare_supervised_spawn_run_started_event(
+  defp prepare_supervised_spawn_event(
          lease_id,
          group_id,
          definition_name,
@@ -192,11 +202,44 @@ defmodule VilanoKernel.Storage.Supervision do
                 |> project_definitions_for_run()
                 |> definition_from_project_definitions!("workflow", definition_name)
 
-              SqlSupport.prepare_workflow_run_started_event!(
-                project_record_for_run(owner_run),
-                definition,
-                input
-              )
+              child_run_id = "run_" <> Ecto.UUID.generate()
+
+              run_started_event =
+                SqlSupport.prepare_workflow_run_insert!(
+                  project_record_for_run(owner_run),
+                  definition,
+                  input
+                )
+
+              member_event =
+                try do
+                  EventPayloads.prepare_body_for_storage!(
+                    supervision_member_generation_body(
+                      group_id,
+                      member_key,
+                      1,
+                      child_run_id,
+                      definition,
+                      input
+                    )
+                  )
+                rescue
+                  error ->
+                    discard_prepared_payload(run_started_event)
+                    reraise error, __STACKTRACE__
+                end
+
+              %{
+                owner_run_id: owner_run["id"],
+                group_id: group_id,
+                member_key: member_key,
+                definition_name: definition_name,
+                input: input,
+                generation: 1,
+                child_run_id: child_run_id,
+                run_started_event: run_started_event,
+                member_event: member_event
+              }
             else
               _ -> nil
             end
@@ -206,7 +249,50 @@ defmodule VilanoKernel.Storage.Supervision do
     )
   end
 
+  defp prepared_supervised_spawn_event!(
+         prepared_spawn,
+         owner_run,
+         group,
+         member_key,
+         definition,
+         input
+       )
+       when is_map(prepared_spawn) do
+    definition_name = Map.fetch!(definition, "name")
+
+    if prepared_spawn.owner_run_id == owner_run["id"] and
+         prepared_spawn.group_id == group["id"] and
+         prepared_spawn.member_key == member_key and
+         prepared_spawn.definition_name == definition_name and
+         prepared_spawn.input == input and prepared_spawn.generation == 1 do
+      prepared_spawn
+    else
+      Repo.rollback(:stale_cancellation_plan)
+    end
+  end
+
+  defp prepared_supervised_spawn_event!(
+         _prepared_spawn,
+         _owner_run,
+         _group,
+         _member_key,
+         _definition,
+         _input
+       ),
+       do: Repo.rollback(:stale_cancellation_plan)
+
+  defp discard_prepared_supervised_spawn_event(nil), do: :ok
+
+  defp discard_prepared_supervised_spawn_event(%{} = prepared_spawn) do
+    discard_prepared_payload(prepared_spawn.run_started_event)
+    discard_prepared_payload(prepared_spawn.member_event)
+  end
+
   defp discard_prepared_payload(nil), do: :ok
+
+  defp discard_prepared_payload(%{run_started_event: _} = prepared_insert),
+    do: SqlSupport.discard_prepared_workflow_run_insert!(prepared_insert)
+
   defp discard_prepared_payload(storage), do: EventPayloads.discard_prepared_payload!(storage)
 
   def resolve_supervision_member_result_wait(lease_id, group_id, member_key, op_key) do
@@ -956,7 +1042,7 @@ defmodule VilanoKernel.Storage.Supervision do
       child_run_id = "run_" <> Ecto.UUID.generate()
 
       run_started_event =
-        SqlSupport.prepare_workflow_run_started_event!(
+        SqlSupport.prepare_workflow_run_insert!(
           project_record_for_run(owner_run),
           definition,
           input
@@ -1013,7 +1099,7 @@ defmodule VilanoKernel.Storage.Supervision do
         event_type
       ) do
     run_started_event =
-      SqlSupport.prepare_workflow_run_started_event!(
+      SqlSupport.prepare_workflow_run_insert!(
         project_record_for_run(owner_run),
         definition,
         input || %{}
@@ -1032,7 +1118,7 @@ defmodule VilanoKernel.Storage.Supervision do
         run_started_event
       )
     after
-      EventPayloads.discard_prepared_payload!(run_started_event)
+      SqlSupport.discard_prepared_workflow_run_insert!(run_started_event)
     end
   end
 

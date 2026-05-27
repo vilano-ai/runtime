@@ -281,6 +281,30 @@ defmodule VilanoKernel.Storage.Support.Sql do
         error,
         now
       ) do
+    persist_failed_service_op_json!(
+      caller_run_id,
+      op_key,
+      service_run_id,
+      op_kind,
+      message_name,
+      correlation_id,
+      Jason.encode!(payload),
+      Rows.maybe_encode_json(error),
+      now
+    )
+  end
+
+  def persist_failed_service_op_json!(
+        caller_run_id,
+        op_key,
+        service_run_id,
+        op_kind,
+        message_name,
+        correlation_id,
+        payload_json,
+        error_json,
+        now
+      ) do
     SQL.query!(
       Repo,
       """
@@ -306,8 +330,8 @@ defmodule VilanoKernel.Storage.Support.Sql do
         op_kind,
         message_name,
         correlation_id,
-        Jason.encode!(payload),
-        Rows.maybe_encode_json(error),
+        payload_json,
+        error_json,
         now,
         now
       ]
@@ -509,6 +533,26 @@ defmodule VilanoKernel.Storage.Support.Sql do
     )
   end
 
+  def prepare_workflow_run_insert!(project, definition, input) do
+    input = input || %{}
+
+    %{
+      input_json: Jason.encode!(input),
+      project_definitions_json: Jason.encode!(Map.fetch!(project, "definitions")),
+      run_started_event: prepare_workflow_run_started_event!(project, definition, input)
+    }
+  end
+
+  def discard_prepared_workflow_run_insert!(nil), do: :ok
+
+  def discard_prepared_workflow_run_insert!(%{run_started_event: run_started_event}) do
+    EventPayloads.discard_prepared_payload!(run_started_event)
+  end
+
+  def discard_prepared_workflow_run_insert!(run_started_event) do
+    EventPayloads.discard_prepared_payload!(run_started_event)
+  end
+
   def append_prepared_event!(run_id, event_type, storage, created_at) do
     event_id = "evt_" <> Ecto.UUID.generate()
     next_seq = reserve_next_event_seq!(run_id)
@@ -571,21 +615,25 @@ defmodule VilanoKernel.Storage.Support.Sql do
   end
 
   def insert_workflow_run!(run_id, project, definition, input, now) do
-    run_started_event = prepare_workflow_run_started_event!(project, definition, input)
+    prepared_insert = prepare_workflow_run_insert!(project, definition, input)
 
     try do
-      insert_workflow_run!(run_id, project, definition, input, now, run_started_event)
+      insert_workflow_run!(run_id, project, definition, input, now, prepared_insert)
     after
-      EventPayloads.discard_prepared_payload!(run_started_event)
+      discard_prepared_workflow_run_insert!(prepared_insert)
     end
   end
 
   def insert_workflow_run!(run_id, project, definition, input, now, run_started_event) do
-    input_json = Jason.encode!(input || %{})
+    input_json = prepared_workflow_input_json(run_started_event, input)
     project_name = Map.fetch!(project, "name")
     definition_name = Map.fetch!(definition, "name")
     project_snapshot_path = Map.get(project, "snapshotPath") || Map.fetch!(project, "path")
-    project_definitions_json = Jason.encode!(Map.fetch!(project, "definitions"))
+
+    project_definitions_json =
+      prepared_workflow_project_definitions_json(run_started_event, project)
+
+    run_started_payload = prepared_workflow_run_started_event(run_started_event)
 
     SQL.query!(
       Repo,
@@ -640,10 +688,31 @@ defmodule VilanoKernel.Storage.Support.Sql do
     append_prepared_event!(
       run_id,
       "RunStarted",
-      run_started_event,
+      run_started_payload,
       now
     )
   end
+
+  defp prepared_workflow_input_json(%{input_json: input_json}, _input)
+       when is_binary(input_json),
+       do: input_json
+
+  defp prepared_workflow_input_json(_prepared_insert, input), do: Jason.encode!(input || %{})
+
+  defp prepared_workflow_project_definitions_json(
+         %{project_definitions_json: project_definitions_json},
+         _project
+       )
+       when is_binary(project_definitions_json),
+       do: project_definitions_json
+
+  defp prepared_workflow_project_definitions_json(_prepared_insert, project),
+    do: Jason.encode!(Map.fetch!(project, "definitions"))
+
+  defp prepared_workflow_run_started_event(%{run_started_event: run_started_event}),
+    do: run_started_event
+
+  defp prepared_workflow_run_started_event(run_started_event), do: run_started_event
 
   defp workflow_run_started_event_body(project, definition, input) do
     %{

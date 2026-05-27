@@ -723,11 +723,17 @@ defmodule VilanoKernel.Storage.AgentRelationships do
     )
   end
 
-  def prepare_child_result_wait_satisfied_events(child_run_id, child_status, payload) do
+  def prepare_child_result_wait_satisfied_events(
+        child_run_id,
+        child_status,
+        payload,
+        excluded_run_ids \\ MapSet.new()
+      ) do
     Infrastructure.run_with_busy_retry(
       fn ->
         child_run_id
         |> child_result_waiting_rows()
+        |> Enum.reject(&MapSet.member?(excluded_run_ids, &1["run_id"]))
         |> prepare_wait_satisfied_events(fn wait ->
           %{
             "kind" => "child_result",

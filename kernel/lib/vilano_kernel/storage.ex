@@ -113,8 +113,8 @@ defmodule VilanoKernel.Storage do
     run_id = "run_" <> Ecto.UUID.generate()
     input = input || %{}
 
-    run_started_event =
-      Support.Sql.prepare_workflow_run_started_event!(project, definition, input)
+    prepared_insert =
+      Support.Sql.prepare_workflow_run_insert!(project, definition, input)
 
     try do
       Infrastructure.transaction_with_busy_retry(
@@ -125,13 +125,13 @@ defmodule VilanoKernel.Storage do
             definition,
             input,
             now,
-            run_started_event
+            prepared_insert
           )
         end,
         :run_creation
       )
     after
-      EventPayloads.discard_prepared_payload!(run_started_event)
+      Support.Sql.discard_prepared_workflow_run_insert!(prepared_insert)
     end
 
     get_run(run_id)
@@ -147,35 +147,67 @@ defmodule VilanoKernel.Storage do
       ) do
     now = Infrastructure.now_iso8601()
 
-    Infrastructure.transaction_with_busy_retry(
-      fn ->
-        caller_run =
-          case lease_id do
-            value when is_binary(value) and value != "" ->
-              RunControl.get_fenced_run_by_lease(value, now)
+    prepared_instantiated_event =
+      prepare_service_instantiated_event(project, definition, service_key, key_input, must_exist)
 
-            _ ->
-              nil
+    try do
+      Infrastructure.transaction_with_busy_retry(
+        fn ->
+          caller_run =
+            case lease_id do
+              value when is_binary(value) and value != "" ->
+                RunControl.get_fenced_run_by_lease(value, now)
+
+              _ ->
+                nil
+            end
+
+          if is_binary(lease_id) and lease_id != "" and is_nil(caller_run) do
+            nil
+          else
+            RunControl.ensure_service_run_in_tx!(
+              project,
+              definition,
+              service_key,
+              key_input,
+              now,
+              caller_run && caller_run["id"],
+              lease_id,
+              must_exist,
+              prepared_instantiated_event
+            )
           end
+        end,
+        :run_creation
+      )
+      |> unwrap_transaction_result()
+    after
+      RunControl.discard_prepared_service_instantiated_event(prepared_instantiated_event)
+    end
+  end
 
-        if is_binary(lease_id) and lease_id != "" and is_nil(caller_run) do
+  defp prepare_service_instantiated_event(_project, _definition, _service_key, _key_input, true),
+    do: nil
+
+  defp prepare_service_instantiated_event(project, definition, service_key, key_input, false) do
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        project_name = Map.fetch!(project, "name")
+        definition_name = Map.fetch!(definition, "name")
+
+        if get_service_run(project_name, definition_name, service_key) do
           nil
         else
-          RunControl.ensure_service_run_in_tx!(
+          RunControl.prepare_service_instantiated_event(
             project,
             definition,
             service_key,
-            key_input,
-            now,
-            caller_run && caller_run["id"],
-            lease_id,
-            must_exist
+            key_input || %{}
           )
         end
       end,
-      :run_creation
+      :public_read
     )
-    |> unwrap_transaction_result()
   end
 
   def find_service_run(project_name, definition_name, service_key) do
@@ -218,28 +250,133 @@ defmodule VilanoKernel.Storage do
   def enqueue_service_envelope!(project, definition, service_key, key_input, kind, name, payload) do
     now = Infrastructure.now_iso8601()
 
-    Infrastructure.transaction_with_busy_retry(fn ->
-      service_run =
-        RunControl.ensure_service_run_in_tx!(
-          project,
-          definition,
-          service_key,
-          key_input || %{},
-          now
-        )
+    prepared_enqueue =
+      prepare_external_service_enqueue_plan(
+        project,
+        definition,
+        service_key,
+        key_input,
+        kind,
+        name,
+        payload
+      )
 
-      case maybe_insert_service_envelope(service_run, kind, name, payload, nil, nil, now) do
-        {:ok, envelope_id} ->
-          %{
-            "run" => get_service_run_by_id(service_run["id"]),
-            "envelope" => service_envelope_from_row(get_service_envelope(envelope_id))
-          }
+    try do
+      Infrastructure.transaction_with_busy_retry(fn ->
+        service_run =
+          RunControl.ensure_service_run_in_tx!(
+            project,
+            definition,
+            service_key,
+            key_input || %{},
+            now,
+            nil,
+            nil,
+            false,
+            prepared_enqueue && prepared_enqueue.instantiated_event
+          )
 
-        {:error, error} ->
-          {:error, error}
-      end
-    end)
-    |> unwrap_transaction_result()
+        prepared_enqueue =
+          prepared_external_service_enqueue_plan!(prepared_enqueue, service_run, kind, name)
+
+        case maybe_insert_service_envelope(
+               service_run,
+               kind,
+               name,
+               payload,
+               nil,
+               nil,
+               now,
+               prepared_enqueue.inbound_enqueued_event
+             ) do
+          {:ok, envelope_id} ->
+            %{
+              "run" => get_service_run_by_id(service_run["id"]),
+              "envelope" => service_envelope_from_row(get_service_envelope(envelope_id))
+            }
+
+          {:error, error} ->
+            {:error, error}
+        end
+      end)
+      |> unwrap_transaction_result()
+    after
+      discard_external_service_enqueue_plan(prepared_enqueue)
+    end
+  end
+
+  defp prepare_external_service_enqueue_plan(
+         project,
+         definition,
+         service_key,
+         key_input,
+         kind,
+         name,
+         payload
+       ) do
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        project_name = Map.fetch!(project, "name")
+        definition_name = Map.fetch!(definition, "name")
+        existing_service_run = get_service_run(project_name, definition_name, service_key)
+
+        service_run =
+          existing_service_run ||
+            %{
+              "id" => deterministic_service_run_id(project_name, definition_name, service_key)
+            }
+
+        instantiated_event =
+          if existing_service_run do
+            nil
+          else
+            RunControl.prepare_service_instantiated_event(
+              project,
+              definition,
+              service_key,
+              key_input || %{}
+            )
+          end
+
+        inbound_enqueued_event =
+          try do
+            prepare_service_envelope_enqueue_event(service_run, kind, name, payload, nil, nil)
+          rescue
+            error ->
+              RunControl.discard_prepared_service_instantiated_event(instantiated_event)
+              reraise error, __STACKTRACE__
+          end
+
+        %{
+          service_run_id: service_run["id"],
+          kind: kind,
+          name: name,
+          instantiated_event: instantiated_event,
+          inbound_enqueued_event: inbound_enqueued_event
+        }
+      end,
+      :public_read
+    )
+  end
+
+  defp prepared_external_service_enqueue_plan!(nil, _service_run, _kind, _name),
+    do: Repo.rollback(:stale_cancellation_plan)
+
+  defp prepared_external_service_enqueue_plan!(prepared_enqueue, service_run, kind, name)
+       when is_map(prepared_enqueue) do
+    if prepared_enqueue.service_run_id == service_run["id"] and prepared_enqueue.kind == kind and
+         prepared_enqueue.name == name do
+      prepared_enqueue
+    else
+      Repo.rollback(:stale_cancellation_plan)
+    end
+  end
+
+  defp discard_external_service_enqueue_plan(nil), do: :ok
+
+  defp discard_external_service_enqueue_plan(%{} = prepared_enqueue) do
+    RunControl.discard_prepared_service_instantiated_event(prepared_enqueue.instantiated_event)
+    discard_prepared_service_envelope_enqueue_event(prepared_enqueue.inbound_enqueued_event)
   end
 
   def find_service_envelope(envelope_id) do
@@ -268,6 +405,8 @@ defmodule VilanoKernel.Storage do
          service_key,
          attempts_left
        ) do
+    maybe_preempt_active_managed_worker(initial_run)
+
     now = Infrastructure.now_iso8601()
     reason = "cli_stop"
     error_body = FailureRecovery.cancellation_error("Service stopped", reason)
@@ -306,14 +445,25 @@ defmodule VilanoKernel.Storage do
         {:ok, result} ->
           result
 
-        {:error, :stale_cancellation_plan} when attempts_left > 1 ->
-          stop_service_run_with_prepared_payload_retry(
-            initial_run,
-            project_name,
-            definition_name,
-            service_key,
-            attempts_left - 1
-          )
+        {:error, error} when attempts_left > 1 ->
+          if stale_cancellation_preflight_error?(error) do
+            stop_service_run_with_prepared_payload_retry(
+              initial_run,
+              project_name,
+              definition_name,
+              service_key,
+              attempts_left - 1
+            )
+          else
+            unwrap_transaction_result({:error, error})
+          end
+
+        {:error, error} when is_atom(error) ->
+          if stale_cancellation_preflight_error?(error) do
+            raise RuntimeError, "stale service stop plan after retries: #{error}"
+          else
+            unwrap_transaction_result({:error, error})
+          end
 
         {:error, error} ->
           unwrap_transaction_result({:error, error})
@@ -330,6 +480,8 @@ defmodule VilanoKernel.Storage do
   end
 
   defp cancel_run_with_prepared_payload_retry(initial_run, run_id, reason, attempts_left) do
+    maybe_preempt_cancellation_tree(run_id)
+
     now = Infrastructure.now_iso8601()
     prepared_cancellation = prepare_cancellation_for_cancel_run(run_id, reason, now)
 
@@ -340,8 +492,19 @@ defmodule VilanoKernel.Storage do
         {:ok, result} ->
           result
 
-        {:error, :stale_cancellation_plan} when attempts_left > 1 ->
-          cancel_run_with_prepared_payload_retry(initial_run, run_id, reason, attempts_left - 1)
+        {:error, error} when attempts_left > 1 ->
+          if stale_cancellation_preflight_error?(error) do
+            cancel_run_with_prepared_payload_retry(initial_run, run_id, reason, attempts_left - 1)
+          else
+            unwrap_transaction_result({:error, error})
+          end
+
+        {:error, error} when is_atom(error) ->
+          if stale_cancellation_preflight_error?(error) do
+            raise RuntimeError, "stale cancellation plan after retries: #{error}"
+          else
+            unwrap_transaction_result({:error, error})
+          end
 
         {:error, error} ->
           unwrap_transaction_result({:error, error})
@@ -787,6 +950,44 @@ defmodule VilanoKernel.Storage do
     result
   end
 
+  defp maybe_preempt_cancellation_tree(run_id, visited_run_ids \\ MapSet.new()) do
+    if MapSet.member?(visited_run_ids, run_id) do
+      :ok
+    else
+      visited_run_ids = MapSet.put(visited_run_ids, run_id)
+
+      case get_run(run_id) do
+        nil ->
+          :ok
+
+        run ->
+          maybe_preempt_active_managed_worker(run)
+
+          run_id
+          |> list_open_child_rows()
+          |> Enum.each(fn child ->
+            maybe_preempt_cancellation_tree(child["child_run_id"], visited_run_ids)
+          end)
+
+          run_id
+          |> list_waiting_service_ask_ops()
+          |> Enum.each(fn op ->
+            maybe_preempt_cancellation_tree(op["service_run_id"], visited_run_ids)
+          end)
+
+          :ok
+      end
+    end
+  end
+
+  defp stale_cancellation_preflight_error?(reason) when is_atom(reason) do
+    reason
+    |> Atom.to_string()
+    |> String.starts_with?("stale_")
+  end
+
+  defp stale_cancellation_preflight_error?(_reason), do: false
+
   defp managed_worker_run?(%{"leaseWorkerId" => "managed-local-" <> _rest}), do: true
   defp managed_worker_run?(_run), do: false
 
@@ -845,9 +1046,11 @@ defmodule VilanoKernel.Storage do
       """
       select count(*)
       from service_envelopes
-      where service_run_id in (select id from runs where project_name = ?)
+      where
+        service_run_id in (select id from runs where project_name = ?)
+        or sender_run_id in (select id from runs where project_name = ?)
       """,
-      [project_name]
+      [project_name, project_name]
     )
     |> first_integer()
   end
@@ -869,6 +1072,22 @@ defmodule VilanoKernel.Storage do
 
     delete_project_rows!(
       "delete from run_signals where run_id in (select id from runs where project_name = ?)",
+      [project_name]
+    )
+
+    delete_project_rows!(
+      """
+      delete from topic_subscriptions
+      where service_run_id in (select id from runs where project_name = ?)
+      """,
+      [project_name]
+    )
+
+    delete_project_rows!(
+      """
+      delete from run_topic_publishes
+      where caller_run_id in (select id from runs where project_name = ?)
+      """,
       [project_name]
     )
 

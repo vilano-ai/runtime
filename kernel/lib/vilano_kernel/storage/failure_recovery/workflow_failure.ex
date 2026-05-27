@@ -348,7 +348,8 @@ defmodule VilanoKernel.Storage.FailureRecovery.WorkflowFailure do
         VilanoKernel.Storage.AgentRelationships.prepare_child_result_wait_satisfied_events(
           run["id"],
           "cancelled",
-          error_body
+          error_body,
+          Keyword.get(opts, :excluded_child_wait_run_ids, MapSet.new())
         )
       rescue
         error ->
@@ -748,7 +749,8 @@ defmodule VilanoKernel.Storage.FailureRecovery.WorkflowFailure do
                   error_body,
                   reason,
                   now,
-                  MapSet.put(visited_run_ids, child_run["id"])
+                  MapSet.put(visited_run_ids, child_run["id"]),
+                  excluded_child_wait_run_ids: MapSet.new([child["parent_run_id"]])
                 )
               )
             end

@@ -13,7 +13,9 @@ defmodule VilanoKernel.Storage.WorkflowOps do
   def resolve_spawn(lease_id, definition_name, op_key, child_run_id, input) do
     now = Infrastructure.now_iso8601()
     input = input || %{}
-    run_started_event = prepare_child_run_started_event(lease_id, definition_name, op_key, input)
+
+    prepared_spawn =
+      prepare_child_spawn_events(lease_id, definition_name, op_key, child_run_id, input)
 
     try do
       Infrastructure.transaction_with_busy_retry(fn ->
@@ -31,10 +33,20 @@ defmodule VilanoKernel.Storage.WorkflowOps do
                   "childRun" => VilanoKernel.Storage.get_run(existing_child["child_run_id"])
                 }
 
-              is_nil(run_started_event) ->
+              is_nil(prepared_spawn) ->
                 nil
 
               true ->
+                prepared_spawn =
+                  prepared_child_spawn_events!(
+                    prepared_spawn,
+                    parent_run,
+                    definition_name,
+                    op_key,
+                    child_run_id,
+                    input
+                  )
+
                 RunControl.ensure_fenced_run_ownership!(parent_run["id"], lease_id, now)
 
                 definition =
@@ -48,7 +60,7 @@ defmodule VilanoKernel.Storage.WorkflowOps do
                   definition,
                   input,
                   now,
-                  run_started_event
+                  prepared_spawn.run_started_event
                 )
 
                 SQL.query!(
@@ -67,15 +79,10 @@ defmodule VilanoKernel.Storage.WorkflowOps do
                   [parent_run["id"], op_key, child_run_id, definition_name, now, now]
                 )
 
-                append_event!(
+                SqlSupport.append_prepared_event!(
                   parent_run["id"],
                   "ChildRunSpawned",
-                  %{
-                    "key" => op_key,
-                    "childRunId" => child_run_id,
-                    "definitionName" => definition_name,
-                    "input" => input
-                  },
+                  prepared_spawn.child_run_spawned_event,
                   now
                 )
 
@@ -87,11 +94,11 @@ defmodule VilanoKernel.Storage.WorkflowOps do
       end)
       |> unwrap_transaction_result()
     after
-      discard_prepared_payload(run_started_event)
+      discard_prepared_child_spawn_events(prepared_spawn)
     end
   end
 
-  defp prepare_child_run_started_event(lease_id, definition_name, op_key, input) do
+  defp prepare_child_spawn_events(lease_id, definition_name, op_key, child_run_id, input) do
     now = Infrastructure.now_iso8601()
 
     Infrastructure.run_with_busy_retry(
@@ -109,11 +116,36 @@ defmodule VilanoKernel.Storage.WorkflowOps do
                 |> project_definitions_for_run()
                 |> definition_from_project_definitions!("workflow", definition_name)
 
-              SqlSupport.prepare_workflow_run_started_event!(
-                project_record_for_run(parent_run),
-                definition,
-                input
-              )
+              run_started_event =
+                SqlSupport.prepare_workflow_run_insert!(
+                  project_record_for_run(parent_run),
+                  definition,
+                  input
+                )
+
+              child_run_spawned_body =
+                child_run_spawned_body(op_key, child_run_id, definition_name, input)
+
+              child_run_spawned_event =
+                try do
+                  EventPayloads.prepare_body_for_storage!(child_run_spawned_body)
+                rescue
+                  error ->
+                    discard_prepared_payload(run_started_event)
+                    reraise error, __STACKTRACE__
+                end
+
+              %{
+                parent_run_id: parent_run["id"],
+                parent_run_status: parent_run["status"],
+                definition_name: definition_name,
+                op_key: op_key,
+                child_run_id: child_run_id,
+                input: input,
+                child_run_spawned_body: child_run_spawned_body,
+                run_started_event: run_started_event,
+                child_run_spawned_event: child_run_spawned_event
+              }
             end
         end
       end,
@@ -121,7 +153,70 @@ defmodule VilanoKernel.Storage.WorkflowOps do
     )
   end
 
+  defp prepared_child_spawn_events!(
+         prepared_spawn,
+         parent_run,
+         definition_name,
+         op_key,
+         child_run_id,
+         input
+       )
+       when is_map(prepared_spawn) do
+    expected_child_spawned_body =
+      child_run_spawned_body(op_key, child_run_id, definition_name, input)
+
+    cond do
+      prepared_spawn.parent_run_id != parent_run["id"] ->
+        Repo.rollback(:stale_cancellation_plan)
+
+      prepared_spawn.parent_run_status != parent_run["status"] ->
+        Repo.rollback(:stale_cancellation_plan)
+
+      prepared_spawn.definition_name != definition_name or prepared_spawn.op_key != op_key ->
+        Repo.rollback(:stale_cancellation_plan)
+
+      prepared_spawn.child_run_id != child_run_id or prepared_spawn.input != input ->
+        Repo.rollback(:stale_cancellation_plan)
+
+      prepared_spawn.child_run_spawned_body != expected_child_spawned_body ->
+        Repo.rollback(:stale_cancellation_plan)
+
+      true ->
+        prepared_spawn
+    end
+  end
+
+  defp prepared_child_spawn_events!(
+         _prepared_spawn,
+         _parent_run,
+         _definition_name,
+         _op_key,
+         _child_run_id,
+         _input
+       ),
+       do: Repo.rollback(:stale_cancellation_plan)
+
+  defp child_run_spawned_body(op_key, child_run_id, definition_name, input) do
+    %{
+      "key" => op_key,
+      "childRunId" => child_run_id,
+      "definitionName" => definition_name,
+      "input" => input
+    }
+  end
+
+  defp discard_prepared_child_spawn_events(nil), do: :ok
+
+  defp discard_prepared_child_spawn_events(%{} = prepared_spawn) do
+    discard_prepared_payload(prepared_spawn.run_started_event)
+    discard_prepared_payload(prepared_spawn.child_run_spawned_event)
+  end
+
   defp discard_prepared_payload(nil), do: :ok
+
+  defp discard_prepared_payload(%{run_started_event: _} = prepared_insert),
+    do: SqlSupport.discard_prepared_workflow_run_insert!(prepared_insert)
+
   defp discard_prepared_payload(storage), do: EventPayloads.discard_prepared_payload!(storage)
 
   def resolve_child_result_wait(lease_id, child_run_id, op_key) do

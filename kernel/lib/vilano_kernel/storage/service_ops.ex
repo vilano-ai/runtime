@@ -24,113 +24,86 @@ defmodule VilanoKernel.Storage.ServiceOps do
   import ServiceSupport
 
   def resolve_service_send(lease_id, service_run_id, name, op_key, payload) do
-    now = Infrastructure.now_iso8601()
-
-    Infrastructure.transaction_with_busy_retry(fn ->
-      case {RunControl.get_fenced_run_by_lease(lease_id, now),
-            get_service_run_by_id(service_run_id)} do
-        {nil, _} ->
-          nil
-
-        {_, nil} ->
-          nil
-
-        {caller_run, service_run} ->
-          case get_run_service_op(caller_run["id"], op_key) do
-            existing when not is_nil(existing) ->
-              case existing["status"] do
-                "failed" ->
-                  %{
-                    "status" => "failed",
-                    "error" => decode_json_value(existing["error_json"], nil)
-                  }
-
-                _ ->
-                  %{"status" => existing["status"]}
-              end
-
-            nil ->
-              RunControl.ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
-
-              case maybe_insert_service_envelope(
-                     service_run,
-                     "send",
-                     name,
-                     payload,
-                     nil,
-                     caller_run["id"],
-                     now
-                   ) do
-                {:ok, _envelope_id} ->
-                  SQL.query!(
-                    Repo,
-                    """
-                    insert into run_service_ops (
-                      caller_run_id,
-                      op_key,
-                      service_run_id,
-                      op_kind,
-                      message_name,
-                      correlation_id,
-                      status,
-                      payload_json,
-                      response_json,
-                      error_json,
-                      created_at,
-                      updated_at
-                    ) values (?, ?, ?, 'send', ?, null, 'completed', ?, null, null, ?, ?)
-                    """,
-                    [
-                      caller_run["id"],
-                      op_key,
-                      service_run_id,
-                      name,
-                      Jason.encode!(payload),
-                      now,
-                      now
-                    ]
-                  )
-
-                  append_event!(
-                    caller_run["id"],
-                    "MessageSent",
-                    %{
-                      "key" => op_key,
-                      "serviceRunId" => service_run_id,
-                      "name" => name,
-                      "payload" => payload
-                    },
-                    now
-                  )
-
-                  RunControl.ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
-
-                  %{"status" => "completed"}
-
-                {:error, error} ->
-                  persist_failed_service_op!(
-                    caller_run["id"],
-                    op_key,
-                    service_run_id,
-                    "send",
-                    name,
-                    nil,
-                    payload,
-                    error,
-                    now
-                  )
-
-                  %{"status" => "failed", "error" => error}
-              end
-          end
-      end
-    end)
-    |> unwrap_transaction_result()
+    resolve_service_message_with_prepared_events_retry(
+      lease_id,
+      service_run_id,
+      "send",
+      name,
+      op_key,
+      payload,
+      3
+    )
   end
 
   def resolve_service_signal(lease_id, service_run_id, name, op_key, payload) do
+    resolve_service_message_with_prepared_events_retry(
+      lease_id,
+      service_run_id,
+      "signal",
+      name,
+      op_key,
+      payload,
+      3
+    )
+  end
+
+  defp resolve_service_message_with_prepared_events_retry(
+         lease_id,
+         service_run_id,
+         kind,
+         name,
+         op_key,
+         payload,
+         attempts_left
+       ) do
     now = Infrastructure.now_iso8601()
 
+    prepared_message =
+      prepare_service_message_plan!(lease_id, service_run_id, kind, name, op_key, payload)
+
+    try do
+      case resolve_service_message_transaction(
+             lease_id,
+             service_run_id,
+             kind,
+             name,
+             op_key,
+             payload,
+             now,
+             prepared_message
+           ) do
+        {:ok, result} ->
+          result
+
+        {:error, :stale_cancellation_plan} when attempts_left > 1 ->
+          resolve_service_message_with_prepared_events_retry(
+            lease_id,
+            service_run_id,
+            kind,
+            name,
+            op_key,
+            payload,
+            attempts_left - 1
+          )
+
+        {:error, error} ->
+          unwrap_transaction_result({:error, error})
+      end
+    after
+      discard_prepared_service_message_events(prepared_message)
+    end
+  end
+
+  defp resolve_service_message_transaction(
+         lease_id,
+         service_run_id,
+         kind,
+         name,
+         op_key,
+         payload,
+         now,
+         prepared_message
+       ) do
     Infrastructure.transaction_with_busy_retry(fn ->
       case {RunControl.get_fenced_run_by_lease(lease_id, now),
             get_service_run_by_id(service_run_id)} do
@@ -143,6 +116,8 @@ defmodule VilanoKernel.Storage.ServiceOps do
         {caller_run, service_run} ->
           case get_run_service_op(caller_run["id"], op_key) do
             existing when not is_nil(existing) ->
+              if is_map(prepared_message), do: Repo.rollback(:stale_cancellation_plan)
+
               case existing["status"] do
                 "failed" ->
                   %{
@@ -155,16 +130,28 @@ defmodule VilanoKernel.Storage.ServiceOps do
               end
 
             nil ->
+              prepared_message =
+                prepared_service_message_events!(
+                  prepared_message,
+                  caller_run,
+                  service_run,
+                  kind,
+                  name,
+                  op_key,
+                  payload
+                )
+
               RunControl.ensure_fenced_run_ownership!(caller_run["id"], lease_id, now)
 
               case maybe_insert_service_envelope(
                      service_run,
-                     "signal",
+                     kind,
                      name,
                      payload,
                      nil,
                      caller_run["id"],
-                     now
+                     now,
+                     prepared_message.inbound_enqueued_event
                    ) do
                 {:ok, _envelope_id} ->
                   SQL.query!(
@@ -183,28 +170,24 @@ defmodule VilanoKernel.Storage.ServiceOps do
                       error_json,
                       created_at,
                       updated_at
-                    ) values (?, ?, ?, 'signal', ?, null, 'completed', ?, null, null, ?, ?)
+                    ) values (?, ?, ?, ?, ?, null, 'completed', ?, null, null, ?, ?)
                     """,
                     [
                       caller_run["id"],
                       op_key,
                       service_run_id,
+                      kind,
                       name,
-                      Jason.encode!(payload),
+                      prepared_message.payload_json,
                       now,
                       now
                     ]
                   )
 
-                  append_event!(
+                  SqlSupport.append_prepared_event!(
                     caller_run["id"],
-                    "SignalSent",
-                    %{
-                      "key" => op_key,
-                      "serviceRunId" => service_run_id,
-                      "signal" => name,
-                      "payload" => payload
-                    },
+                    service_message_event_type(kind),
+                    prepared_message.caller_event,
                     now
                   )
 
@@ -213,15 +196,15 @@ defmodule VilanoKernel.Storage.ServiceOps do
                   %{"status" => "completed"}
 
                 {:error, error} ->
-                  persist_failed_service_op!(
+                  persist_failed_service_op_json!(
                     caller_run["id"],
                     op_key,
                     service_run_id,
-                    "signal",
+                    kind,
                     name,
                     nil,
-                    payload,
-                    error,
+                    prepared_message.payload_json,
+                    maybe_encode_json(error),
                     now
                   )
 
@@ -230,7 +213,154 @@ defmodule VilanoKernel.Storage.ServiceOps do
           end
       end
     end)
-    |> unwrap_transaction_result()
+  end
+
+  defp prepare_service_message_plan!(lease_id, service_run_id, kind, name, op_key, payload) do
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        case {RunControl.get_run_by_lease(lease_id), get_service_run_by_id(service_run_id)} do
+          {%{} = caller_run, %{} = service_run} ->
+            case get_run_service_op(caller_run["id"], op_key) do
+              nil ->
+                build_prepared_service_message_events!(
+                  caller_run,
+                  service_run,
+                  kind,
+                  name,
+                  op_key,
+                  payload
+                )
+
+              _existing ->
+                nil
+            end
+
+          _ ->
+            nil
+        end
+      end,
+      :public_read
+    )
+  end
+
+  defp build_prepared_service_message_events!(
+         caller_run,
+         service_run,
+         kind,
+         name,
+         op_key,
+         payload
+       ) do
+    service_run_id = service_run["id"]
+    caller_body = service_message_body(kind, op_key, service_run_id, name, payload)
+    caller_event = EventPayloads.prepare_body_for_storage!(caller_body)
+
+    inbound_enqueued_event =
+      try do
+        prepare_service_envelope_enqueue_event(
+          service_run,
+          kind,
+          name,
+          payload,
+          nil,
+          caller_run["id"]
+        )
+      rescue
+        error ->
+          discard_prepared_service_turn_event(caller_event)
+          reraise error, __STACKTRACE__
+      end
+
+    %{
+      caller_run_id: caller_run["id"],
+      caller_run_status: caller_run["status"],
+      service_run_id: service_run_id,
+      kind: kind,
+      name: name,
+      op_key: op_key,
+      payload_json: Jason.encode!(payload),
+      caller_body: caller_body,
+      caller_event: caller_event,
+      inbound_enqueued_event: inbound_enqueued_event
+    }
+  end
+
+  defp discard_prepared_service_message_events(nil), do: :ok
+
+  defp discard_prepared_service_message_events(%{} = prepared) do
+    prepared
+    |> Map.get(:caller_event)
+    |> discard_prepared_service_turn_event()
+
+    prepared
+    |> Map.get(:inbound_enqueued_event)
+    |> discard_prepared_service_envelope_enqueue_event()
+  end
+
+  defp prepared_service_message_events!(
+         nil,
+         _caller_run,
+         _service_run,
+         _kind,
+         _name,
+         _op_key,
+         _payload
+       ),
+       do: Repo.rollback(:stale_cancellation_plan)
+
+  defp prepared_service_message_events!(
+         prepared,
+         caller_run,
+         service_run,
+         kind,
+         name,
+         op_key,
+         payload
+       )
+       when is_map(prepared) do
+    service_run_id = service_run["id"]
+    expected_caller_body = service_message_body(kind, op_key, service_run_id, name, payload)
+
+    cond do
+      prepared.caller_run_id != caller_run["id"] ->
+        Repo.rollback(:stale_cancellation_plan)
+
+      prepared.caller_run_status != caller_run["status"] ->
+        Repo.rollback(:stale_cancellation_plan)
+
+      prepared.service_run_id != service_run_id ->
+        Repo.rollback(:stale_cancellation_plan)
+
+      prepared.kind != kind or prepared.name != name or prepared.op_key != op_key ->
+        Repo.rollback(:stale_cancellation_plan)
+
+      prepared.caller_body != expected_caller_body ->
+        Repo.rollback(:stale_cancellation_plan)
+
+      true ->
+        prepared
+    end
+  end
+
+  defp service_message_event_type("send"), do: "MessageSent"
+  defp service_message_event_type("signal"), do: "SignalSent"
+
+  defp service_message_body("send", op_key, service_run_id, name, payload) do
+    %{
+      "key" => op_key,
+      "serviceRunId" => service_run_id,
+      "name" => name,
+      "payload" => payload
+    }
+  end
+
+  defp service_message_body("signal", op_key, service_run_id, name, payload) do
+    %{
+      "key" => op_key,
+      "serviceRunId" => service_run_id,
+      "signal" => name,
+      "payload" => payload
+    }
   end
 
   def resolve_service_ask(lease_id, service_run_id, name, op_key, payload, timeout_ms \\ nil) do
@@ -368,7 +498,8 @@ defmodule VilanoKernel.Storage.ServiceOps do
                      payload,
                      correlation_id,
                      caller_run["id"],
-                     now
+                     now,
+                     prepared_ask.inbound_enqueued_event
                    ) do
                 {:ok, _envelope_id} ->
                   SQL.query!(
@@ -395,7 +526,7 @@ defmodule VilanoKernel.Storage.ServiceOps do
                       service_run_id,
                       name,
                       correlation_id,
-                      Jason.encode!(payload),
+                      prepared_ask.payload_json,
                       now,
                       now
                     ]
@@ -494,15 +625,15 @@ defmodule VilanoKernel.Storage.ServiceOps do
                   }
 
                 {:error, error} ->
-                  persist_failed_service_op!(
+                  persist_failed_service_op_json!(
                     caller_run["id"],
                     op_key,
                     service_run_id,
                     "ask",
                     name,
                     correlation_id,
-                    payload,
-                    error,
+                    prepared_ask.payload_json,
+                    maybe_encode_json(error),
                     now
                   )
 
@@ -553,7 +684,7 @@ defmodule VilanoKernel.Storage.ServiceOps do
          correlation_id,
          wake_at
        ) do
-    service_run_id = service_run["run_id"]
+    service_run_id = service_run["id"]
     wait_registered_body = ask_wait_registered_body(correlation_id, wake_at)
     run_suspended_body = ask_run_suspended_body(correlation_id)
     turn_waiting_body = ask_service_turn_waiting_body(correlation_id, wake_at)
@@ -591,6 +722,25 @@ defmodule VilanoKernel.Storage.ServiceOps do
           reraise error, __STACKTRACE__
       end
 
+    inbound_enqueued_event =
+      try do
+        prepare_service_envelope_enqueue_event(
+          service_run,
+          "ask",
+          name,
+          payload,
+          correlation_id,
+          caller_run["id"]
+        )
+      rescue
+        error ->
+          discard_prepared_service_turn_waiting_event(service_turn_waiting_event)
+          discard_prepared_service_turn_event(run_suspended_event)
+          discard_prepared_service_turn_event(wait_registered_event)
+          discard_prepared_service_turn_event(ask_requested_event)
+          reraise error, __STACKTRACE__
+      end
+
     %{
       caller_run_id: caller_run["id"],
       caller_run_status: caller_run["status"],
@@ -599,6 +749,7 @@ defmodule VilanoKernel.Storage.ServiceOps do
       op_key: op_key,
       correlation_id: correlation_id,
       wake_at: wake_at,
+      payload_json: Jason.encode!(payload),
       ask_requested_body: ask_requested_body,
       wait_registered_body: wait_registered_body,
       run_suspended_body: run_suspended_body,
@@ -606,7 +757,8 @@ defmodule VilanoKernel.Storage.ServiceOps do
       ask_requested_event: ask_requested_event,
       wait_registered_event: wait_registered_event,
       run_suspended_event: run_suspended_event,
-      service_turn_waiting_event: service_turn_waiting_event
+      service_turn_waiting_event: service_turn_waiting_event,
+      inbound_enqueued_event: inbound_enqueued_event
     }
   end
 
@@ -621,6 +773,10 @@ defmodule VilanoKernel.Storage.ServiceOps do
     prepared
     |> Map.get(:service_turn_waiting_event)
     |> discard_prepared_service_turn_waiting_event()
+
+    prepared
+    |> Map.get(:inbound_enqueued_event)
+    |> discard_prepared_service_envelope_enqueue_event()
   end
 
   defp prepared_service_ask_events!(
@@ -645,7 +801,7 @@ defmodule VilanoKernel.Storage.ServiceOps do
        )
        when is_map(prepared) do
     correlation_id = "ask:" <> caller_run["id"] <> ":" <> op_key
-    service_run_id = service_run["run_id"]
+    service_run_id = service_run["id"]
 
     expected_ask_requested_body =
       ask_requested_body(op_key, service_run_id, name, correlation_id, payload)

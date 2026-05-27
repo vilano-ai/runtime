@@ -4,7 +4,8 @@ defmodule VilanoKernel.Storage.RunControl do
   alias Ecto.Adapters.SQL
   alias VilanoKernel.Repo
 
-  alias VilanoKernel.Storage.{Infrastructure, Support}
+  alias VilanoKernel.Storage.{EventPayloads, Infrastructure, Support}
+  alias VilanoKernel.Storage.Support.Sql, as: SqlSupport
 
   import Support
 
@@ -16,7 +17,8 @@ defmodule VilanoKernel.Storage.RunControl do
         now,
         caller_run_id \\ nil,
         lease_id \\ nil,
-        must_exist \\ false
+        must_exist \\ false,
+        prepared_instantiated_event \\ nil
       ) do
     project_name = Map.fetch!(project, "name")
     definition_name = Map.fetch!(definition, "name")
@@ -32,7 +34,11 @@ defmodule VilanoKernel.Storage.RunControl do
 
         nil ->
           run_id = deterministic_service_run_id(project_name, definition_name, service_key)
-          definitions_json = Jason.encode!(Map.fetch!(project, "definitions"))
+
+          definitions_json =
+            prepared_service_project_definitions_json(prepared_instantiated_event, project)
+
+          key_input_json = prepared_service_key_input_json(prepared_instantiated_event, key_input)
 
           SQL.query!(
             Repo,
@@ -69,7 +75,7 @@ defmodule VilanoKernel.Storage.RunControl do
               Map.fetch!(definition, "exportName"),
               Map.fetch!(definition, "runtimeKind"),
               Map.fetch!(definition, "sourceLanguage"),
-              Jason.encode!(key_input || %{}),
+              key_input_json,
               now,
               now
             ]
@@ -87,19 +93,17 @@ defmodule VilanoKernel.Storage.RunControl do
                 updated_at
               ) values (?, ?, ?, null, ?, ?)
               """,
-              [run_id, service_key, Jason.encode!(key_input || %{}), now, now]
+              [run_id, service_key, key_input_json, now, now]
             )
 
           if inserted_service_rows == 1 do
-            append_event!(
+            append_service_instantiated_event!(
               run_id,
-              "ServiceInstantiated",
-              %{
-                "serviceKey" => service_key,
-                "definitionName" => definition_name,
-                "keyInput" => key_input || %{}
-              },
-              now
+              service_key,
+              definition_name,
+              key_input || %{},
+              now,
+              prepared_instantiated_event
             )
           end
 
@@ -124,6 +128,100 @@ defmodule VilanoKernel.Storage.RunControl do
         resolved
     end
   end
+
+  def prepare_service_instantiated_event(project, definition, service_key, key_input) do
+    project_name = Map.fetch!(project, "name")
+    definition_name = Map.fetch!(definition, "name")
+    run_id = deterministic_service_run_id(project_name, definition_name, service_key)
+    body = service_instantiated_body(service_key, definition_name, key_input || %{})
+
+    %{
+      run_id: run_id,
+      service_key: service_key,
+      definition_name: definition_name,
+      key_input: key_input || %{},
+      key_input_json: Jason.encode!(key_input || %{}),
+      project_definitions_json: Jason.encode!(Map.fetch!(project, "definitions")),
+      body: body,
+      storage: EventPayloads.prepare_body_for_storage!(body)
+    }
+  end
+
+  def discard_prepared_service_instantiated_event(nil), do: :ok
+
+  def discard_prepared_service_instantiated_event(%{storage: storage}) do
+    EventPayloads.discard_prepared_payload!(storage)
+  end
+
+  defp service_instantiated_body(service_key, definition_name, key_input) do
+    %{
+      "serviceKey" => service_key,
+      "definitionName" => definition_name,
+      "keyInput" => key_input || %{}
+    }
+  end
+
+  defp append_service_instantiated_event!(
+         run_id,
+         service_key,
+         definition_name,
+         key_input,
+         now,
+         nil
+       ) do
+    append_event!(
+      run_id,
+      "ServiceInstantiated",
+      service_instantiated_body(service_key, definition_name, key_input),
+      now
+    )
+  end
+
+  defp append_service_instantiated_event!(
+         run_id,
+         service_key,
+         definition_name,
+         key_input,
+         now,
+         %{body: body, storage: storage} = prepared_event
+       ) do
+    expected_body = service_instantiated_body(service_key, definition_name, key_input)
+
+    if prepared_event.run_id == run_id and prepared_event.service_key == service_key and
+         prepared_event.definition_name == definition_name and
+         prepared_event.key_input == key_input and body == expected_body do
+      SqlSupport.append_prepared_event!(run_id, "ServiceInstantiated", storage, now)
+    else
+      Repo.rollback(:stale_cancellation_plan)
+    end
+  end
+
+  defp append_service_instantiated_event!(
+         _run_id,
+         _service_key,
+         _definition_name,
+         _key_input,
+         _now,
+         _prepared_event
+       ),
+       do: Repo.rollback(:stale_cancellation_plan)
+
+  defp prepared_service_project_definitions_json(
+         %{project_definitions_json: project_definitions_json},
+         _project
+       )
+       when is_binary(project_definitions_json),
+       do: project_definitions_json
+
+  defp prepared_service_project_definitions_json(_prepared_event, project),
+    do: Jason.encode!(Map.fetch!(project, "definitions"))
+
+  defp prepared_service_key_input_json(%{key_input_json: key_input_json}, _key_input)
+       when is_binary(key_input_json),
+       do: key_input_json
+
+  defp prepared_service_key_input_json(_prepared_event, key_input),
+    do: Jason.encode!(key_input || %{})
 
   def get_run_by_lease(lease_id) do
     now = Infrastructure.now_iso8601()

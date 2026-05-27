@@ -51,6 +51,19 @@ defmodule VilanoKernel.Storage.Support do
               ),
               to: Sql
 
+  defdelegate persist_failed_service_op_json!(
+                caller_run_id,
+                op_key,
+                service_run_id,
+                op_kind,
+                message_name,
+                correlation_id,
+                payload_json,
+                error_json,
+                now
+              ),
+              to: Sql
+
   defdelegate related_run?(caller_run_id, target_run_id), to: Sql
   defdelegate get_service_run(project_name, definition_name, service_key), to: Sql
   defdelegate get_service_run_by_id(run_id), to: Sql
