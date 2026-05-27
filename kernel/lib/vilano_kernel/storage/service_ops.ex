@@ -962,7 +962,7 @@ defmodule VilanoKernel.Storage.ServiceOps do
   end
 
   defp complete_service_turn_transaction(lease_id, envelope_id, body, now, prepared_stop) do
-    Infrastructure.run_with_busy_retry(fn ->
+    Infrastructure.transaction_with_busy_retry(fn ->
       case {RunControl.get_fenced_run_by_lease(lease_id, now), get_service_envelope(envelope_id)} do
         {nil, _} ->
           nil
@@ -1354,7 +1354,7 @@ defmodule VilanoKernel.Storage.ServiceOps do
   def get_service_turn_mailbox(lease_id, envelope_id) do
     now = Infrastructure.now_iso8601()
 
-    Infrastructure.transaction_with_busy_retry(
+    Infrastructure.run_with_busy_retry(
       fn ->
         case {RunControl.get_fenced_run_by_lease(lease_id, now),
               get_service_envelope(envelope_id)} do
