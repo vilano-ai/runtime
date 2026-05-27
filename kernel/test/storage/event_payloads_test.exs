@@ -782,6 +782,28 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     end
   end
 
+  test "garbage collection keeps prepared published payloads until discarded", %{
+    runtime_home: runtime_home
+  } do
+    storage = EventPayloads.prepare_body_for_storage!(large_body())
+    ref = Jason.decode!(storage.body_json)
+    payload_path = Path.join(runtime_home, ref["path"])
+
+    try do
+      assert File.exists?(payload_path)
+
+      assert EventPayloads.garbage_collect!(0) == :ok
+      assert File.exists?(payload_path)
+
+      EventPayloads.discard_prepared_payload!(storage)
+
+      assert EventPayloads.garbage_collect!(0) == :ok
+      refute File.exists?(payload_path)
+    after
+      EventPayloads.discard_prepared_payload!(storage)
+    end
+  end
+
   test "reused unreferenced payloads refresh mtime before garbage collection", %{
     runtime_home: runtime_home
   } do

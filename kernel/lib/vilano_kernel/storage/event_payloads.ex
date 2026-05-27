@@ -10,6 +10,8 @@ defmodule VilanoKernel.Storage.EventPayloads do
   @payload_staging_dir "event-payloads-staging"
   @gc_quarantine_dir "event-payloads-gc"
   @default_gc_grace_ms :timer.minutes(5)
+  @pending_marker_min_gc_grace_ms :timer.minutes(5)
+  @pending_marker_suffix ".pending"
   @ref_marker "__vilano_event_payload_ref__"
   @unavailable_marker "__vilano_event_payload_unavailable__"
   @version 1
@@ -18,8 +20,13 @@ defmodule VilanoKernel.Storage.EventPayloads do
 
   def body_for_storage!(body) do
     storage = prepare_body_for_storage!(body)
-    publish_prepared_payload!(storage)
-    storage_result(storage)
+
+    try do
+      publish_prepared_payload!(storage)
+      storage_result(storage)
+    after
+      discard_prepared_payload!(storage)
+    end
   end
 
   def prepare_body_for_storage!(body) do
@@ -54,8 +61,11 @@ defmodule VilanoKernel.Storage.EventPayloads do
 
   def discard_prepared_payload!(%{prepared_payload: nil}), do: :ok
 
-  def discard_prepared_payload!(%{prepared_payload: %{staged_path: staged_path}}) do
+  def discard_prepared_payload!(%{
+        prepared_payload: %{staged_path: staged_path, pending_path: pending_path}
+      }) do
     remove_file(staged_path)
+    remove_file(pending_path)
   end
 
   def body_json_for_storage!(body) do
@@ -111,6 +121,7 @@ defmodule VilanoKernel.Storage.EventPayloads do
     candidates = payload_gc_candidates(grace_period_ms)
     stale_canonical_temp_paths = canonical_payload_temp_gc_candidates(grace_period_ms)
     stale_staged_payload_paths = staged_payload_gc_candidates(grace_period_ms)
+    stale_pending_marker_paths = pending_payload_marker_gc_candidates(grace_period_ms)
 
     quarantined_paths =
       case Infrastructure.transaction_with_busy_retry(
@@ -127,6 +138,7 @@ defmodule VilanoKernel.Storage.EventPayloads do
     Enum.each(quarantined_paths, &remove_file/1)
     remove_stale_payload_temp_files(stale_canonical_temp_paths, grace_period_ms)
     remove_stale_staged_payload_files(stale_staged_payload_paths, grace_period_ms)
+    remove_stale_pending_payload_markers(stale_pending_marker_paths, grace_period_ms)
     remove_quarantined_payload_files()
     Enum.each(payload_roots(), &prune_empty_payload_dirs/1)
     prune_empty_payload_dirs(gc_quarantine_root())
@@ -168,6 +180,21 @@ defmodule VilanoKernel.Storage.EventPayloads do
 
       root
       |> staged_payload_files()
+      |> Enum.filter(&old_enough_for_gc?(&1, now_seconds, grace_seconds))
+    else
+      []
+    end
+  end
+
+  defp pending_payload_marker_gc_candidates(grace_period_ms) do
+    root = payload_staging_root()
+
+    if File.dir?(root) do
+      now_seconds = System.system_time(:second)
+      grace_seconds = pending_marker_gc_grace_seconds(grace_period_ms)
+
+      root
+      |> pending_payload_marker_files()
       |> Enum.filter(&old_enough_for_gc?(&1, now_seconds, grace_seconds))
     else
       []
@@ -220,13 +247,26 @@ defmodule VilanoKernel.Storage.EventPayloads do
     end)
   end
 
+  defp remove_stale_pending_payload_markers(paths, grace_period_ms) do
+    now_seconds = System.system_time(:second)
+    grace_seconds = pending_marker_gc_grace_seconds(grace_period_ms)
+
+    Enum.each(paths, fn path ->
+      if old_enough_for_gc?(path, now_seconds, grace_seconds) do
+        remove_file(path)
+      end
+    end)
+  end
+
   defp quarantine_unreferenced_payload_files!(candidates, grace_period_ms) do
     referenced_paths = referenced_payload_paths()
+    pending_sha256s = pending_payload_sha256s()
     now_seconds = System.system_time(:second)
     grace_seconds = ceil_div(grace_period_ms, 1_000)
 
     Enum.reduce(candidates, [], fn candidate, quarantined_paths ->
       if not MapSet.member?(referenced_paths, candidate.relative_path) and
+           not pending_payload_file?(candidate.relative_path, pending_sha256s) and
            old_enough_for_gc?(candidate.absolute_path, now_seconds, grace_seconds) do
         case quarantine_payload_file(candidate) do
           {:ok, quarantined_path} -> [quarantined_path | quarantined_paths]
@@ -248,6 +288,7 @@ defmodule VilanoKernel.Storage.EventPayloads do
     relative_path = payload_relative_path(sha256)
     absolute_path = payload_absolute_path!(relative_path)
     staged_path = staged_payload_path!(sha256)
+    pending_path = pending_payload_marker_path!(sha256)
 
     Support.run_storage_test_hook(:event_payload_prepared, %{
       bytes: bytes,
@@ -269,12 +310,15 @@ defmodule VilanoKernel.Storage.EventPayloads do
       bytes: bytes,
       body_json: body_json,
       absolute_path: absolute_path,
-      staged_path: staged_path
+      staged_path: staged_path,
+      pending_path: pending_path
     }
   end
 
   defp publish_payload!(prepared_payload) do
     try do
+      write_pending_payload_marker!(prepared_payload.pending_path, prepared_payload.ref["path"])
+
       if File.exists?(prepared_payload.absolute_path) do
         reuse_or_publish_payload_file!(prepared_payload)
       else
@@ -328,6 +372,12 @@ defmodule VilanoKernel.Storage.EventPayloads do
   defp write_staged_payload!(path, body_json) do
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, body_json)
+    File.chmod!(path, 0o600)
+  end
+
+  defp write_pending_payload_marker!(path, relative_path) do
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, relative_path)
     File.chmod!(path, 0o600)
   end
 
@@ -509,6 +559,22 @@ defmodule VilanoKernel.Storage.EventPayloads do
     end
   end
 
+  defp payload_sha256_from_relative_path(relative_path) do
+    case Path.split(relative_path) do
+      [@payload_dir, prefix, filename] ->
+        with <<sha256::binary-size(64), ".json">> <- filename,
+             true <- valid_sha256?(sha256),
+             true <- prefix == String.slice(sha256, 0, 2) do
+          sha256
+        else
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
   defp valid_payload_temp_file_path?(relative_path) do
     case Path.split(relative_path) do
       [@payload_dir, prefix, "." <> filename] ->
@@ -537,6 +603,14 @@ defmodule VilanoKernel.Storage.EventPayloads do
       payload_staging_root(),
       String.slice(sha256, 0, 2),
       "#{sha256}.#{System.unique_integer([:positive])}.tmp"
+    ])
+  end
+
+  defp pending_payload_marker_path!(sha256) do
+    Path.join([
+      payload_staging_root(),
+      String.slice(sha256, 0, 2),
+      "#{sha256}.#{System.unique_integer([:positive])}#{@pending_marker_suffix}"
     ])
   end
 
@@ -632,8 +706,40 @@ defmodule VilanoKernel.Storage.EventPayloads do
     Path.wildcard(Path.join([root, "*", "*.tmp"]))
   end
 
+  defp pending_payload_marker_files(root) do
+    Path.wildcard(Path.join([root, "*", "*#{@pending_marker_suffix}"]))
+  end
+
   defp canonical_payload_temp_files(root) do
     Path.wildcard(Path.join([root, "*", ".*.json.*.tmp"]), match_dot: true)
+  end
+
+  defp pending_payload_sha256s do
+    payload_staging_root()
+    |> pending_payload_marker_files()
+    |> Enum.reduce(MapSet.new(), fn path, acc ->
+      case pending_payload_sha256(path) do
+        nil -> acc
+        sha256 -> MapSet.put(acc, sha256)
+      end
+    end)
+  end
+
+  defp pending_payload_file?(relative_path, pending_sha256s) do
+    case payload_sha256_from_relative_path(relative_path) do
+      nil -> false
+      sha256 -> MapSet.member?(pending_sha256s, sha256)
+    end
+  end
+
+  defp pending_payload_sha256(path) do
+    case path |> Path.basename() |> String.split(".", parts: 2) do
+      [sha256, _suffix] ->
+        if valid_sha256?(sha256), do: sha256, else: nil
+
+      _ ->
+        nil
+    end
   end
 
   defp quarantine_payload_file(%{
@@ -681,6 +787,12 @@ defmodule VilanoKernel.Storage.EventPayloads do
 
   defp ceil_div(value, divisor) do
     div(value + divisor - 1, divisor)
+  end
+
+  defp pending_marker_gc_grace_seconds(grace_period_ms) do
+    grace_period_ms
+    |> max(@pending_marker_min_gc_grace_ms)
+    |> ceil_div(1_000)
   end
 
   defp remove_file(path) do
