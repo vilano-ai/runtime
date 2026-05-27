@@ -123,17 +123,26 @@ defmodule VilanoKernel.Storage.EventPayloads do
     stale_staged_payload_paths = staged_payload_gc_candidates(grace_period_ms)
     stale_pending_marker_paths = pending_payload_marker_gc_candidates(grace_period_ms)
 
-    quarantined_paths =
+    quarantine_candidates =
       case Infrastructure.transaction_with_busy_retry(
              fn ->
                acquire_gc_write_lock!()
-               quarantine_unreferenced_payload_files!(candidates, grace_period_ms)
+               unreferenced_payload_gc_candidates!(candidates)
              end,
              :admin_control
            ) do
-        {:ok, paths} -> paths
+        {:ok, candidates} -> candidates
         {:error, reason} -> raise inspect(reason)
       end
+
+    quarantined_paths =
+      quarantine_candidates
+      |> Enum.reduce([], fn candidate, quarantined_paths ->
+        case quarantine_unreferenced_payload_file(candidate, grace_period_ms) do
+          {:ok, quarantined_path} -> [quarantined_path | quarantined_paths]
+          :skip -> quarantined_paths
+        end
+      end)
 
     Enum.each(quarantined_paths, &remove_file/1)
     remove_stale_payload_temp_files(stale_canonical_temp_paths, grace_period_ms)
@@ -258,24 +267,26 @@ defmodule VilanoKernel.Storage.EventPayloads do
     end)
   end
 
-  defp quarantine_unreferenced_payload_files!(candidates, grace_period_ms) do
+  defp unreferenced_payload_gc_candidates!(candidates) do
     referenced_paths = referenced_payload_paths()
+
+    Enum.reject(candidates, fn candidate ->
+      MapSet.member?(referenced_paths, candidate.relative_path)
+    end)
+  end
+
+  defp quarantine_unreferenced_payload_file(candidate, grace_period_ms) do
     pending_sha256s = pending_payload_sha256s()
     now_seconds = System.system_time(:second)
     grace_seconds = ceil_div(grace_period_ms, 1_000)
 
-    Enum.reduce(candidates, [], fn candidate, quarantined_paths ->
-      if not MapSet.member?(referenced_paths, candidate.relative_path) and
-           not pending_payload_file?(candidate.relative_path, pending_sha256s) and
-           old_enough_for_gc?(candidate.absolute_path, now_seconds, grace_seconds) do
-        case quarantine_payload_file(candidate) do
-          {:ok, quarantined_path} -> [quarantined_path | quarantined_paths]
-          :skip -> quarantined_paths
-        end
-      else
-        quarantined_paths
-      end
-    end)
+    if not referenced_payload_path?(candidate.relative_path) and
+         not pending_payload_file?(candidate.relative_path, pending_sha256s) and
+         old_enough_for_gc?(candidate.absolute_path, now_seconds, grace_seconds) do
+      quarantine_payload_file(candidate)
+    else
+      :skip
+    end
   end
 
   defp acquire_gc_write_lock! do
@@ -696,6 +707,21 @@ defmodule VilanoKernel.Storage.EventPayloads do
     |> Enum.reduce(MapSet.new(), fn [payload_path], acc ->
       MapSet.put(acc, payload_path)
     end)
+  end
+
+  defp referenced_payload_path?(relative_path) do
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        Repo
+        |> SQL.query!(
+          "select 1 from run_event_payload_refs where payload_path = ? limit 1",
+          [relative_path]
+        )
+        |> Map.fetch!(:rows)
+        |> Enum.any?()
+      end,
+      :public_read
+    )
   end
 
   defp payload_files(root) do
