@@ -1,7 +1,7 @@
 defmodule VilanoKernel.Version do
   @moduledoc false
 
-  @protocol_version 1
+  @protocol_version 2
 
   def runtime_version do
     :vilano_kernel

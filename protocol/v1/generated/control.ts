@@ -1406,6 +1406,16 @@ export interface components {
             failedPaths: components["schemas"]["RuntimePruneFailedPath"][];
             retainedVersions?: string[];
         };
+        RuntimePruneGraceDirectoryResult: components["schemas"]["RuntimePruneDirectoryResult"] & {
+            graceSeconds: number;
+        };
+        RuntimePruneTtlDirectoryResult: components["schemas"]["RuntimePruneDirectoryResult"] & {
+            ttlSeconds: number;
+        };
+        RuntimePruneCacheResult: components["schemas"]["RuntimePruneDirectoryResult"] & {
+            enabled: boolean;
+            ttlSeconds: number | null;
+        };
         RuntimePruneCompletedRuns: {
             enabled: boolean;
             ttlSeconds: number | null;
@@ -1453,16 +1463,16 @@ export interface components {
             dryRun: boolean;
             /** Format: date-time */
             prunedAt: string;
-            projectSnapshots: components["schemas"]["RuntimePruneDirectoryResult"];
-            runWorkspaces: components["schemas"]["RuntimePruneDirectoryResult"];
+            projectSnapshots: components["schemas"]["RuntimePruneGraceDirectoryResult"];
+            runWorkspaces: components["schemas"]["RuntimePruneTtlDirectoryResult"];
             completedRuns: components["schemas"]["RuntimePruneCompletedRuns"];
             serviceEnvelopes: components["schemas"]["RuntimePruneServiceEnvelopes"];
-            artifacts: components["schemas"]["RuntimePruneDirectoryResult"];
+            artifacts: components["schemas"]["RuntimePruneGraceDirectoryResult"];
             eventPayloads: {
                 graceSeconds: number;
                 garbageCollected: boolean;
             };
-            runtimeCache: components["schemas"]["RuntimePruneDirectoryResult"];
+            runtimeCache: components["schemas"]["RuntimePruneCacheResult"];
             daemonLog: components["schemas"]["RuntimePruneDaemonLog"];
             database: components["schemas"]["RuntimePruneDatabase"];
         };

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export const CLI_PROTOCOL_VERSION = 1;
+export const CLI_PROTOCOL_VERSION = 2;
 
 let cachedCliVersion: string | null = null;
 

@@ -683,6 +683,35 @@ components:
           type: array
           items:
             type: string
+    RuntimePruneGraceDirectoryResult:
+      allOf:
+        - $ref: '#/components/schemas/RuntimePruneDirectoryResult'
+        - type: object
+          required: [graceSeconds]
+          properties:
+            graceSeconds:
+              type: integer
+              minimum: 0
+    RuntimePruneTtlDirectoryResult:
+      allOf:
+        - $ref: '#/components/schemas/RuntimePruneDirectoryResult'
+        - type: object
+          required: [ttlSeconds]
+          properties:
+            ttlSeconds:
+              type: integer
+              minimum: 0
+    RuntimePruneCacheResult:
+      allOf:
+        - $ref: '#/components/schemas/RuntimePruneDirectoryResult'
+        - type: object
+          required: [enabled, ttlSeconds]
+          properties:
+            enabled:
+              type: boolean
+            ttlSeconds:
+              type: [integer, 'null']
+              minimum: 0
     RuntimePruneCompletedRuns:
       type: object
       required: [enabled, ttlSeconds, candidateCount, removedCount]
@@ -792,15 +821,15 @@ components:
           type: string
           format: date-time
         projectSnapshots:
-          $ref: '#/components/schemas/RuntimePruneDirectoryResult'
+          $ref: '#/components/schemas/RuntimePruneGraceDirectoryResult'
         runWorkspaces:
-          $ref: '#/components/schemas/RuntimePruneDirectoryResult'
+          $ref: '#/components/schemas/RuntimePruneTtlDirectoryResult'
         completedRuns:
           $ref: '#/components/schemas/RuntimePruneCompletedRuns'
         serviceEnvelopes:
           $ref: '#/components/schemas/RuntimePruneServiceEnvelopes'
         artifacts:
-          $ref: '#/components/schemas/RuntimePruneDirectoryResult'
+          $ref: '#/components/schemas/RuntimePruneGraceDirectoryResult'
         eventPayloads:
           type: object
           required: [graceSeconds, garbageCollected]
@@ -810,7 +839,7 @@ components:
             garbageCollected:
               type: boolean
         runtimeCache:
-          $ref: '#/components/schemas/RuntimePruneDirectoryResult'
+          $ref: '#/components/schemas/RuntimePruneCacheResult'
         daemonLog:
           $ref: '#/components/schemas/RuntimePruneDaemonLog'
         database:

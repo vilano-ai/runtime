@@ -84,7 +84,7 @@ export function createRuntimeInstallManifest(input: {
     runtimeVersion: input.runtimeVersion,
     protocolVersion: input.protocolVersion,
     schemaVersion: input.schemaVersion,
-    schemaMin: input.schemaVersion,
+    schemaMin: 1,
     schemaMax: input.schemaVersion,
     bundleVersion: input.bundleVersion,
     bundleContentHash: input.bundleContentHash,
