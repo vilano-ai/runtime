@@ -659,6 +659,8 @@ defmodule VilanoKernel.Storage.Prune do
     Enum.map(candidates, &Map.put(&1, "removalStatus", "dry_run"))
   end
 
+  defp remove_artifact_candidates([], _root, _retained, _active_run_ids, false), do: []
+
   defp remove_artifact_candidates(candidates, root, retained, active_run_ids, false) do
     latest_retained = MapSet.union(retained, referenced_artifact_paths_for_root(root))
     latest_active_run_ids = MapSet.union(active_run_ids, active_artifact_run_ids())
