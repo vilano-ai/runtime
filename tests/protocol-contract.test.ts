@@ -7,6 +7,8 @@ import type { components as WorkerComponents } from "../protocol/v1/generated/wo
 import { RuntimeHarness } from "./runtime-harness.ts";
 
 type KernelStatusResponse = ControlComponents["schemas"]["StatusResponse"];
+type RuntimePruneResponse = ControlComponents["schemas"]["RuntimePruneResponse"];
+type RuntimeStorageResponse = ControlComponents["schemas"]["RuntimeStorageResponse"];
 type RunInspectResponse = ControlComponents["schemas"]["RunInspectResponse"];
 type RunReplayResponse = ControlComponents["schemas"]["RunReplayResponse"];
 type ServiceRunListResponse = ControlComponents["schemas"]["ServiceRunListResponse"];
@@ -33,6 +35,63 @@ test("control status endpoint matches the published contract", async () => {
     expect(typeof body.runtimeDbPath).toBe("string");
     expect(typeof body.managedWorkerRuntime).toBe("string");
     expect(typeof body.sqliteBusyTimeoutMs).toBe("number");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("runtime storage and prune admin endpoints match the published contract", async () => {
+  const harness = await RuntimeHarness.create();
+
+  try {
+    const storageResponse = await harness.requestKernel("/v1/admin/storage");
+    expect(storageResponse.status).toBe(200);
+
+    const storageBody = (await storageResponse.json()) as RuntimeStorageResponse;
+    expect(storageBody.ok).toBe(true);
+    expect(typeof storageBody.roots.runtimeDbPath).toBe("string");
+    expect(Array.isArray(storageBody.paths)).toBe(true);
+    expect(typeof storageBody.database.runs).toBe("number");
+
+    const pruneResponse = await harness.requestKernel("/v1/admin/prune", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        dryRun: true,
+        completedRunTtlSeconds: 0,
+        serviceEnvelopeTtlSeconds: 0,
+        artifactGraceSeconds: 0,
+        eventPayloadGraceSeconds: 0,
+        runtimeCacheTtlSeconds: 0,
+        daemonLogMaxBytes: 0,
+        vacuumDatabase: false,
+      }),
+    });
+    expect(pruneResponse.status).toBe(200);
+
+    const pruneBody = (await pruneResponse.json()) as RuntimePruneResponse;
+    expect(pruneBody.ok).toBe(true);
+    expect(pruneBody.dryRun).toBe(true);
+    expect(pruneBody.completedRuns.enabled).toBe(true);
+    expect(pruneBody.completedRuns.ttlSeconds).toBe(0);
+    expect(pruneBody.serviceEnvelopes.enabled).toBe(true);
+    expect(pruneBody.serviceEnvelopes.ttlSeconds).toBe(0);
+    expect(typeof pruneBody.artifacts.candidateCount).toBe("number");
+    expect(pruneBody.eventPayloads.garbageCollected).toBe(false);
+    expect(pruneBody.runtimeCache.enabled).toBe(true);
+    expect(pruneBody.daemonLog.enabled).toBe(true);
+    expect(pruneBody.database.walCheckpointed).toBe(false);
+    expect(pruneBody.database.walCheckpoint.attempted).toBe(false);
+
+    const defaultPruneResponse = await harness.requestKernel("/v1/admin/prune", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dryRun: true }),
+    });
+    expect(defaultPruneResponse.status).toBe(200);
+    const defaultPruneBody = (await defaultPruneResponse.json()) as RuntimePruneResponse;
+    expect(defaultPruneBody.runtimeCache.enabled).toBe(false);
+    expect(defaultPruneBody.runtimeCache.ttlSeconds).toBeNull();
   } finally {
     await harness.dispose();
   }

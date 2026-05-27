@@ -543,6 +543,324 @@ components:
         ok:
           const: true
         signal: {}
+    RuntimeStoragePathUsage:
+      type: object
+      required: [name, path, kind, exists, bytes, files, directories]
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        kind:
+          type: string
+          enum: [file, directory]
+        exists:
+          type: boolean
+        bytes:
+          type: integer
+        files:
+          type: integer
+        directories:
+          type: integer
+        error:
+          type: string
+    RuntimeStorageCountBytes:
+      type: object
+      required: [count, bytes]
+      properties:
+        count:
+          type: integer
+        bytes:
+          type: integer
+    RuntimeStorageResponse:
+      type: object
+      required: [ok, roots, paths, database]
+      properties:
+        ok:
+          const: true
+        roots:
+          type: object
+          required: [homeDir, executionHomeDir, artifactHomeDir, runtimeDbPath]
+          properties:
+            homeDir:
+              type: string
+            executionHomeDir:
+              type: string
+            artifactHomeDir:
+              type: string
+            runtimeDbPath:
+              type: string
+        paths:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuntimeStoragePathUsage'
+        database:
+          type: object
+          required:
+            [
+              projects,
+              runs,
+              runPayloads,
+              runEvents,
+              eventPayloadRefs,
+              serviceStates,
+              serviceEnvelopes,
+              runExecs,
+              runSteps,
+              runWaits,
+              runSignals,
+              runServiceOps,
+              topicPublishes
+            ]
+          properties:
+            projects:
+              type: integer
+            runs:
+              type: integer
+            runPayloads:
+              $ref: '#/components/schemas/RuntimeStorageCountBytes'
+            runEvents:
+              $ref: '#/components/schemas/RuntimeStorageCountBytes'
+            eventPayloadRefs:
+              $ref: '#/components/schemas/RuntimeStorageCountBytes'
+            serviceStates:
+              $ref: '#/components/schemas/RuntimeStorageCountBytes'
+            serviceEnvelopes:
+              $ref: '#/components/schemas/RuntimeStorageCountBytes'
+            runExecs:
+              $ref: '#/components/schemas/RuntimeStorageCountBytes'
+            runSteps:
+              $ref: '#/components/schemas/RuntimeStorageCountBytes'
+            runWaits:
+              $ref: '#/components/schemas/RuntimeStorageCountBytes'
+            runSignals:
+              $ref: '#/components/schemas/RuntimeStorageCountBytes'
+            runServiceOps:
+              $ref: '#/components/schemas/RuntimeStorageCountBytes'
+            topicPublishes:
+              $ref: '#/components/schemas/RuntimeStorageCountBytes'
+    RuntimePruneFailedPath:
+      type: object
+      required: [path, failedPath, reason, bytes]
+      properties:
+        path:
+          type: string
+        failedPath:
+          type: string
+        reason:
+          type: string
+        bytes:
+          type: integer
+    RuntimePruneDirectoryResult:
+      type: object
+      required: [root, candidateCount, candidateBytes, removedCount, removedBytes, failedCount, failedBytes, failedPaths]
+      properties:
+        enabled:
+          type: boolean
+        root:
+          type: string
+        graceSeconds:
+          type: integer
+        ttlSeconds:
+          type: [integer, 'null']
+        candidateCount:
+          type: integer
+        candidateBytes:
+          type: integer
+        removedCount:
+          type: integer
+        removedBytes:
+          type: integer
+        failedCount:
+          type: integer
+        failedBytes:
+          type: integer
+        failedPaths:
+          type: array
+          items:
+            $ref: '#/components/schemas/RuntimePruneFailedPath'
+        retainedVersions:
+          type: array
+          items:
+            type: string
+    RuntimePruneCompletedRuns:
+      type: object
+      required: [enabled, ttlSeconds, candidateCount, removedCount]
+      properties:
+        enabled:
+          type: boolean
+        ttlSeconds:
+          type: [integer, 'null']
+          minimum: 0
+        cutoff:
+          type: string
+          format: date-time
+        eligibleCount:
+          type: integer
+        candidateCount:
+          type: integer
+        skippedUnsafeCount:
+          type: integer
+        removedCount:
+          type: integer
+    RuntimePruneServiceEnvelopes:
+      type: object
+      required: [enabled, ttlSeconds, candidateCount, removedCount]
+      properties:
+        enabled:
+          type: boolean
+        ttlSeconds:
+          type: [integer, 'null']
+          minimum: 0
+        cutoff:
+          type: string
+          format: date-time
+        candidateCount:
+          type: integer
+        removedCount:
+          type: integer
+    RuntimePruneDaemonLog:
+      type: object
+      required: [enabled, path, maxBytes, previousBytes, truncated, removedBytes]
+      properties:
+        enabled:
+          type: boolean
+        path:
+          type: string
+        maxBytes:
+          type: [integer, 'null']
+          minimum: 0
+        previousBytes:
+          type: integer
+        truncated:
+          type: boolean
+        removedBytes:
+          type: integer
+        failureReason:
+          type: [string, 'null']
+    RuntimePruneDatabase:
+      type: object
+      required: [runtimeDbPath, beforeBytes, afterBytes, walCheckpointed, walCheckpoint, vacuumed]
+      properties:
+        runtimeDbPath:
+          type: string
+        beforeBytes:
+          type: integer
+        afterBytes:
+          type: integer
+        walCheckpointed:
+          type: boolean
+        walCheckpoint:
+          type: object
+          required: [attempted, checkpointed, busy, logFrames, checkpointedFrames]
+          properties:
+            attempted:
+              type: boolean
+            checkpointed:
+              type: boolean
+            busy:
+              type: [integer, 'null']
+            logFrames:
+              type: [integer, 'null']
+            checkpointedFrames:
+              type: [integer, 'null']
+        vacuumed:
+          type: boolean
+    RuntimePruneResponse:
+      type: object
+      required:
+        [
+          ok,
+          dryRun,
+          prunedAt,
+          projectSnapshots,
+          runWorkspaces,
+          completedRuns,
+          serviceEnvelopes,
+          artifacts,
+          eventPayloads,
+          runtimeCache,
+          daemonLog,
+          database
+        ]
+      properties:
+        ok:
+          const: true
+        dryRun:
+          type: boolean
+        prunedAt:
+          type: string
+          format: date-time
+        projectSnapshots:
+          $ref: '#/components/schemas/RuntimePruneDirectoryResult'
+        runWorkspaces:
+          $ref: '#/components/schemas/RuntimePruneDirectoryResult'
+        completedRuns:
+          $ref: '#/components/schemas/RuntimePruneCompletedRuns'
+        serviceEnvelopes:
+          $ref: '#/components/schemas/RuntimePruneServiceEnvelopes'
+        artifacts:
+          $ref: '#/components/schemas/RuntimePruneDirectoryResult'
+        eventPayloads:
+          type: object
+          required: [graceSeconds, garbageCollected]
+          properties:
+            graceSeconds:
+              type: integer
+            garbageCollected:
+              type: boolean
+        runtimeCache:
+          $ref: '#/components/schemas/RuntimePruneDirectoryResult'
+        daemonLog:
+          $ref: '#/components/schemas/RuntimePruneDaemonLog'
+        database:
+          $ref: '#/components/schemas/RuntimePruneDatabase'
+    RuntimePruneRequest:
+      type: object
+      properties:
+        dryRun:
+          type: boolean
+        projectSnapshotGraceSeconds:
+          type: integer
+          minimum: 0
+        runWorkspaceTtlSeconds:
+          type: integer
+          minimum: 0
+        completedRunTtlSeconds:
+          type: integer
+          minimum: 0
+        serviceEnvelopeTtlSeconds:
+          type: integer
+          minimum: 0
+        artifactGraceSeconds:
+          type: integer
+          minimum: 0
+        eventPayloadGraceSeconds:
+          type: integer
+          minimum: 0
+        runtimeCacheTtlSeconds:
+          type: integer
+          minimum: 0
+        daemonLogMaxBytes:
+          type: integer
+          minimum: 0
+        vacuumDatabase:
+          type: boolean
+    RuntimePruneErrorResponse:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          const: false
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [invalid_prune_option]
+            message:
+              type: string
     ProjectSnapshotReferencesResponse:
       type: object
       required: [ok, project, snapshotPaths]
@@ -632,6 +950,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/StatusResponse'
+  /v1/admin/storage:
+    get:
+      summary: Show runtime storage usage by path and database category.
+      responses:
+        '200':
+          description: Runtime storage usage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeStorageResponse'
+  /v1/admin/prune:
+    post:
+      summary: Prune unreferenced runtime storage.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuntimePruneRequest'
+      responses:
+        '200':
+          description: Runtime prune result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimePruneResponse'
+        '400':
+          description: Invalid prune option
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimePruneErrorResponse'
   /v1/admin/shutdown:
     post:
       summary: Gracefully stop the local kernel.

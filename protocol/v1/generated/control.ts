@@ -40,6 +40,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Show runtime storage usage by path and database category. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Runtime storage usage */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RuntimeStorageResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/prune": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prune unreferenced runtime storage. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["RuntimePruneRequest"];
+                };
+            };
+            responses: {
+                /** @description Runtime prune result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RuntimePruneResponse"];
+                    };
+                };
+                /** @description Invalid prune option */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RuntimePruneErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/shutdown": {
         parameters: {
             query?: never;
@@ -1259,6 +1344,148 @@ export interface components {
             /** @constant */
             ok: true;
             signal: unknown;
+        };
+        RuntimeStoragePathUsage: {
+            name: string;
+            path: string;
+            /** @enum {string} */
+            kind: "file" | "directory";
+            exists: boolean;
+            bytes: number;
+            files: number;
+            directories: number;
+            error?: string;
+        };
+        RuntimeStorageCountBytes: {
+            count: number;
+            bytes: number;
+        };
+        RuntimeStorageResponse: {
+            /** @constant */
+            ok: true;
+            roots: {
+                homeDir: string;
+                executionHomeDir: string;
+                artifactHomeDir: string;
+                runtimeDbPath: string;
+            };
+            paths: components["schemas"]["RuntimeStoragePathUsage"][];
+            database: {
+                projects: number;
+                runs: number;
+                runPayloads: components["schemas"]["RuntimeStorageCountBytes"];
+                runEvents: components["schemas"]["RuntimeStorageCountBytes"];
+                eventPayloadRefs: components["schemas"]["RuntimeStorageCountBytes"];
+                serviceStates: components["schemas"]["RuntimeStorageCountBytes"];
+                serviceEnvelopes: components["schemas"]["RuntimeStorageCountBytes"];
+                runExecs: components["schemas"]["RuntimeStorageCountBytes"];
+                runSteps: components["schemas"]["RuntimeStorageCountBytes"];
+                runWaits: components["schemas"]["RuntimeStorageCountBytes"];
+                runSignals: components["schemas"]["RuntimeStorageCountBytes"];
+                runServiceOps: components["schemas"]["RuntimeStorageCountBytes"];
+                topicPublishes: components["schemas"]["RuntimeStorageCountBytes"];
+            };
+        };
+        RuntimePruneFailedPath: {
+            path: string;
+            failedPath: string;
+            reason: string;
+            bytes: number;
+        };
+        RuntimePruneDirectoryResult: {
+            enabled?: boolean;
+            root: string;
+            graceSeconds?: number;
+            ttlSeconds?: number | null;
+            candidateCount: number;
+            candidateBytes: number;
+            removedCount: number;
+            removedBytes: number;
+            failedCount: number;
+            failedBytes: number;
+            failedPaths: components["schemas"]["RuntimePruneFailedPath"][];
+            retainedVersions?: string[];
+        };
+        RuntimePruneCompletedRuns: {
+            enabled: boolean;
+            ttlSeconds: number | null;
+            /** Format: date-time */
+            cutoff?: string;
+            eligibleCount?: number;
+            candidateCount: number;
+            skippedUnsafeCount?: number;
+            removedCount: number;
+        };
+        RuntimePruneServiceEnvelopes: {
+            enabled: boolean;
+            ttlSeconds: number | null;
+            /** Format: date-time */
+            cutoff?: string;
+            candidateCount: number;
+            removedCount: number;
+        };
+        RuntimePruneDaemonLog: {
+            enabled: boolean;
+            path: string;
+            maxBytes: number | null;
+            previousBytes: number;
+            truncated: boolean;
+            removedBytes: number;
+            failureReason?: string | null;
+        };
+        RuntimePruneDatabase: {
+            runtimeDbPath: string;
+            beforeBytes: number;
+            afterBytes: number;
+            walCheckpointed: boolean;
+            walCheckpoint: {
+                attempted: boolean;
+                checkpointed: boolean;
+                busy: number | null;
+                logFrames: number | null;
+                checkpointedFrames: number | null;
+            };
+            vacuumed: boolean;
+        };
+        RuntimePruneResponse: {
+            /** @constant */
+            ok: true;
+            dryRun: boolean;
+            /** Format: date-time */
+            prunedAt: string;
+            projectSnapshots: components["schemas"]["RuntimePruneDirectoryResult"];
+            runWorkspaces: components["schemas"]["RuntimePruneDirectoryResult"];
+            completedRuns: components["schemas"]["RuntimePruneCompletedRuns"];
+            serviceEnvelopes: components["schemas"]["RuntimePruneServiceEnvelopes"];
+            artifacts: components["schemas"]["RuntimePruneDirectoryResult"];
+            eventPayloads: {
+                graceSeconds: number;
+                garbageCollected: boolean;
+            };
+            runtimeCache: components["schemas"]["RuntimePruneDirectoryResult"];
+            daemonLog: components["schemas"]["RuntimePruneDaemonLog"];
+            database: components["schemas"]["RuntimePruneDatabase"];
+        };
+        RuntimePruneRequest: {
+            dryRun?: boolean;
+            projectSnapshotGraceSeconds?: number;
+            runWorkspaceTtlSeconds?: number;
+            completedRunTtlSeconds?: number;
+            serviceEnvelopeTtlSeconds?: number;
+            artifactGraceSeconds?: number;
+            eventPayloadGraceSeconds?: number;
+            runtimeCacheTtlSeconds?: number;
+            daemonLogMaxBytes?: number;
+            vacuumDatabase?: boolean;
+        };
+        RuntimePruneErrorResponse: {
+            /** @constant */
+            ok: false;
+            error: {
+                /** @enum {string} */
+                code: "invalid_prune_option";
+                message: string;
+            };
         };
         ProjectSnapshotReferencesResponse: {
             /** @constant */
