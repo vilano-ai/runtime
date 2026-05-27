@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 
 import {
   materializeProjectSnapshot,
+  pruneAllProjectSnapshots,
   snapshotOptionsFromEnv,
 } from "../cli/src/project-snapshot.ts";
 
@@ -22,12 +23,14 @@ test("pruneAllProjectSnapshots removes sealed snapshots across projects", async 
     await writeProject(projectB, "export const project = 'b';\n");
 
     const script = `
-      import { materializeProjectSnapshot, pruneAllProjectSnapshots } from ${JSON.stringify(
+      import { materializeProjectSnapshot, pruneAllProjectSnapshots, releaseProjectSnapshot } from ${JSON.stringify(
         pathToFileURL(path.join(import.meta.dir, "..", "cli", "src", "project-snapshot.ts")).href
       )};
 
       const removed = await materializeProjectSnapshot("project-a", process.env.PROJECT_A);
       const retained = await materializeProjectSnapshot("project-b", process.env.PROJECT_B);
+      await releaseProjectSnapshot(removed);
+      await releaseProjectSnapshot(retained);
       await pruneAllProjectSnapshots([retained]);
       console.log(JSON.stringify({ removed, retained }));
     `;
@@ -57,6 +60,49 @@ test("pruneAllProjectSnapshots removes sealed snapshots across projects", async 
     await expect(fs.access(result.removed)).rejects.toThrow();
     await fs.access(result.retained);
   } finally {
+    await makeTreeWritable(root).catch(() => undefined);
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("pruneAllProjectSnapshots cleans stale interrupted snapshot temps", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "vilano-project-snapshot-"));
+  const runtimeHome = path.join(root, "runtime-home");
+  const executionHome = path.join(root, "execution-home");
+  const previousHome = process.env.VILANO_HOME;
+  const previousExecutionHome = process.env.VILANO_EXECUTION_HOME;
+  const projectRoot = path.join(executionHome, "project-snapshots", "project");
+  const staleSnapshot = "snapshot-stale";
+  const activeSnapshot = "snapshot-active";
+  const staleTemp = path.join(projectRoot, `${staleSnapshot}.tmp-dead`);
+  const activeTemp = path.join(projectRoot, `${activeSnapshot}.tmp-live`);
+  const staleMarker = path.join(projectRoot, ".pending", `${staleSnapshot}.pending`);
+  const activeMarker = path.join(projectRoot, ".pending", `${activeSnapshot}.pending`);
+  const oldEnoughForPrune = new Date(Date.now() - 10 * 60 * 1000);
+
+  try {
+    process.env.VILANO_HOME = runtimeHome;
+    process.env.VILANO_EXECUTION_HOME = executionHome;
+
+    await fs.mkdir(staleTemp, { recursive: true });
+    await fs.writeFile(path.join(staleTemp, "index.ts"), "export const stale = true;\n", "utf8");
+    await fs.mkdir(activeTemp, { recursive: true });
+    await fs.writeFile(path.join(activeTemp, "index.ts"), "export const active = true;\n", "utf8");
+    await fs.mkdir(path.dirname(staleMarker), { recursive: true });
+    await fs.writeFile(staleMarker, staleTemp, "utf8");
+    await fs.writeFile(activeMarker, activeTemp, "utf8");
+    await fs.utimes(staleTemp, oldEnoughForPrune, oldEnoughForPrune);
+    await fs.utimes(staleMarker, oldEnoughForPrune, oldEnoughForPrune);
+
+    await pruneAllProjectSnapshots([]);
+
+    await expect(fs.access(staleTemp)).rejects.toThrow();
+    await expect(fs.access(staleMarker)).rejects.toThrow();
+    await fs.access(activeTemp);
+    await fs.access(activeMarker);
+  } finally {
+    restoreEnv("VILANO_HOME", previousHome);
+    restoreEnv("VILANO_EXECUTION_HOME", previousExecutionHome);
     await makeTreeWritable(root).catch(() => undefined);
     await fs.rm(root, { recursive: true, force: true });
   }

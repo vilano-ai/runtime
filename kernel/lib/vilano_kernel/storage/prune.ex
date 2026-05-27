@@ -13,6 +13,7 @@ defmodule VilanoKernel.Storage.Prune do
   @default_artifact_grace_seconds 300
   @default_event_payload_grace_seconds 300
   @default_project_snapshot_grace_seconds 300
+  @pending_project_snapshot_min_grace_seconds 300
   @run_prune_batch_size 75
 
   def prune_runtime(opts \\ %{}) do
@@ -114,11 +115,17 @@ defmodule VilanoKernel.Storage.Prune do
       root
       |> child_directories()
       |> Enum.flat_map(&child_directories/1)
-      |> Enum.reject(&retained_or_pending_project_snapshot?(&1, retained))
+      |> Enum.reject(
+        &retained_or_active_project_snapshot?(&1, retained, now_seconds, grace_seconds)
+      )
       |> Enum.filter(&older_than?(&1, now_seconds, grace_seconds))
       |> Enum.map(&candidate_summary/1)
 
-    removals = remove_project_snapshot_candidates(candidates, retained, dry_run?)
+    removals = remove_project_snapshot_candidates(candidates, retained, grace_seconds, dry_run?)
+
+    unless dry_run? do
+      prune_stale_project_snapshot_pending_markers(root, grace_seconds)
+    end
 
     %{
       "root" => root,
@@ -601,20 +608,33 @@ defmodule VilanoKernel.Storage.Prune do
     end)
   end
 
-  defp retained_or_pending_project_snapshot?(path, retained) do
+  defp retained_or_active_project_snapshot?(path, retained, now_seconds, grace_seconds) do
     expanded_path = Path.expand(path)
 
     MapSet.member?(retained, expanded_path) or
-      project_snapshot_temp_path?(path) or
-      File.exists?(project_snapshot_pending_marker_path(path))
-  end
-
-  defp project_snapshot_temp_path?(path) do
-    Path.basename(path) |> String.contains?(".tmp-")
+      active_project_snapshot_pending_marker?(path, now_seconds, grace_seconds)
   end
 
   defp project_snapshot_pending_marker_path(path) do
-    Path.join([Path.dirname(path), ".pending", "#{Path.basename(path)}.pending"])
+    basename =
+      path
+      |> Path.basename()
+      |> project_snapshot_pending_basename()
+
+    Path.join([Path.dirname(path), ".pending", "#{basename}.pending"])
+  end
+
+  defp project_snapshot_pending_basename(basename) do
+    basename
+    |> String.split(".tmp-", parts: 2)
+    |> List.first()
+  end
+
+  defp active_project_snapshot_pending_marker?(path, now_seconds, grace_seconds) do
+    marker_path = project_snapshot_pending_marker_path(path)
+    marker_grace_seconds = max(grace_seconds, @pending_project_snapshot_min_grace_seconds)
+
+    File.exists?(marker_path) and not older_than?(marker_path, now_seconds, marker_grace_seconds)
   end
 
   defp candidate_summary(path) do
@@ -636,21 +656,29 @@ defmodule VilanoKernel.Storage.Prune do
     Enum.map(candidates, &remove_candidate_path/1)
   end
 
-  defp remove_project_snapshot_candidates(candidates, _retained, true) do
+  defp remove_project_snapshot_candidates(candidates, _retained, _grace_seconds, true) do
     Enum.map(candidates, &Map.put(&1, "removalStatus", "dry_run"))
   end
 
-  defp remove_project_snapshot_candidates(candidates, retained, false) do
+  defp remove_project_snapshot_candidates(candidates, retained, grace_seconds, false) do
     latest_retained =
       Storage.list_referenced_snapshot_paths(nil)
       |> MapSet.new(&Path.expand/1)
       |> MapSet.union(retained)
 
+    now_seconds = System.system_time(:second)
+
     Enum.map(candidates, fn %{"path" => path} = candidate ->
-      if retained_or_pending_project_snapshot?(path, latest_retained) do
+      if retained_or_active_project_snapshot?(path, latest_retained, now_seconds, grace_seconds) do
         Map.merge(candidate, %{"removalStatus" => "retained"})
       else
-        remove_candidate_path(candidate)
+        removal = remove_candidate_path(candidate)
+
+        if removal["removalStatus"] in ["removed", "missing"] do
+          remove_file(project_snapshot_pending_marker_path(path))
+        end
+
+        removal
       end
     end)
   end
@@ -707,6 +735,31 @@ defmodule VilanoKernel.Storage.Prune do
           "failedPath" => failed_path,
           "failureReason" => reason
         })
+    end
+  end
+
+  defp prune_stale_project_snapshot_pending_markers(root, grace_seconds) do
+    now_seconds = System.system_time(:second)
+    marker_grace_seconds = max(grace_seconds, @pending_project_snapshot_min_grace_seconds)
+
+    root
+    |> Path.join("*")
+    |> Path.join(".pending")
+    |> Path.join("*.pending")
+    |> Path.wildcard()
+    |> Enum.each(fn marker_path ->
+      if older_than?(marker_path, now_seconds, marker_grace_seconds) do
+        remove_file(marker_path)
+        File.rmdir(Path.dirname(marker_path))
+      end
+    end)
+  end
+
+  defp remove_file(path) do
+    case File.rm(path) do
+      :ok -> :ok
+      {:error, :enoent} -> :ok
+      {:error, _reason} -> :ok
     end
   end
 

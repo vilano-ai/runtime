@@ -24,6 +24,7 @@ const DEFAULT_SNAPSHOT_ROOT_EXCLUDED_NAMES = [
 ];
 const DEFAULT_SNAPSHOT_ROOT_EXCLUDED_FILE_SUFFIXES = [".log"];
 const PENDING_SNAPSHOT_DIR = ".pending";
+const PENDING_SNAPSHOT_MIN_AGE_MS = 5 * 60 * 1000;
 
 export interface ProjectSnapshotOptions {
   excludes?: readonly string[];
@@ -79,7 +80,15 @@ export async function releaseProjectSnapshot(snapshotPath: string): Promise<void
 }
 
 function projectSnapshotPendingMarkerPath(snapshotPath: string): string {
-  return path.join(path.dirname(snapshotPath), PENDING_SNAPSHOT_DIR, `${path.basename(snapshotPath)}.pending`);
+  return path.join(
+    path.dirname(snapshotPath),
+    PENDING_SNAPSHOT_DIR,
+    `${projectSnapshotPendingBasename(snapshotPath)}.pending`
+  );
+}
+
+function projectSnapshotPendingBasename(snapshotPath: string): string {
+  return path.basename(snapshotPath).split(".tmp-", 1)[0] ?? path.basename(snapshotPath);
 }
 
 async function writeProjectSnapshotPendingMarker(snapshotPath: string): Promise<void> {
@@ -92,6 +101,21 @@ async function clearProjectSnapshotPendingMarker(snapshotPath: string): Promise<
   const markerPath = projectSnapshotPendingMarkerPath(snapshotPath);
   await fs.rm(markerPath, { force: true });
   await fs.rmdir(path.dirname(markerPath)).catch(() => undefined);
+}
+
+async function hasActiveProjectSnapshotPendingMarker(snapshotPath: string): Promise<boolean> {
+  const markerPath = projectSnapshotPendingMarkerPath(snapshotPath);
+
+  try {
+    const stat = await fs.stat(markerPath);
+    return Date.now() - stat.mtimeMs < PENDING_SNAPSHOT_MIN_AGE_MS;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+
+    throw error;
+  }
 }
 
 export function snapshotOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): ProjectSnapshotOptions {
@@ -260,16 +284,22 @@ export async function pruneProjectSnapshots(
         return;
       }
 
-      if (entry.name === PENDING_SNAPSHOT_DIR || entry.name.includes(".tmp-")) {
+      if (entry.name === PENDING_SNAPSHOT_DIR) {
         return;
       }
 
       const snapshotPath = path.join(projectSnapshotRoot, entry.name);
+      if (await hasActiveProjectSnapshotPendingMarker(snapshotPath)) {
+        return;
+      }
+
       if (!retained.has(snapshotPath)) {
         await removeProjectSnapshot(snapshotPath);
       }
     })
   );
+
+  await pruneStaleProjectSnapshotPendingMarkers(projectSnapshotRoot);
 
   const remaining = await fs.readdir(projectSnapshotRoot).catch(() => []);
   if (remaining.length === 0) {
@@ -305,6 +335,37 @@ export async function pruneAllProjectSnapshots(retainedSnapshotPaths: Iterable<s
       await pruneProjectSnapshots(entry.name, retained);
     })
   );
+}
+
+async function pruneStaleProjectSnapshotPendingMarkers(projectSnapshotRoot: string): Promise<void> {
+  const pendingRoot = path.join(projectSnapshotRoot, PENDING_SNAPSHOT_DIR);
+  let entries;
+
+  try {
+    entries = await fs.readdir(pendingRoot, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+
+    throw error;
+  }
+
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (!entry.isFile()) {
+        return;
+      }
+
+      const markerPath = path.join(pendingRoot, entry.name);
+      const stat = await fs.stat(markerPath);
+      if (Date.now() - stat.mtimeMs >= PENDING_SNAPSHOT_MIN_AGE_MS) {
+        await fs.rm(markerPath, { force: true });
+      }
+    })
+  );
+
+  await fs.rmdir(pendingRoot).catch(() => undefined);
 }
 
 async function ensureDependencyResolution(sourcePath: string, snapshotRoot: string): Promise<void> {
