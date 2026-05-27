@@ -189,11 +189,17 @@ export interface RuntimeStorageResponse {
   database: {
     projects: number;
     runs: number;
+    runPayloads: { count: number; bytes: number };
     runEvents: { count: number; bytes: number };
     eventPayloadRefs: { count: number; bytes: number };
     serviceStates: { count: number; bytes: number };
     serviceEnvelopes: { count: number; bytes: number };
     runExecs: { count: number; bytes: number };
+    runSteps: { count: number; bytes: number };
+    runWaits: { count: number; bytes: number };
+    runSignals: { count: number; bytes: number };
+    runServiceOps: { count: number; bytes: number };
+    topicPublishes: { count: number; bytes: number };
   };
 }
 
@@ -223,9 +229,72 @@ export interface RuntimePruneResponse {
     failedBytes: number;
     failedPaths: RuntimePruneFailedPath[];
   };
+  completedRuns: {
+    enabled: boolean;
+    ttlSeconds: number | null;
+    cutoff?: string;
+    eligibleCount?: number;
+    candidateCount: number;
+    skippedUnsafeCount?: number;
+    removedCount: number;
+  };
+  serviceEnvelopes: {
+    enabled: boolean;
+    ttlSeconds: number | null;
+    cutoff?: string;
+    candidateCount: number;
+    removedCount: number;
+  };
+  artifacts: {
+    root: string;
+    graceSeconds: number;
+    candidateCount: number;
+    candidateBytes: number;
+    removedCount: number;
+    removedBytes: number;
+    failedCount: number;
+    failedBytes: number;
+    failedPaths: RuntimePruneFailedPath[];
+  };
   eventPayloads: {
     graceSeconds: number;
     garbageCollected: boolean;
+  };
+  runtimeCache: {
+    enabled: boolean;
+    root: string;
+    ttlSeconds: number | null;
+    retainedVersions?: string[];
+    candidateCount: number;
+    candidateBytes: number;
+    removedCount: number;
+    removedBytes: number;
+    failedCount: number;
+    failedBytes: number;
+    failedPaths: RuntimePruneFailedPath[];
+  };
+  daemonLog: {
+    enabled: boolean;
+    path: string;
+    maxBytes: number | null;
+    previousBytes: number;
+    truncated: boolean;
+    removedBytes: number;
+    failureReason?: string | null;
+  };
+  database: {
+    runtimeDbPath: string;
+    beforeBytes: number;
+    afterBytes: number;
+    walCheckpointed: boolean;
+    walCheckpoint?: {
+      attempted: boolean;
+      checkpointed: boolean;
+      busy: number | null;
+      logFrames: number | null;
+      checkpointedFrames: number | null;
+    };
+    vacuumed: boolean;
   };
 }
 

@@ -51,7 +51,13 @@ export async function getRuntimeStorage(): Promise<RuntimeStorageResponse> {
 export async function pruneRuntimeStorage(options: {
   dryRun?: boolean;
   runWorkspaceTtlSeconds?: number;
+  completedRunTtlSeconds?: number;
+  serviceEnvelopeTtlSeconds?: number;
+  artifactGraceSeconds?: number;
   eventPayloadGraceSeconds?: number;
+  runtimeCacheTtlSeconds?: number;
+  daemonLogMaxBytes?: number;
+  vacuumDatabase?: boolean;
 }): Promise<RuntimePruneResponse> {
   return requestJson<RuntimePruneResponse>({
     method: "POST",

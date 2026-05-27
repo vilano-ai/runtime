@@ -22,7 +22,14 @@ export interface VilanoProjectConfig {
     snapshot_excludes?: string[];
     snapshot_include_node_modules?: boolean;
     prune_run_workspace_ttl_seconds?: number;
+    prune_completed_run_ttl_seconds?: number;
+    prune_service_envelope_ttl_seconds?: number;
+    prune_artifact_grace_seconds?: number;
     prune_event_payload_grace_seconds?: number;
+    prune_runtime_cache_ttl_seconds?: number;
+    prune_daemon_log_max_bytes?: number;
+    prune_interval_seconds?: number;
+    prune_vacuum_database?: boolean;
     exec_capture_max_bytes?: number;
     exec_artifact_max_bytes?: number;
   };
@@ -129,6 +136,55 @@ export async function applyProjectConfig(
     storageConfig.prune_event_payload_grace_seconds !== undefined
   ) {
     env.VILANO_PRUNE_EVENT_PAYLOAD_GRACE_SECONDS = String(storageConfig.prune_event_payload_grace_seconds);
+  }
+
+  if (
+    env.VILANO_PRUNE_COMPLETED_RUN_TTL_SECONDS === undefined &&
+    storageConfig.prune_completed_run_ttl_seconds !== undefined
+  ) {
+    env.VILANO_PRUNE_COMPLETED_RUN_TTL_SECONDS = String(storageConfig.prune_completed_run_ttl_seconds);
+  }
+
+  if (
+    env.VILANO_PRUNE_SERVICE_ENVELOPE_TTL_SECONDS === undefined &&
+    storageConfig.prune_service_envelope_ttl_seconds !== undefined
+  ) {
+    env.VILANO_PRUNE_SERVICE_ENVELOPE_TTL_SECONDS = String(storageConfig.prune_service_envelope_ttl_seconds);
+  }
+
+  if (
+    env.VILANO_PRUNE_ARTIFACT_GRACE_SECONDS === undefined &&
+    storageConfig.prune_artifact_grace_seconds !== undefined
+  ) {
+    env.VILANO_PRUNE_ARTIFACT_GRACE_SECONDS = String(storageConfig.prune_artifact_grace_seconds);
+  }
+
+  if (
+    env.VILANO_PRUNE_RUNTIME_CACHE_TTL_SECONDS === undefined &&
+    storageConfig.prune_runtime_cache_ttl_seconds !== undefined
+  ) {
+    env.VILANO_PRUNE_RUNTIME_CACHE_TTL_SECONDS = String(storageConfig.prune_runtime_cache_ttl_seconds);
+  }
+
+  if (
+    env.VILANO_PRUNE_DAEMON_LOG_MAX_BYTES === undefined &&
+    storageConfig.prune_daemon_log_max_bytes !== undefined
+  ) {
+    env.VILANO_PRUNE_DAEMON_LOG_MAX_BYTES = String(storageConfig.prune_daemon_log_max_bytes);
+  }
+
+  if (
+    env.VILANO_PRUNE_INTERVAL_SECONDS === undefined &&
+    storageConfig.prune_interval_seconds !== undefined
+  ) {
+    env.VILANO_PRUNE_INTERVAL_SECONDS = String(storageConfig.prune_interval_seconds);
+  }
+
+  if (
+    env.VILANO_PRUNE_VACUUM_DATABASE === undefined &&
+    storageConfig.prune_vacuum_database !== undefined
+  ) {
+    env.VILANO_PRUNE_VACUUM_DATABASE = String(storageConfig.prune_vacuum_database);
   }
 
   if (env.VILANO_EXEC_CAPTURE_MAX_BYTES === undefined && storageConfig.exec_capture_max_bytes !== undefined) {
@@ -288,6 +344,47 @@ function normalizeStorageSection(
     "storage.prune_event_payload_grace_seconds",
     configPath,
     { min: 0 }
+  );
+  storage.prune_completed_run_ttl_seconds = readOptionalInteger(
+    record.prune_completed_run_ttl_seconds,
+    "storage.prune_completed_run_ttl_seconds",
+    configPath,
+    { min: 0 }
+  );
+  storage.prune_service_envelope_ttl_seconds = readOptionalInteger(
+    record.prune_service_envelope_ttl_seconds,
+    "storage.prune_service_envelope_ttl_seconds",
+    configPath,
+    { min: 0 }
+  );
+  storage.prune_artifact_grace_seconds = readOptionalInteger(
+    record.prune_artifact_grace_seconds,
+    "storage.prune_artifact_grace_seconds",
+    configPath,
+    { min: 0 }
+  );
+  storage.prune_runtime_cache_ttl_seconds = readOptionalInteger(
+    record.prune_runtime_cache_ttl_seconds,
+    "storage.prune_runtime_cache_ttl_seconds",
+    configPath,
+    { min: 0 }
+  );
+  storage.prune_daemon_log_max_bytes = readOptionalInteger(
+    record.prune_daemon_log_max_bytes,
+    "storage.prune_daemon_log_max_bytes",
+    configPath,
+    { min: 0 }
+  );
+  storage.prune_interval_seconds = readOptionalInteger(
+    record.prune_interval_seconds,
+    "storage.prune_interval_seconds",
+    configPath,
+    { min: 1 }
+  );
+  storage.prune_vacuum_database = readOptionalBoolean(
+    record.prune_vacuum_database,
+    "storage.prune_vacuum_database",
+    configPath
   );
   storage.exec_capture_max_bytes = readOptionalInteger(
     record.exec_capture_max_bytes,

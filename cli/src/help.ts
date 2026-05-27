@@ -109,9 +109,9 @@ function renderDaemonHelp(command?: string): string {
       ].join("\n");
     case "prune":
       return [
-        "Usage: vilano daemon prune [--workspace-ttl-seconds <seconds>] [--event-payload-grace-seconds <seconds>] [--dry-run] [--json]",
+        "Usage: vilano daemon prune [--workspace-ttl-seconds <seconds>] [--completed-run-ttl-seconds <seconds>] [--service-envelope-ttl-seconds <seconds>] [--artifact-grace-seconds <seconds>] [--event-payload-grace-seconds <seconds>] [--runtime-cache-ttl-seconds <seconds>] [--daemon-log-max-bytes <bytes>] [--vacuum-database] [--dry-run] [--json]",
         "",
-        "Prune unreferenced snapshots, old inactive run workspaces, and orphan event payload files.",
+        "Prune unreferenced snapshots, old inactive run workspaces, completed run history, terminal service envelope history, orphan exec artifacts, orphan event payload files, stale runtime cache versions, and oversized daemon startup logs.",
       ].join("\n");
     case "stop":
       return [

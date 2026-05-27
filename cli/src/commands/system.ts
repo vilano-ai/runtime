@@ -87,11 +87,39 @@ export async function handleDaemonCommand(
           "workspace-ttl-seconds",
           process.env.VILANO_PRUNE_RUN_WORKSPACE_TTL_SECONDS
         ),
+        completedRunTtlSeconds: readOptionalNonNegativeSeconds(
+          flags["completed-run-ttl-seconds"],
+          "completed-run-ttl-seconds",
+          process.env.VILANO_PRUNE_COMPLETED_RUN_TTL_SECONDS
+        ),
+        serviceEnvelopeTtlSeconds: readOptionalNonNegativeSeconds(
+          flags["service-envelope-ttl-seconds"],
+          "service-envelope-ttl-seconds",
+          process.env.VILANO_PRUNE_SERVICE_ENVELOPE_TTL_SECONDS
+        ),
+        artifactGraceSeconds: readOptionalNonNegativeSeconds(
+          flags["artifact-grace-seconds"],
+          "artifact-grace-seconds",
+          process.env.VILANO_PRUNE_ARTIFACT_GRACE_SECONDS
+        ),
         eventPayloadGraceSeconds: readOptionalNonNegativeSeconds(
           flags["event-payload-grace-seconds"],
           "event-payload-grace-seconds",
           process.env.VILANO_PRUNE_EVENT_PAYLOAD_GRACE_SECONDS
         ),
+        runtimeCacheTtlSeconds: readOptionalNonNegativeSeconds(
+          flags["runtime-cache-ttl-seconds"],
+          "runtime-cache-ttl-seconds",
+          process.env.VILANO_PRUNE_RUNTIME_CACHE_TTL_SECONDS
+        ),
+        daemonLogMaxBytes: readOptionalNonNegativeInteger(
+          flags["daemon-log-max-bytes"],
+          "daemon-log-max-bytes",
+          process.env.VILANO_PRUNE_DAEMON_LOG_MAX_BYTES
+        ),
+        vacuumDatabase:
+          Boolean(flags["vacuum-database"]) ||
+          readOptionalBooleanEnv(process.env.VILANO_PRUNE_VACUUM_DATABASE, "VILANO_PRUNE_VACUUM_DATABASE"),
       });
       writeOutput(flags, body, renderDaemonPrune);
       return 0;
@@ -120,8 +148,16 @@ function readOptionalNonNegativeSeconds(
   flagName: string,
   envValue: string | undefined
 ): number | undefined {
+  return readOptionalNonNegativeInteger(flagValue, flagName, envValue);
+}
+
+function readOptionalNonNegativeInteger(
+  flagValue: string | boolean | undefined,
+  flagName: string,
+  envValue: string | undefined
+): number | undefined {
   if (flagValue === true) {
-    throw new CliError(`--${flagName} requires a value in seconds`);
+    throw new CliError(`--${flagName} requires a value`);
   }
 
   const rawValue = typeof flagValue === "string" ? flagValue : envValue;
@@ -131,10 +167,26 @@ function readOptionalNonNegativeSeconds(
 
   const value = Number.parseInt(rawValue, 10);
   if (!Number.isInteger(value) || value < 0 || String(value) !== rawValue.trim()) {
-    throw new CliError(`--${flagName} must be a non-negative integer number of seconds`);
+    throw new CliError(`--${flagName} must be a non-negative integer`);
   }
 
   return value;
+}
+
+function readOptionalBooleanEnv(envValue: string | undefined, envName: string): boolean {
+  if (envValue === undefined || envValue.trim() === "") {
+    return false;
+  }
+
+  if (envValue === "1" || envValue.toLowerCase() === "true") {
+    return true;
+  }
+
+  if (envValue === "0" || envValue.toLowerCase() === "false") {
+    return false;
+  }
+
+  throw new CliError(`${envName} must be true, false, 1, or 0`);
 }
 
 export async function handleVersionCommand(flags: Record<string, string | boolean>): Promise<number> {
