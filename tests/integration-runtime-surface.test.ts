@@ -615,6 +615,7 @@ test("runtime prune removes unreferenced snapshots and stale run workspaces", as
     await fs.chmod(failingSnapshotParent, 0o555);
     await fs.mkdir(staleWorkspace, { recursive: true });
     await fs.writeFile(path.join(staleWorkspace, "workspace.txt"), "stale\n", "utf8");
+    await fs.utimes(staleWorkspace, oldEnoughForPrune, oldEnoughForPrune);
     await fs.mkdir(path.join(staleRuntimeCache, "worker"), { recursive: true });
     await fs.writeFile(path.join(staleRuntimeCache, "worker", "index.ts"), "export {};\n", "utf8");
     await fs.utimes(staleRuntimeCache, oldEnoughForPrune, oldEnoughForPrune);
@@ -778,6 +779,8 @@ test("runtime prune removes unreferenced snapshots and stale run workspaces", as
     } finally {
       prunedDb.close();
     }
+
+    await fs.utimes(freshSnapshot, oldEnoughForPrune, oldEnoughForPrune);
 
     const zeroGracePruned = await harness.requestKernel("/v1/admin/prune", {
       method: "POST",
