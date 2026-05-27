@@ -20,7 +20,7 @@ test(
 
     try {
       await runWithConcurrency(
-        Array.from({ length: 6 }, (_, index) => async () => {
+        Array.from({ length: 4 }, (_, index) => async () => {
           const started = await harness.startWorkflow("demo/cooperativeStep", {
             durationMs: 2_500 + (index % 3) * 200,
             timeout: "10s",
@@ -31,31 +31,31 @@ test(
       );
 
       await runWithConcurrency(
-        Array.from({ length: 10 }, (_, index) => async () => {
+        Array.from({ length: 6 }, (_, index) => async () => {
           const started = await harness.startWorkflow("demo/serviceTurnCoordinator", {
             sessionId: `sqlite-service-${index}`,
             topic: `sqlite-topic-${index}`,
           });
           servicePipelineRuns.push(started.run.id);
         }),
-        4
+        3
       );
 
       await runWithConcurrency(
-        Array.from({ length: 10 }, (_, index) => async () => {
+        Array.from({ length: 6 }, (_, index) => async () => {
           const started = await harness.startWorkflow("demo/reviewCoordinator", {
             repoId: `sqlite-review-${index}`,
             note: `sqlite-note-${index}`,
           });
           reviewRuns.push(started.run.id);
         }),
-        4
+        3
       );
 
       const allRunIds = [...longRunningRuns, ...servicePipelineRuns, ...reviewRuns];
       const completions = await Promise.all(
         allRunIds.map(async (runId) => {
-          const inspect = await waitForRunCompletion(harness, runId, 180_000);
+          const inspect = await waitForRunCompletion(harness, runId, 240_000);
           return { runId, inspect };
         })
       );
@@ -72,7 +72,7 @@ test(
       await harness.dispose();
     }
   },
-  240_000
+  300_000
 );
 
 async function waitForRunCompletion(

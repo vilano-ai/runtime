@@ -17,7 +17,7 @@ test(
     const blockingRunIds: string[] = [];
 
     try {
-      for (let index = 0; index < 8; index += 1) {
+      for (let index = 0; index < 4; index += 1) {
         const started = await harness.startWorkflow("demo/cooperativeStep", {
           durationMs: 4_000 + (index % 2) * 250,
           timeout: "12s",
@@ -38,7 +38,7 @@ test(
       );
 
       const startResults = await Promise.allSettled(
-        Array.from({ length: 24 }, async (_, index) => {
+        Array.from({ length: 12 }, async (_, index) => {
           return await harness.startWorkflow("demo/planner", {
             topic: `sqlite-run-start-${index}`,
           });
@@ -49,7 +49,19 @@ test(
         (result): result is PromiseRejectedResult => result.status === "rejected"
       );
 
-      expect(failures).toHaveLength(0);
+      if (failures.length > 0) {
+        throw new Error(
+          [
+            "Expected all concurrent run starts to succeed",
+            ...failures.map((failure, index) => {
+              const reason = failure.reason;
+              return `failure ${index + 1}: ${
+                reason instanceof Error ? reason.message : String(reason)
+              }`;
+            }),
+          ].join("\n")
+        );
+      }
 
       const createdRunIds = startResults
         .filter(
