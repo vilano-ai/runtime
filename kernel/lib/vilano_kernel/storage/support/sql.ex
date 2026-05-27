@@ -556,7 +556,6 @@ defmodule VilanoKernel.Storage.Support.Sql do
   def append_prepared_event!(run_id, event_type, storage, created_at) do
     event_id = "evt_" <> Ecto.UUID.generate()
     next_seq = reserve_next_event_seq!(run_id)
-    EventPayloads.publish_prepared_payload!(storage)
 
     result =
       insert_run_event!(event_id, run_id, next_seq, event_type, storage.body_json, created_at)

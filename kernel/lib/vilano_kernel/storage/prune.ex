@@ -141,7 +141,7 @@ defmodule VilanoKernel.Storage.Prune do
     candidates =
       root
       |> child_directories()
-      |> Enum.reject(&(Path.basename(&1) in active_lease_ids))
+      |> Enum.reject(&active_workspace_path?(&1, active_lease_ids))
       |> Enum.filter(&older_than?(&1, now_seconds, ttl_seconds))
       |> Enum.map(&candidate_summary/1)
 
@@ -236,24 +236,22 @@ defmodule VilanoKernel.Storage.Prune do
     root = Path.expand(runtime.artifact_home_dir)
     now_seconds = System.system_time(:second)
     paths = descendant_files(root)
-    directories = descendant_directories(root)
     retained = referenced_artifact_paths(runtime)
-    existing_run_ids = existing_artifact_run_ids(root, paths ++ directories)
+    active_run_ids = active_artifact_run_ids()
 
     candidates =
       paths
-      |> Enum.reject(&retained_or_existing_run_artifact?(root, &1, retained, existing_run_ids))
+      |> Enum.reject(&retained_or_active_run_artifact?(root, &1, retained, active_run_ids))
       |> Enum.filter(&older_than?(&1, now_seconds, grace_seconds))
       |> Enum.map(&candidate_summary/1)
 
-    removals = remove_artifact_candidates(candidates, root, retained, dry_run?)
+    removals = remove_artifact_candidates(candidates, root, retained, active_run_ids, dry_run?)
 
     unless dry_run? do
       empty_dir_grace_seconds = max(grace_seconds, 60)
 
       prune_empty_artifact_directories(
         root,
-        existing_run_ids,
         active_artifact_run_ids(),
         System.system_time(:second),
         empty_dir_grace_seconds
@@ -506,15 +504,8 @@ defmodule VilanoKernel.Storage.Prune do
     end
   end
 
-  defp descendant_directories(root) do
-    root
-    |> child_directories()
-    |> Enum.flat_map(fn path -> [path | descendant_directories(path)] end)
-  end
-
   defp prune_empty_artifact_directories(
          root,
-         existing_run_ids,
          active_run_ids,
          now_seconds,
          grace_seconds
@@ -525,7 +516,6 @@ defmodule VilanoKernel.Storage.Prune do
       &prune_empty_artifact_directory(
         root,
         &1,
-        existing_run_ids,
         active_run_ids,
         now_seconds,
         grace_seconds
@@ -536,7 +526,6 @@ defmodule VilanoKernel.Storage.Prune do
   defp prune_empty_artifact_directory(
          root,
          path,
-         existing_run_ids,
          active_run_ids,
          now_seconds,
          grace_seconds
@@ -547,7 +536,6 @@ defmodule VilanoKernel.Storage.Prune do
       &prune_empty_artifact_directory(
         root,
         &1,
-        existing_run_ids,
         active_run_ids,
         now_seconds,
         grace_seconds
@@ -557,7 +545,6 @@ defmodule VilanoKernel.Storage.Prune do
     relative_path = Path.relative_to(Path.expand(path), root)
 
     if older_than?(path, now_seconds, grace_seconds) and
-         not existing_run_artifact_path?(relative_path, existing_run_ids) and
          not active_artifact_path?(relative_path, active_run_ids) do
       case File.rmdir(path) do
         :ok -> :ok
@@ -576,7 +563,7 @@ defmodule VilanoKernel.Storage.Prune do
 
     Enum.map(candidates, fn %{"path" => path} = candidate ->
       cond do
-        Path.basename(path) in active_lease_ids ->
+        active_workspace_path?(path, active_lease_ids) ->
           Map.merge(candidate, %{"removalStatus" => "retained"})
 
         not older_than?(path, now_seconds, ttl_seconds) ->
@@ -605,6 +592,14 @@ defmodule VilanoKernel.Storage.Prune do
     end
   end
 
+  defp active_workspace_path?(path, active_lease_ids) do
+    basename = Path.basename(path)
+
+    Enum.any?(active_lease_ids, fn lease_id ->
+      basename == lease_id or String.starts_with?(basename, "#{lease_id}.tmp-")
+    end)
+  end
+
   defp candidate_summary(path) do
     usage = Usage.path_usage(path)
 
@@ -624,20 +619,20 @@ defmodule VilanoKernel.Storage.Prune do
     Enum.map(candidates, &remove_candidate_path/1)
   end
 
-  defp remove_artifact_candidates(candidates, _root, _retained, true) do
+  defp remove_artifact_candidates(candidates, _root, _retained, _active_run_ids, true) do
     Enum.map(candidates, &Map.put(&1, "removalStatus", "dry_run"))
   end
 
-  defp remove_artifact_candidates(candidates, root, retained, false) do
+  defp remove_artifact_candidates(candidates, root, retained, active_run_ids, false) do
     Enum.map(candidates, fn %{"path" => path} = candidate ->
-      case artifact_removal_allowed?(root, path, retained) do
+      case artifact_removal_allowed?(root, path, retained, active_run_ids) do
         {:ok, false} -> Map.merge(candidate, %{"removalStatus" => "retained"})
         {:ok, true} -> remove_candidate_path(candidate)
       end
     end)
   end
 
-  defp artifact_removal_allowed?(root, path, retained) do
+  defp artifact_removal_allowed?(root, path, retained, active_run_ids) do
     relative_path = artifact_relative_path(root, path)
 
     cond do
@@ -647,8 +642,11 @@ defmodule VilanoKernel.Storage.Prune do
       MapSet.member?(retained, relative_path) ->
         {:ok, false}
 
+      active_artifact_path?(relative_path, active_run_ids) ->
+        {:ok, false}
+
       true ->
-        {:ok, not existing_artifact_run_path?(relative_path)}
+        {:ok, not currently_referenced_artifact_path?(root, relative_path)}
     end
   end
 
@@ -723,7 +721,10 @@ defmodule VilanoKernel.Storage.Prune do
 
   defp referenced_artifact_paths(runtime) do
     root = Path.expand(runtime.artifact_home_dir)
+    referenced_artifact_paths_for_root(root)
+  end
 
+  defp referenced_artifact_paths_for_root(root) do
     Infrastructure.run_with_busy_retry(
       fn ->
         referenced_artifact_refs()
@@ -733,6 +734,14 @@ defmodule VilanoKernel.Storage.Prune do
       end,
       :public_read
     )
+  end
+
+  defp currently_referenced_artifact_path?(_root, nil), do: false
+
+  defp currently_referenced_artifact_path?(root, relative_path) do
+    root
+    |> referenced_artifact_paths_for_root()
+    |> MapSet.member?(relative_path)
   end
 
   defp referenced_artifact_refs do
@@ -813,59 +822,16 @@ defmodule VilanoKernel.Storage.Prune do
     end
   end
 
-  defp existing_artifact_run_path?(nil), do: false
-
-  defp existing_artifact_run_path?(relative_path) do
-    case artifact_run_id_from_relative_path(relative_path) do
-      nil ->
-        false
-
-      run_id ->
-        run_id_exists?(run_id)
-    end
-  end
-
-  defp run_id_exists?(run_id) do
-    Infrastructure.run_with_busy_retry(
-      fn ->
-        Repo
-        |> SQL.query!(
-          """
-          select 1
-          from runs
-          where id = ?
-          limit 1
-          """,
-          [run_id]
-        )
-        |> rows_to_maps()
-        |> Enum.any?()
-      end,
-      :public_read
-    )
-  end
-
   defp artifact_relative_path(root, path) do
     root
     |> artifact_relative_path_from_ref(Path.relative_to(path, root))
   end
 
-  defp retained_or_existing_run_artifact?(root, path, retained, existing_run_ids) do
+  defp retained_or_active_run_artifact?(root, path, retained, active_run_ids) do
     relative_path = artifact_relative_path(root, path)
 
     MapSet.member?(retained, relative_path) or
-      existing_run_artifact_path?(relative_path, existing_run_ids)
-  end
-
-  defp existing_run_artifact_path?(nil, _existing_run_ids), do: false
-
-  defp existing_run_artifact_path?(relative_path, existing_run_ids) do
-    relative_path
-    |> artifact_run_id_from_relative_path()
-    |> case do
-      nil -> false
-      run_id -> MapSet.member?(existing_run_ids, run_id)
-    end
+      active_artifact_path?(relative_path, active_run_ids)
   end
 
   defp active_artifact_path?(nil, _active_run_ids), do: false
@@ -887,40 +853,6 @@ defmodule VilanoKernel.Storage.Prune do
       ["artifacts", "runs", run_id | _rest] -> run_id
       _parts -> nil
     end
-  end
-
-  defp existing_artifact_run_ids(_root, []), do: MapSet.new()
-
-  defp existing_artifact_run_ids(root, paths) do
-    paths
-    |> Enum.map(&artifact_relative_path(root, &1))
-    |> Enum.map(&artifact_run_id_from_relative_path/1)
-    |> Enum.reject(&is_nil/1)
-    |> Enum.uniq()
-    |> existing_run_ids()
-  end
-
-  defp existing_run_ids([]), do: MapSet.new()
-
-  defp existing_run_ids(run_ids) do
-    Infrastructure.run_with_busy_retry(
-      fn ->
-        run_ids
-        |> Enum.chunk_every(@run_prune_batch_size)
-        |> Enum.flat_map(&existing_run_id_batch/1)
-        |> MapSet.new()
-      end,
-      :public_read
-    )
-  end
-
-  defp existing_run_id_batch(run_ids) do
-    placeholders = placeholders(run_ids)
-
-    Repo
-    |> SQL.query!("select id from runs where id in (#{placeholders})", run_ids)
-    |> rows_to_maps()
-    |> Enum.map(& &1["id"])
   end
 
   defp artifact_relative_path_from_ref(_root, nil), do: nil

@@ -163,6 +163,8 @@ defmodule VilanoKernel.Storage.InfrastructureTest do
     assert "runs_definition_status_lease_updated_idx" in table_indexes("runs")
     assert "runs_lease_status_idx" in table_indexes("runs")
     assert "runs_status_lease_idx" in table_indexes("runs")
+    assert "run_events_event_type_idx" in table_indexes("run_events")
+    assert "run_signals_run_created_idx" in table_indexes("run_signals")
     assert "service_envelopes_status_updated_idx" in table_indexes("service_envelopes")
     assert "service_envelopes_sender_run_idx" in table_indexes("service_envelopes")
     assert "run_service_refs_service_run_idx" in table_indexes("run_service_refs")
@@ -188,6 +190,30 @@ defmodule VilanoKernel.Storage.InfrastructureTest do
     assert plan =~ "runs_lease_status_idx"
     assert plan =~ "runs_status_lease_idx"
     refute plan =~ "SCAN runs"
+  end
+
+  test "prune retention and delete queries use supporting indexes" do
+    event_plan =
+      """
+      explain query plan
+      select id, body_json
+      from run_events
+      where event_type in ('ProcessCompleted', 'ProcessFailed', 'StepFailed', 'TurnFailed')
+      """
+      |> query_plan_details()
+      |> Enum.join("\n")
+
+    signal_delete_plan =
+      """
+      explain query plan
+      delete from run_signals
+      where run_id in ('run_query_plan')
+      """
+      |> query_plan_details()
+      |> Enum.join("\n")
+
+    assert event_plan =~ "run_events_event_type_idx"
+    assert signal_delete_plan =~ "run_signals_run_created_idx"
   end
 
   defp table_indexes(table_name) do

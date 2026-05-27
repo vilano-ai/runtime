@@ -28,12 +28,13 @@ defmodule VilanoKernel.Storage.EventPayloads do
 
     if externalize_body?(body, body_json, max_bytes) do
       prepared_payload = prepare_payload!(body_json)
+      publish_payload!(prepared_payload)
       ref = prepared_payload.ref
 
       %{
         body_json: Jason.encode!(ref),
         payload_ref: ref,
-        prepared_payload: prepared_payload
+        prepared_payload: Map.put(prepared_payload, :published?, true)
       }
     else
       %{
@@ -45,6 +46,7 @@ defmodule VilanoKernel.Storage.EventPayloads do
   end
 
   def publish_prepared_payload!(%{prepared_payload: nil}), do: :ok
+  def publish_prepared_payload!(%{prepared_payload: %{published?: true}}), do: :ok
 
   def publish_prepared_payload!(%{prepared_payload: prepared_payload}) do
     publish_payload!(prepared_payload)
@@ -126,34 +128,35 @@ defmodule VilanoKernel.Storage.EventPayloads do
     remove_stale_payload_temp_files(stale_canonical_temp_paths, grace_period_ms)
     remove_stale_staged_payload_files(stale_staged_payload_paths, grace_period_ms)
     remove_quarantined_payload_files()
-    prune_empty_payload_dirs(payload_root())
+    Enum.each(payload_roots(), &prune_empty_payload_dirs/1)
     prune_empty_payload_dirs(gc_quarantine_root())
 
     :ok
   end
 
   defp payload_gc_candidates(grace_period_ms) do
-    root = payload_root()
+    now_seconds = System.system_time(:second)
+    grace_seconds = ceil_div(grace_period_ms, 1_000)
 
-    if File.dir?(root) do
-      now_seconds = System.system_time(:second)
-      grace_seconds = ceil_div(grace_period_ms, 1_000)
+    payload_root_specs()
+    |> Enum.flat_map(fn {root, base_dir} ->
+      if File.dir?(root) do
+        root
+        |> payload_files()
+        |> Enum.reduce([], fn absolute_path, candidates ->
+          relative_path = Path.relative_to(absolute_path, base_dir)
 
-      root
-      |> payload_files()
-      |> Enum.reduce([], fn absolute_path, candidates ->
-        relative_path = Path.relative_to(absolute_path, runtime_home_dir())
-
-        if valid_payload_file_path?(relative_path) and
-             old_enough_for_gc?(absolute_path, now_seconds, grace_seconds) do
-          [%{absolute_path: absolute_path, relative_path: relative_path} | candidates]
-        else
-          candidates
-        end
-      end)
-    else
-      []
-    end
+          if valid_payload_file_path?(relative_path) and
+               old_enough_for_gc?(absolute_path, now_seconds, grace_seconds) do
+            [%{absolute_path: absolute_path, relative_path: relative_path} | candidates]
+          else
+            candidates
+          end
+        end)
+      else
+        []
+      end
+    end)
   end
 
   defp staged_payload_gc_candidates(grace_period_ms) do
@@ -552,6 +555,20 @@ defmodule VilanoKernel.Storage.EventPayloads do
 
   defp payload_root do
     Path.join(runtime_home_dir(), @payload_dir)
+  end
+
+  defp payload_roots do
+    payload_root_specs()
+    |> Enum.map(fn {root, _base_dir} -> root end)
+    |> Enum.uniq()
+  end
+
+  defp payload_root_specs do
+    [
+      {Path.join(runtime_home_dir(), @payload_dir), runtime_home_dir()},
+      {Path.join(execution_home_dir(), @payload_dir), execution_home_dir()}
+    ]
+    |> Enum.uniq()
   end
 
   defp payload_staging_root do

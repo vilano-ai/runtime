@@ -102,7 +102,9 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     end
   end
 
-  test "large payloads can be staged before DB publication", %{runtime_home: runtime_home} do
+  test "large payload preparation publishes outside DB transactions", %{
+    runtime_home: runtime_home
+  } do
     body = large_body()
     body_json = Jason.encode!(body)
     storage = EventPayloads.prepare_body_for_storage!(body)
@@ -110,14 +112,6 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     payload_path = Path.join(runtime_home, ref["path"])
 
     try do
-      refute File.exists?(payload_path)
-
-      staged_files =
-        Path.wildcard(Path.join([runtime_home, "event-payloads-staging", "*", "*.tmp"]))
-
-      assert length(staged_files) == 1
-      assert File.read!(List.first(staged_files)) == body_json
-
       EventPayloads.publish_prepared_payload!(storage)
 
       assert File.exists?(payload_path)
@@ -242,7 +236,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     end
   end
 
-  test "workflow creation discards prepared RunStarted payload staging on failure", %{
+  test "workflow creation leaves no prepared RunStarted payload staging on failure", %{
     runtime_home: runtime_home,
     execution_home: execution_home
   } do
@@ -613,6 +607,24 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     end
   end
 
+  test "garbage collection removes unreferenced legacy execution-home payloads", %{
+    runtime_home: runtime_home,
+    execution_home: execution_home
+  } do
+    body_json = Jason.encode!(large_body())
+    ref = payload_ref_for_body_json(body_json)
+    legacy_payload_path = write_payload_file!(execution_home, ref, body_json)
+    canonical_payload_path = Path.join(runtime_home, ref["path"])
+
+    refute File.exists?(canonical_payload_path)
+    assert File.exists?(legacy_payload_path)
+
+    EventPayloads.garbage_collect!(0)
+
+    refute File.exists?(legacy_payload_path)
+    refute File.exists?(canonical_payload_path)
+  end
+
   test "falls back to legacy execution-home payload when canonical file is invalid", %{
     runtime_home: runtime_home,
     execution_home: execution_home
@@ -963,6 +975,7 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     project = project_name()
     run_id = run_id()
     active_run_id = run_id()
+    active_lease_id = "lease_" <> Ecto.UUID.generate()
     now = now()
 
     referenced_ref =
@@ -974,12 +987,16 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     active_ref =
       Path.join(["artifacts", "runs", active_run_id, "execs", "op", "attempt-1", "stdout.txt"])
 
+    terminal_orphan_ref =
+      Path.join(["artifacts", "runs", run_id, "execs", "other", "attempt-1", "unreferenced.txt"])
+
     orphan_ref =
       Path.join(["artifacts", "runs", "orphan", "execs", "op", "attempt-1", "stdout.txt"])
 
     referenced_path = Path.join(artifact_home, referenced_ref)
     historical_event_path = Path.join(artifact_home, historical_event_ref)
     active_path = Path.join(artifact_home, active_ref)
+    terminal_orphan_path = Path.join(artifact_home, terminal_orphan_ref)
     orphan_path = Path.join(artifact_home, orphan_ref)
 
     active_empty_dir =
@@ -987,6 +1004,9 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
 
     orphan_empty_dir =
       Path.join([artifact_home, "runs", "orphan_empty", "execs", "empty", "attempt-1"])
+
+    active_temp_workspace =
+      Path.join([execution_home, "worker-home", "run-workspaces", "#{active_lease_id}.tmp-copy"])
 
     try do
       insert_project_runtime!(project, run_id, execution_home)
@@ -1001,30 +1021,43 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
           definition_name,
           status,
           lease_id,
+          lease_expires_at,
           input_json,
           created_at,
           updated_at
-        ) values (?, ?, 'workflow', 'workflow', 'running', ?, '{}', ?, ?)
+        ) values (?, ?, 'workflow', 'workflow', 'running', ?, ?, '{}', ?, ?)
         """,
-        [active_run_id, project, "lease_" <> Ecto.UUID.generate(), now, now]
+        [
+          active_run_id,
+          project,
+          active_lease_id,
+          DateTime.add(DateTime.utc_now(), 60, :second) |> DateTime.to_iso8601(),
+          now,
+          now
+        ]
       )
 
       File.mkdir_p!(Path.dirname(referenced_path))
       File.mkdir_p!(Path.dirname(historical_event_path))
       File.mkdir_p!(Path.dirname(active_path))
+      File.mkdir_p!(Path.dirname(terminal_orphan_path))
       File.mkdir_p!(Path.dirname(orphan_path))
       File.mkdir_p!(active_empty_dir)
       File.mkdir_p!(orphan_empty_dir)
+      File.mkdir_p!(active_temp_workspace)
       File.write!(referenced_path, "referenced")
       File.write!(historical_event_path, "historical")
       File.write!(active_path, "active")
+      File.write!(terminal_orphan_path, "terminal orphan")
       File.write!(orphan_path, "orphan")
       assert force_old_mtime(referenced_path)
       assert force_old_mtime(historical_event_path)
       assert force_old_mtime(active_path)
+      assert force_old_mtime(terminal_orphan_path)
       assert force_old_mtime(orphan_path)
       assert force_old_mtime(active_empty_dir)
       assert force_old_mtime(orphan_empty_dir)
+      assert force_old_mtime(active_temp_workspace)
 
       SQL.query!(
         Repo,
@@ -1083,6 +1116,8 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
       assert File.exists?(historical_event_path)
       assert File.exists?(active_path)
       assert File.dir?(active_empty_dir)
+      assert File.dir?(active_temp_workspace)
+      refute File.exists?(terminal_orphan_path)
       refute File.exists?(orphan_path)
       refute File.exists?(orphan_empty_dir)
     after

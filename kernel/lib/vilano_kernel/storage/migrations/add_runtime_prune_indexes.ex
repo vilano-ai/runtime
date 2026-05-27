@@ -38,6 +38,24 @@ defmodule VilanoKernel.Storage.Migrations.AddRuntimePruneIndexes do
     SQL.query!(
       Repo,
       """
+      create index if not exists run_events_event_type_idx
+      on run_events(event_type)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create index if not exists run_signals_run_created_idx
+      on run_signals(run_id, created_at)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
       create index if not exists service_envelopes_status_updated_idx
       on service_envelopes(status, updated_at)
       """,
