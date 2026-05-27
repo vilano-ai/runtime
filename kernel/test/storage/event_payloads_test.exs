@@ -21,11 +21,13 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
       Path.join(System.tmp_dir!(), "vilano-event-payloads-home-#{Ecto.UUID.generate()}")
 
     execution_home = Path.join(System.tmp_dir!(), "vilano-event-payloads-#{Ecto.UUID.generate()}")
+    artifact_home = Path.join(execution_home, "artifacts")
 
     Application.put_env(:vilano_kernel, :runtime, %{
       runtime
       | home_dir: runtime_home,
         execution_home_dir: execution_home,
+        artifact_home_dir: artifact_home,
         event_payload_max_bytes: 128
     })
 
@@ -35,7 +37,8 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
       File.rm_rf(execution_home)
     end)
 
-    {:ok, runtime_home: runtime_home, execution_home: execution_home}
+    {:ok,
+     runtime_home: runtime_home, execution_home: execution_home, artifact_home: artifact_home}
   end
 
   test "small events remain inline", %{runtime_home: runtime_home} do
@@ -269,6 +272,9 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     input = large_body()
     lease_id = "lease_" <> Ecto.UUID.generate()
     child_run_id = run_id()
+    restore_hooks = install_payload_prepare_hook(self())
+
+    on_exit(restore_hooks)
 
     try do
       parent_run = Storage.create_workflow_run!(project, definition, %{"parent" => true})
@@ -287,9 +293,23 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
       assert Path.wildcard(Path.join([runtime_home, "event-payloads-staging", "*", "*.tmp"])) ==
                []
 
+      spawned_row =
+        parent_run["id"]
+        |> event_rows()
+        |> Enum.find(&(&1["event_type"] == "ChildRunSpawned"))
+
+      spawned_ref = Jason.decode!(spawned_row["body_json"])
+      assert spawned_ref[@ref_marker] == 1
+      assert File.exists?(Path.join(runtime_home, spawned_ref["path"]))
+
+      assert payload_ref_rows(parent_run["id"])
+             |> Enum.any?(&(&1["event_id"] == spawned_row["id"]))
+
       assert [event] = ReadModels.list_run_events(child_run_id)
       assert event["type"] == "RunStarted"
       assert event["body"]["input"] == input
+
+      assert_prepared_payloads_outside_transaction_at_least(2)
     after
       cleanup_project_runtime(project_name)
     end
@@ -319,6 +339,9 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
           "fail"
         )
 
+      restore_hooks = install_payload_prepare_hook(self())
+      on_exit(restore_hooks)
+
       assert %{"currentChildRunId" => child_run_id} =
                Supervision.resolve_supervised_spawn(
                  lease_id,
@@ -338,9 +361,21 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
       assert Path.wildcard(Path.join([runtime_home, "event-payloads-staging", "*", "*.tmp"])) ==
                []
 
+      member_row =
+        owner_run["id"]
+        |> event_rows()
+        |> Enum.find(&(&1["event_type"] == "SupervisionMemberSpawned"))
+
+      member_ref = Jason.decode!(member_row["body_json"])
+      assert member_ref[@ref_marker] == 1
+      assert File.exists?(Path.join(runtime_home, member_ref["path"]))
+      assert payload_ref_rows(owner_run["id"]) |> Enum.any?(&(&1["event_id"] == member_row["id"]))
+
       assert [event] = ReadModels.list_run_events(child_run_id)
       assert event["type"] == "RunStarted"
       assert event["body"]["input"] == input
+
+      assert_prepared_payloads_outside_transaction_at_least(2)
     after
       cleanup_project_runtime(project_name)
     end
@@ -921,6 +956,247 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     end
   end
 
+  test "runtime prune removes orphan exec artifacts but keeps referenced artifacts", %{
+    artifact_home: artifact_home,
+    execution_home: execution_home
+  } do
+    project = project_name()
+    run_id = run_id()
+    active_run_id = run_id()
+    now = now()
+
+    referenced_ref =
+      Path.join(["artifacts", "runs", run_id, "execs", "op", "attempt-1", "stdout.txt"])
+
+    historical_event_ref =
+      Path.join(["custom", "history", run_id, "attempt-0", "stdout.txt"])
+
+    active_ref =
+      Path.join(["artifacts", "runs", active_run_id, "execs", "op", "attempt-1", "stdout.txt"])
+
+    orphan_ref =
+      Path.join(["artifacts", "runs", "orphan", "execs", "op", "attempt-1", "stdout.txt"])
+
+    referenced_path = Path.join(artifact_home, referenced_ref)
+    historical_event_path = Path.join(artifact_home, historical_event_ref)
+    active_path = Path.join(artifact_home, active_ref)
+    orphan_path = Path.join(artifact_home, orphan_ref)
+
+    active_empty_dir =
+      Path.join([artifact_home, "runs", active_run_id, "execs", "empty", "attempt-1"])
+
+    orphan_empty_dir =
+      Path.join([artifact_home, "runs", "orphan_empty", "execs", "empty", "attempt-1"])
+
+    try do
+      insert_project_runtime!(project, run_id, execution_home)
+
+      SQL.query!(
+        Repo,
+        """
+        insert into runs (
+          id,
+          project_name,
+          definition_kind,
+          definition_name,
+          status,
+          lease_id,
+          input_json,
+          created_at,
+          updated_at
+        ) values (?, ?, 'workflow', 'workflow', 'running', ?, '{}', ?, ?)
+        """,
+        [active_run_id, project, "lease_" <> Ecto.UUID.generate(), now, now]
+      )
+
+      File.mkdir_p!(Path.dirname(referenced_path))
+      File.mkdir_p!(Path.dirname(historical_event_path))
+      File.mkdir_p!(Path.dirname(active_path))
+      File.mkdir_p!(Path.dirname(orphan_path))
+      File.mkdir_p!(active_empty_dir)
+      File.mkdir_p!(orphan_empty_dir)
+      File.write!(referenced_path, "referenced")
+      File.write!(historical_event_path, "historical")
+      File.write!(active_path, "active")
+      File.write!(orphan_path, "orphan")
+      assert force_old_mtime(referenced_path)
+      assert force_old_mtime(historical_event_path)
+      assert force_old_mtime(active_path)
+      assert force_old_mtime(orphan_path)
+      assert force_old_mtime(active_empty_dir)
+      assert force_old_mtime(orphan_empty_dir)
+
+      SQL.query!(
+        Repo,
+        """
+        insert into run_execs (
+          run_id,
+          op_key,
+          name,
+          status,
+          cmd,
+          args_json,
+          cwd,
+          env_json,
+          timeout_ms,
+          attempt,
+          exit_code,
+          signal_code,
+          stdout_ref,
+          stderr_ref,
+          artifacts_json,
+          output_json,
+          error_json,
+          created_at,
+          updated_at
+        ) values (?, 'op', 'exec', 'completed', 'echo', '[]', null, null, null, 1, 0, null, ?, null, '[]', null, null, ?, ?)
+        """,
+        [run_id, referenced_ref, now, now]
+      )
+
+      Support.append_event!(
+        run_id,
+        "ProcessFailed",
+        %{
+          "name" => "exec",
+          "key" => "op",
+          "attempt" => 0,
+          "stdoutRef" => historical_event_ref,
+          "stderrRef" => nil,
+          "artifacts" => [],
+          "error" => large_body()
+        },
+        now
+      )
+
+      pruned =
+        Storage.prune_runtime(%{
+          "artifactGraceSeconds" => 0,
+          "eventPayloadGraceSeconds" => 0,
+          "runWorkspaceTtlSeconds" => 0,
+          "projectSnapshotGraceSeconds" => 300
+        })
+
+      assert pruned.ok == true
+      assert pruned.artifacts["removedCount"] >= 1
+      assert File.exists?(referenced_path)
+      assert File.exists?(historical_event_path)
+      assert File.exists?(active_path)
+      assert File.dir?(active_empty_dir)
+      refute File.exists?(orphan_path)
+      refute File.exists?(orphan_empty_dir)
+    after
+      SQL.query!(Repo, "delete from run_execs where run_id = ?", [run_id])
+      cleanup_project_runtime(project)
+    end
+  end
+
+  test "runtime prune keeps completed workflow runs with live service traffic", %{
+    execution_home: execution_home
+  } do
+    project = project_name()
+    ref_caller_run_id = run_id()
+    envelope_sender_run_id = run_id()
+    ref_service_run_id = run_id()
+    envelope_service_run_id = run_id()
+    envelope_id = "env_" <> Ecto.UUID.generate()
+    old = old_iso8601()
+    now = now()
+
+    try do
+      insert_project_runtime!(project, ref_caller_run_id, execution_home)
+      insert_workflow_run!(project, envelope_sender_run_id, now)
+
+      SQL.query!(
+        Repo,
+        """
+        update runs
+        set created_at = ?, updated_at = ?
+        where id in (?, ?)
+        """,
+        [old, old, ref_caller_run_id, envelope_sender_run_id]
+      )
+
+      insert_service_run!(project, ref_service_run_id, now)
+      insert_service_run!(project, envelope_service_run_id, now)
+
+      SQL.query!(
+        Repo,
+        """
+        insert into run_service_refs (
+          caller_run_id,
+          service_run_id,
+          created_at
+        ) values (?, ?, ?)
+        """,
+        [ref_caller_run_id, ref_service_run_id, now]
+      )
+
+      SQL.query!(
+        Repo,
+        """
+        insert into service_envelopes (
+          id,
+          service_run_id,
+          kind,
+          name,
+          attempt,
+          payload_json,
+          correlation_id,
+          sender_run_id,
+          status,
+          reply_json,
+          error_json,
+          wake_at,
+          created_at,
+          updated_at
+        ) values (?, ?, 'signal', 'keepSender', null, '{}', null, ?, 'queued', null, null, null, ?, ?)
+        """,
+        [envelope_id, envelope_service_run_id, envelope_sender_run_id, now, now]
+      )
+
+      pruned =
+        Storage.prune_runtime(%{
+          "completedRunTtlSeconds" => 0,
+          "eventPayloadGraceSeconds" => 0,
+          "runWorkspaceTtlSeconds" => 86_400,
+          "projectSnapshotGraceSeconds" => 300,
+          "artifactGraceSeconds" => 300
+        })
+
+      assert pruned.ok == true
+      assert pruned.completedRuns["eligibleCount"] >= 2
+      assert pruned.completedRuns["skippedUnsafeCount"] >= 2
+      assert run_exists?(ref_caller_run_id)
+      assert run_exists?(envelope_sender_run_id)
+      assert service_envelope_exists?(envelope_id)
+    after
+      SQL.query!(Repo, "delete from service_envelopes where id = ?", [envelope_id])
+
+      SQL.query!(
+        Repo,
+        """
+        delete from run_service_refs
+        where caller_run_id in (?, ?) or service_run_id in (?, ?)
+        """,
+        [
+          ref_caller_run_id,
+          envelope_sender_run_id,
+          ref_service_run_id,
+          envelope_service_run_id
+        ]
+      )
+
+      SQL.query!(
+        Repo,
+        "delete from service_runs where run_id in (?, ?)",
+        [ref_service_run_id, envelope_service_run_id]
+      )
+
+      cleanup_project_runtime(project)
+    end
+  end
+
   test "garbage collection removes orphan payloads with unrelated marker rows present", %{
     runtime_home: runtime_home
   } do
@@ -1041,6 +1317,9 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     end)
   end
 
+  defp first_integer(%{rows: [[value | _rest] | _rows]}) when is_integer(value), do: value
+  defp first_integer(_result), do: 0
+
   defp cleanup_run_events(run_id) do
     SQL.query!(Repo, "delete from run_event_payload_refs where run_id = ?", [run_id])
     SQL.query!(Repo, "delete from run_events where run_id = ?", [run_id])
@@ -1072,6 +1351,38 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
     old_time = :calendar.system_time_to_universal_time(System.system_time(:second) - 600, :second)
 
     File.touch(path, old_time) == :ok
+  end
+
+  defp install_payload_prepare_hook(parent) do
+    original_hooks = Application.get_env(:vilano_kernel, :storage_test_hooks)
+
+    Application.put_env(:vilano_kernel, :storage_test_hooks, %{
+      event_payload_prepared: fn payload ->
+        send(parent, {:event_payload_prepared, payload})
+      end
+    })
+
+    fn ->
+      case original_hooks do
+        nil -> Application.delete_env(:vilano_kernel, :storage_test_hooks)
+        hooks -> Application.put_env(:vilano_kernel, :storage_test_hooks, hooks)
+      end
+    end
+  end
+
+  defp assert_prepared_payloads_outside_transaction_at_least(count) do
+    payloads = drain_prepared_payloads([])
+
+    assert Enum.count(payloads, &(Map.get(&1, :in_transaction?) == false)) >= count
+    refute Enum.any?(payloads, &Map.get(&1, :in_transaction?))
+  end
+
+  defp drain_prepared_payloads(payloads) do
+    receive do
+      {:event_payload_prepared, payload} -> drain_prepared_payloads([payload | payloads])
+    after
+      100 -> Enum.reverse(payloads)
+    end
   end
 
   defp payload_ref_for_body_json(body_json) do
@@ -1125,6 +1436,71 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
       """,
       [run_id, project_name, "workflow", "workflow", "completed", "{}", now, now]
     )
+  end
+
+  defp insert_workflow_run!(project_name, run_id, timestamp) do
+    SQL.query!(
+      Repo,
+      """
+      insert into runs (
+        id,
+        project_name,
+        definition_kind,
+        definition_name,
+        status,
+        input_json,
+        created_at,
+        updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?)
+      """,
+      [run_id, project_name, "workflow", "workflow", "completed", "{}", timestamp, timestamp]
+    )
+  end
+
+  defp insert_service_run!(project_name, run_id, timestamp) do
+    SQL.query!(
+      Repo,
+      """
+      insert into runs (
+        id,
+        project_name,
+        definition_kind,
+        definition_name,
+        status,
+        input_json,
+        created_at,
+        updated_at
+      ) values (?, ?, 'service', 'service', 'running', '{}', ?, ?)
+      """,
+      [run_id, project_name, timestamp, timestamp]
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      insert into service_runs (
+        run_id,
+        service_key,
+        key_input_json,
+        state_json,
+        created_at,
+        updated_at
+      ) values (?, ?, '{}', '{}', ?, ?)
+      """,
+      [run_id, "service-" <> run_id, timestamp, timestamp]
+    )
+  end
+
+  defp run_exists?(run_id) do
+    Repo
+    |> SQL.query!("select count(*) from runs where id = ?", [run_id])
+    |> first_integer() == 1
+  end
+
+  defp service_envelope_exists?(envelope_id) do
+    Repo
+    |> SQL.query!("select count(*) from service_envelopes where id = ?", [envelope_id])
+    |> first_integer() == 1
   end
 
   defp cleanup_project_runtime(project_name) do
@@ -1249,6 +1625,13 @@ defmodule VilanoKernel.Storage.EventPayloadsTest do
 
   defp now do
     DateTime.utc_now() |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()
+  end
+
+  defp old_iso8601 do
+    DateTime.utc_now()
+    |> DateTime.add(-600, :second)
+    |> DateTime.truncate(:second)
+    |> DateTime.to_iso8601()
   end
 
   defp activate_run_for_lease!(run_id, lease_id) do

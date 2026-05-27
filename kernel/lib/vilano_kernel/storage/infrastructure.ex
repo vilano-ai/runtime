@@ -560,8 +560,62 @@ defmodule VilanoKernel.Storage.Infrastructure do
     SQL.query!(
       Repo,
       """
+      create index if not exists runs_definition_status_lease_updated_idx
+      on runs(definition_kind, status, lease_id, updated_at)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create index if not exists runs_lease_status_idx
+      on runs(lease_id, status)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create index if not exists runs_status_lease_idx
+      on runs(status, lease_id)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
       create index if not exists run_events_run_seq_idx
       on run_events(run_id, seq)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create index if not exists service_envelopes_status_updated_idx
+      on service_envelopes(status, updated_at)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create index if not exists service_envelopes_sender_run_idx
+      on service_envelopes(sender_run_id)
+      """,
+      []
+    )
+
+    SQL.query!(
+      Repo,
+      """
+      create index if not exists run_service_refs_service_run_idx
+      on run_service_refs(service_run_id)
       """,
       []
     )

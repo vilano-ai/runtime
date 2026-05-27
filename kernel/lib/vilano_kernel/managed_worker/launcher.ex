@@ -30,6 +30,12 @@ defmodule VilanoKernel.ManagedWorker.Launcher do
     end
   end
 
+  def worker_cache_version(runtime) do
+    runtime.project_root
+    |> Path.join("worker")
+    |> worker_source_version()
+  end
+
   def spawn(launch_spec, runtime, worker_id, once?) do
     port =
       start_port(

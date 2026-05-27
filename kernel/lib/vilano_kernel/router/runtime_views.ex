@@ -68,6 +68,8 @@ defmodule VilanoKernel.Router.RuntimeViews do
       paths:
         Usage.path_summary([
           {"runtime_db", runtime.runtime_db_path, "file"},
+          {"runtime_db_wal", runtime.runtime_db_path <> "-wal", "file"},
+          {"runtime_db_shm", runtime.runtime_db_path <> "-shm", "file"},
           {"daemon_startup_log", Path.join(runtime.home_dir, "kernel-startup.log"), "file"},
           {"runtime_cache", Path.join(runtime.home_dir, "runtime-cache"), "directory"},
           {"artifacts", runtime.artifact_home_dir, "directory"},

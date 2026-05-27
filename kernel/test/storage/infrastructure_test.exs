@@ -1,6 +1,8 @@
 defmodule VilanoKernel.Storage.InfrastructureTest do
   use ExUnit.Case, async: true
 
+  alias Ecto.Adapters.SQL
+  alias VilanoKernel.Repo
   alias VilanoKernel.Storage.Infrastructure
 
   test "run_with_busy_retry retries busy exceptions" do
@@ -155,5 +157,50 @@ defmodule VilanoKernel.Storage.InfrastructureTest do
 
     assert result == :ok
     assert :atomics.get(attempts, 1) == 4
+  end
+
+  test "runtime prune indexes exist" do
+    assert "runs_definition_status_lease_updated_idx" in table_indexes("runs")
+    assert "runs_lease_status_idx" in table_indexes("runs")
+    assert "runs_status_lease_idx" in table_indexes("runs")
+    assert "service_envelopes_status_updated_idx" in table_indexes("service_envelopes")
+    assert "service_envelopes_sender_run_idx" in table_indexes("service_envelopes")
+    assert "run_service_refs_service_run_idx" in table_indexes("run_service_refs")
+  end
+
+  test "active artifact run query uses indexes" do
+    plan =
+      """
+      explain query plan
+      select id
+      from runs indexed by runs_lease_status_idx
+      where lease_id is not null
+
+      union
+
+      select id
+      from runs indexed by runs_status_lease_idx
+      where status in ('pending', 'running', 'waiting', 'active', 'idle')
+      """
+      |> query_plan_details()
+      |> Enum.join("\n")
+
+    assert plan =~ "runs_lease_status_idx"
+    assert plan =~ "runs_status_lease_idx"
+    refute plan =~ "SCAN runs"
+  end
+
+  defp table_indexes(table_name) do
+    Repo
+    |> SQL.query!("pragma index_list(#{table_name})", [])
+    |> Map.fetch!(:rows)
+    |> Enum.map(fn row -> Enum.at(row, 1) end)
+  end
+
+  defp query_plan_details(query) do
+    Repo
+    |> SQL.query!(query, [])
+    |> Map.fetch!(:rows)
+    |> Enum.map(fn row -> row |> List.last() |> to_string() end)
   end
 end

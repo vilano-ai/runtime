@@ -12,6 +12,17 @@ defmodule VilanoKernel.Storage.Usage do
         %{
           "projects" => scalar!("select count(*) from projects"),
           "runs" => scalar!("select count(*) from runs"),
+          "runPayloads" =>
+            count_and_bytes!("""
+            select
+              count(*),
+              coalesce(sum(
+                coalesce(length(input_json), 0) +
+                coalesce(length(output_json), 0) +
+                coalesce(length(error_json), 0)
+              ), 0)
+            from runs
+            """),
           "runEvents" =>
             count_and_bytes!(
               "select count(*), coalesce(sum(length(body_json)), 0) from run_events"
@@ -25,9 +36,16 @@ defmodule VilanoKernel.Storage.Usage do
               "select count(*), coalesce(sum(length(state_json)), 0) from service_runs where state_json is not null"
             ),
           "serviceEnvelopes" =>
-            count_and_bytes!(
-              "select count(*), coalesce(sum(length(payload_json)), 0) from service_envelopes where payload_json is not null"
-            ),
+            count_and_bytes!("""
+            select
+              count(*),
+              coalesce(sum(
+                coalesce(length(payload_json), 0) +
+                coalesce(length(reply_json), 0) +
+                coalesce(length(error_json), 0)
+              ), 0)
+            from service_envelopes
+            """),
           "runExecs" =>
             count_and_bytes!("""
             select
@@ -40,6 +58,46 @@ defmodule VilanoKernel.Storage.Usage do
                 coalesce(length(error_json), 0)
               ), 0)
             from run_execs
+            """),
+          "runSteps" =>
+            count_and_bytes!("""
+            select
+              count(*),
+              coalesce(sum(
+                coalesce(length(output_json), 0) +
+                coalesce(length(error_json), 0) +
+                coalesce(length(retry_on_json), 0)
+              ), 0)
+            from run_steps
+            """),
+          "runWaits" =>
+            count_and_bytes!("""
+            select count(*), coalesce(sum(length(output_json)), 0)
+            from run_waits
+            where output_json is not null
+            """),
+          "runSignals" =>
+            count_and_bytes!("""
+            select count(*), coalesce(sum(length(payload_json)), 0)
+            from run_signals
+            where payload_json is not null
+            """),
+          "runServiceOps" =>
+            count_and_bytes!("""
+            select
+              count(*),
+              coalesce(sum(
+                coalesce(length(payload_json), 0) +
+                coalesce(length(response_json), 0) +
+                coalesce(length(error_json), 0)
+              ), 0)
+            from run_service_ops
+            """),
+          "topicPublishes" =>
+            count_and_bytes!("""
+            select count(*), coalesce(sum(length(payload_json)), 0)
+            from run_topic_publishes
+            where payload_json is not null
             """)
         }
       end,

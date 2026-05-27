@@ -18,6 +18,7 @@ defmodule VilanoKernel.RuntimeSupervisor do
       VilanoKernel.Diagnostics,
       VilanoKernel.WaitManager,
       VilanoKernel.StepDeadlineManager,
+      VilanoKernel.PruneManager,
       {Bandit, plug: VilanoKernel.Router, scheme: :http, port: runtime.port, ip: {127, 0, 0, 1}}
     ]
 
