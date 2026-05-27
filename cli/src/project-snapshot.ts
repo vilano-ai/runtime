@@ -23,6 +23,7 @@ const DEFAULT_SNAPSHOT_ROOT_EXCLUDED_NAMES = [
   "tmp",
 ];
 const DEFAULT_SNAPSHOT_ROOT_EXCLUDED_FILE_SUFFIXES = [".log"];
+const PENDING_SNAPSHOT_DIR = ".pending";
 
 export interface ProjectSnapshotOptions {
   excludes?: readonly string[];
@@ -46,20 +47,51 @@ export async function materializeProjectSnapshot(
   const snapshotOptions = normalizeSnapshotOptions(options);
   const snapshotId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}`;
   const snapshotRoot = path.join(runtimePaths.projectSnapshotsDir, projectName, snapshotId);
+  const tempSnapshotRoot = `${snapshotRoot}.tmp-${crypto.randomUUID().slice(0, 8)}`;
 
-  await ensurePrivateDir(path.dirname(snapshotRoot));
-  await fs.cp(sourcePath, snapshotRoot, {
-    recursive: true,
-    force: true,
-    dereference: true,
-    filter: (src) => shouldCopySnapshotEntry(sourcePath, src, snapshotOptions),
-  });
-  if (snapshotOptions.includeNodeModules) {
-    await ensureDependencyResolution(sourcePath, snapshotRoot);
+  try {
+    await ensurePrivateDir(path.dirname(snapshotRoot));
+    await writeProjectSnapshotPendingMarker(snapshotRoot);
+    await fs.cp(sourcePath, tempSnapshotRoot, {
+      recursive: true,
+      force: true,
+      dereference: true,
+      filter: (src) => shouldCopySnapshotEntry(sourcePath, src, snapshotOptions),
+    });
+    if (snapshotOptions.includeNodeModules) {
+      await ensureDependencyResolution(sourcePath, tempSnapshotRoot);
+    }
+    await fs.rename(tempSnapshotRoot, snapshotRoot);
+    await fs.utimes(snapshotRoot, new Date(), new Date());
+    await sealSnapshot(snapshotRoot);
+  } catch (error) {
+    await removeProjectSnapshot(tempSnapshotRoot).catch(() => undefined);
+    await removeProjectSnapshot(snapshotRoot).catch(() => undefined);
+    await clearProjectSnapshotPendingMarker(snapshotRoot).catch(() => undefined);
+    throw error;
   }
-  await sealSnapshot(snapshotRoot);
 
   return snapshotRoot;
+}
+
+export async function releaseProjectSnapshot(snapshotPath: string): Promise<void> {
+  await clearProjectSnapshotPendingMarker(snapshotPath);
+}
+
+function projectSnapshotPendingMarkerPath(snapshotPath: string): string {
+  return path.join(path.dirname(snapshotPath), PENDING_SNAPSHOT_DIR, `${path.basename(snapshotPath)}.pending`);
+}
+
+async function writeProjectSnapshotPendingMarker(snapshotPath: string): Promise<void> {
+  const markerPath = projectSnapshotPendingMarkerPath(snapshotPath);
+  await ensurePrivateDir(path.dirname(markerPath));
+  await fs.writeFile(markerPath, snapshotPath, "utf8");
+}
+
+async function clearProjectSnapshotPendingMarker(snapshotPath: string): Promise<void> {
+  const markerPath = projectSnapshotPendingMarkerPath(snapshotPath);
+  await fs.rm(markerPath, { force: true });
+  await fs.rmdir(path.dirname(markerPath)).catch(() => undefined);
 }
 
 export function snapshotOptionsFromEnv(env: NodeJS.ProcessEnv = process.env): ProjectSnapshotOptions {
@@ -228,6 +260,10 @@ export async function pruneProjectSnapshots(
         return;
       }
 
+      if (entry.name === PENDING_SNAPSHOT_DIR || entry.name.includes(".tmp-")) {
+        return;
+      }
+
       const snapshotPath = path.join(projectSnapshotRoot, entry.name);
       if (!retained.has(snapshotPath)) {
         await removeProjectSnapshot(snapshotPath);
@@ -352,6 +388,7 @@ async function sealSnapshot(rootPath: string): Promise<void> {
 }
 
 export async function removeProjectSnapshot(snapshotPath: string): Promise<void> {
+  await clearProjectSnapshotPendingMarker(snapshotPath);
   await makeSnapshotDirectoriesWritable(snapshotPath);
   await fs.rm(snapshotPath, { recursive: true, force: true });
 }

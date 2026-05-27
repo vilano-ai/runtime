@@ -114,11 +114,11 @@ defmodule VilanoKernel.Storage.Prune do
       root
       |> child_directories()
       |> Enum.flat_map(&child_directories/1)
-      |> Enum.reject(&(Path.expand(&1) in retained))
+      |> Enum.reject(&retained_or_pending_project_snapshot?(&1, retained))
       |> Enum.filter(&older_than?(&1, now_seconds, grace_seconds))
       |> Enum.map(&candidate_summary/1)
 
-    removals = remove_candidates(candidates, dry_run?)
+    removals = remove_project_snapshot_candidates(candidates, retained, dry_run?)
 
     %{
       "root" => root,
@@ -177,13 +177,14 @@ defmodule VilanoKernel.Storage.Prune do
       |> DateTime.to_iso8601()
 
     eligible_run_ids = terminal_workflow_run_ids_before(cutoff)
-    run_ids = relationship_safe_run_ids(eligible_run_ids)
+    run_components = relationship_safe_run_components(eligible_run_ids)
+    run_ids = List.flatten(run_components)
 
     removed_count =
       if dry_run? do
         0
       else
-        delete_runtime_rows_for_run_ids!(run_ids)
+        delete_runtime_rows_for_run_components!(run_components)
       end
 
     %{
@@ -585,7 +586,7 @@ defmodule VilanoKernel.Storage.Prune do
   defp older_than?(path, now_seconds, ttl_seconds) do
     case File.lstat(path, time: :posix) do
       {:ok, %{mtime: mtime_seconds}} when is_integer(mtime_seconds) ->
-        now_seconds - mtime_seconds >= ttl_seconds
+        now_seconds - mtime_seconds > ttl_seconds
 
       _ ->
         false
@@ -598,6 +599,22 @@ defmodule VilanoKernel.Storage.Prune do
     Enum.any?(active_lease_ids, fn lease_id ->
       basename == lease_id or String.starts_with?(basename, "#{lease_id}.tmp-")
     end)
+  end
+
+  defp retained_or_pending_project_snapshot?(path, retained) do
+    expanded_path = Path.expand(path)
+
+    MapSet.member?(retained, expanded_path) or
+      project_snapshot_temp_path?(path) or
+      File.exists?(project_snapshot_pending_marker_path(path))
+  end
+
+  defp project_snapshot_temp_path?(path) do
+    Path.basename(path) |> String.contains?(".tmp-")
+  end
+
+  defp project_snapshot_pending_marker_path(path) do
+    Path.join([Path.dirname(path), ".pending", "#{Path.basename(path)}.pending"])
   end
 
   defp candidate_summary(path) do
@@ -619,13 +636,35 @@ defmodule VilanoKernel.Storage.Prune do
     Enum.map(candidates, &remove_candidate_path/1)
   end
 
+  defp remove_project_snapshot_candidates(candidates, _retained, true) do
+    Enum.map(candidates, &Map.put(&1, "removalStatus", "dry_run"))
+  end
+
+  defp remove_project_snapshot_candidates(candidates, retained, false) do
+    latest_retained =
+      Storage.list_referenced_snapshot_paths(nil)
+      |> MapSet.new(&Path.expand/1)
+      |> MapSet.union(retained)
+
+    Enum.map(candidates, fn %{"path" => path} = candidate ->
+      if retained_or_pending_project_snapshot?(path, latest_retained) do
+        Map.merge(candidate, %{"removalStatus" => "retained"})
+      else
+        remove_candidate_path(candidate)
+      end
+    end)
+  end
+
   defp remove_artifact_candidates(candidates, _root, _retained, _active_run_ids, true) do
     Enum.map(candidates, &Map.put(&1, "removalStatus", "dry_run"))
   end
 
   defp remove_artifact_candidates(candidates, root, retained, active_run_ids, false) do
+    latest_retained = MapSet.union(retained, referenced_artifact_paths_for_root(root))
+    latest_active_run_ids = MapSet.union(active_run_ids, active_artifact_run_ids())
+
     Enum.map(candidates, fn %{"path" => path} = candidate ->
-      case artifact_removal_allowed?(root, path, retained, active_run_ids) do
+      case artifact_removal_allowed?(root, path, latest_retained, latest_active_run_ids) do
         {:ok, false} -> Map.merge(candidate, %{"removalStatus" => "retained"})
         {:ok, true} -> remove_candidate_path(candidate)
       end
@@ -646,7 +685,7 @@ defmodule VilanoKernel.Storage.Prune do
         {:ok, false}
 
       true ->
-        {:ok, not currently_referenced_artifact_path?(root, relative_path)}
+        {:ok, true}
     end
   end
 
@@ -734,14 +773,6 @@ defmodule VilanoKernel.Storage.Prune do
       end,
       :public_read
     )
-  end
-
-  defp currently_referenced_artifact_path?(_root, nil), do: false
-
-  defp currently_referenced_artifact_path?(root, relative_path) do
-    root
-    |> referenced_artifact_paths_for_root()
-    |> MapSet.member?(relative_path)
   end
 
   defp referenced_artifact_refs do
@@ -965,9 +996,9 @@ defmodule VilanoKernel.Storage.Prune do
     end
   end
 
-  defp relationship_safe_run_ids([]), do: []
+  defp relationship_safe_run_components([]), do: []
 
-  defp relationship_safe_run_ids(run_ids) do
+  defp relationship_safe_run_components(run_ids) do
     eligible = MapSet.new(run_ids)
     edges = relationship_edges_for_run_ids(run_ids)
 
@@ -997,7 +1028,46 @@ defmodule VilanoKernel.Storage.Prune do
 
     unsafe = expand_unsafe_runs(boundary, adjacency)
 
-    Enum.reject(run_ids, &MapSet.member?(unsafe, &1))
+    safe_components_for_run_ids(run_ids, unsafe, adjacency)
+  end
+
+  defp safe_components_for_run_ids(run_ids, unsafe, adjacency) do
+    {_seen, components} =
+      Enum.reduce(run_ids, {MapSet.new(), []}, fn run_id, {seen, components} ->
+        cond do
+          MapSet.member?(unsafe, run_id) ->
+            {seen, components}
+
+          MapSet.member?(seen, run_id) ->
+            {seen, components}
+
+          true ->
+            component = collect_safe_component([run_id], MapSet.new(), unsafe, adjacency)
+            {MapSet.union(seen, MapSet.new(component)), [component | components]}
+        end
+      end)
+
+    Enum.reverse(components)
+  end
+
+  defp collect_safe_component([], component, _unsafe, _adjacency), do: MapSet.to_list(component)
+
+  defp collect_safe_component([run_id | rest], component, unsafe, adjacency) do
+    cond do
+      MapSet.member?(unsafe, run_id) ->
+        collect_safe_component(rest, component, unsafe, adjacency)
+
+      MapSet.member?(component, run_id) ->
+        collect_safe_component(rest, component, unsafe, adjacency)
+
+      true ->
+        next =
+          adjacency
+          |> Map.get(run_id, MapSet.new())
+          |> Enum.reject(&MapSet.member?(component, &1))
+
+        collect_safe_component(next ++ rest, MapSet.put(component, run_id), unsafe, adjacency)
+    end
   end
 
   defp relationship_edges_for_run_ids(run_ids) do
@@ -1029,18 +1099,32 @@ defmodule VilanoKernel.Storage.Prune do
           union all
 
           select g.owner_run_id as left_id, m.current_child_run_id as right_id
-          from run_supervision_members m
-          join run_supervision_groups g on g.id = m.group_id
+          from run_supervision_groups g
+          join run_supervision_members m on m.group_id = g.id
           where
             m.current_child_run_id is not null
-            and (g.owner_run_id in (#{placeholders}) or m.current_child_run_id in (#{placeholders}))
+            and g.owner_run_id in (#{placeholders})
+
+          union all
+
+          select g.owner_run_id as left_id, m.current_child_run_id as right_id
+          from run_supervision_members m
+          join run_supervision_groups g on g.id = m.group_id
+          where m.current_child_run_id in (#{placeholders})
+
+          union all
+
+          select g.owner_run_id as left_id, r.child_run_id as right_id
+          from run_supervision_groups g
+          join run_supervision_restarts r on r.group_id = g.id
+          where g.owner_run_id in (#{placeholders})
 
           union all
 
           select g.owner_run_id as left_id, r.child_run_id as right_id
           from run_supervision_restarts r
           join run_supervision_groups g on g.id = r.group_id
-          where g.owner_run_id in (#{placeholders}) or r.child_run_id in (#{placeholders})
+          where r.child_run_id in (#{placeholders})
 
           union all
 
@@ -1085,133 +1169,139 @@ defmodule VilanoKernel.Storage.Prune do
     do_expand_unsafe_runs(next, unsafe, adjacency)
   end
 
-  defp delete_runtime_rows_for_run_ids!([]), do: 0
-
-  defp delete_runtime_rows_for_run_ids!(run_ids) do
-    run_ids
-    |> Enum.chunk_every(@run_prune_batch_size)
-    |> Enum.reduce(0, fn run_id_batch, removed_count ->
-      delete_runtime_rows_for_run_id_batch!(run_id_batch)
-      removed_count + length(run_id_batch)
+  defp delete_runtime_rows_for_run_components!(components) do
+    Enum.reduce(components, 0, fn component_run_ids, removed_count ->
+      delete_runtime_rows_for_run_ids!(component_run_ids)
+      removed_count + length(component_run_ids)
     end)
   end
 
-  defp delete_runtime_rows_for_run_id_batch!([]), do: :ok
+  defp delete_runtime_rows_for_run_ids!([]), do: 0
 
-  defp delete_runtime_rows_for_run_id_batch!(run_ids) do
+  defp delete_runtime_rows_for_run_ids!(run_ids) do
     result =
       Infrastructure.transaction_with_busy_retry(fn ->
-        placeholders = placeholders(run_ids)
-
-        delete_rows!(
-          """
-          delete from run_exit_events
-          where relationship_id in (
-            select id
-            from run_relationships
-            where owner_run_id in (#{placeholders})
-          )
-          or run_id in (#{placeholders})
-          """,
-          run_ids ++ run_ids
-        )
-
-        delete_rows!("delete from run_signals where run_id in (#{placeholders})", run_ids)
-
-        delete_rows!(
-          """
-          delete from run_service_refs
-          where caller_run_id in (#{placeholders}) or service_run_id in (#{placeholders})
-          """,
-          run_ids ++ run_ids
-        )
-
-        delete_rows!(
-          """
-          delete from run_service_ops
-          where caller_run_id in (#{placeholders})
-          """,
-          run_ids
-        )
-
-        delete_rows!(
-          """
-          delete from service_envelopes
-          where service_run_id in (#{placeholders}) or sender_run_id in (#{placeholders})
-          """,
-          run_ids ++ run_ids
-        )
-
-        delete_rows!(
-          """
-          delete from run_supervision_restarts
-          where
-            group_id in (
-              select id
-              from run_supervision_groups
-              where owner_run_id in (#{placeholders})
-            )
-            or child_run_id in (#{placeholders})
-          """,
-          run_ids ++ run_ids
-        )
-
-        delete_rows!(
-          """
-          delete from run_supervision_members
-          where
-            group_id in (
-              select id
-              from run_supervision_groups
-              where owner_run_id in (#{placeholders})
-            )
-            or current_child_run_id in (#{placeholders})
-          """,
-          run_ids ++ run_ids
-        )
-
-        delete_rows!(
-          "delete from run_supervision_groups where owner_run_id in (#{placeholders})",
-          run_ids
-        )
-
-        delete_rows!(
-          """
-          delete from run_children
-          where parent_run_id in (#{placeholders}) or child_run_id in (#{placeholders})
-          """,
-          run_ids ++ run_ids
-        )
-
-        delete_rows!(
-          "delete from run_topic_publishes where caller_run_id in (#{placeholders})",
-          run_ids
-        )
-
-        delete_rows!("delete from run_waits where run_id in (#{placeholders})", run_ids)
-        delete_rows!("delete from run_execs where run_id in (#{placeholders})", run_ids)
-        delete_rows!("delete from run_steps where run_id in (#{placeholders})", run_ids)
-        delete_rows!("delete from run_event_sequences where run_id in (#{placeholders})", run_ids)
-        delete_rows!("delete from run_events where run_id in (#{placeholders})", run_ids)
-
-        delete_rows!(
-          """
-          delete from run_relationships
-          where owner_run_id in (#{placeholders}) or target_run_id in (#{placeholders})
-          """,
-          run_ids ++ run_ids
-        )
-
-        delete_rows!("delete from service_runs where run_id in (#{placeholders})", run_ids)
-        delete_rows!("delete from runs where id in (#{placeholders})", run_ids)
+        run_ids
+        |> Enum.chunk_every(@run_prune_batch_size)
+        |> Enum.each(&delete_runtime_rows_for_run_id_batch!/1)
 
         :ok
       end)
 
     case result do
-      {:ok, :ok} -> :ok
+      {:ok, :ok} -> length(run_ids)
       {:error, reason} -> raise(reason)
     end
+  end
+
+  defp delete_runtime_rows_for_run_id_batch!([]), do: :ok
+
+  defp delete_runtime_rows_for_run_id_batch!(run_ids) do
+    placeholders = placeholders(run_ids)
+
+    delete_rows!(
+      """
+      delete from run_exit_events
+      where relationship_id in (
+        select id
+        from run_relationships
+        where owner_run_id in (#{placeholders})
+      )
+      or run_id in (#{placeholders})
+      """,
+      run_ids ++ run_ids
+    )
+
+    delete_rows!("delete from run_signals where run_id in (#{placeholders})", run_ids)
+
+    delete_rows!(
+      """
+      delete from run_service_refs
+      where caller_run_id in (#{placeholders}) or service_run_id in (#{placeholders})
+      """,
+      run_ids ++ run_ids
+    )
+
+    delete_rows!(
+      """
+      delete from run_service_ops
+      where caller_run_id in (#{placeholders})
+      """,
+      run_ids
+    )
+
+    delete_rows!(
+      """
+      delete from service_envelopes
+      where service_run_id in (#{placeholders}) or sender_run_id in (#{placeholders})
+      """,
+      run_ids ++ run_ids
+    )
+
+    delete_rows!(
+      """
+      delete from run_supervision_restarts
+      where
+        group_id in (
+          select id
+          from run_supervision_groups
+          where owner_run_id in (#{placeholders})
+        )
+        or child_run_id in (#{placeholders})
+      """,
+      run_ids ++ run_ids
+    )
+
+    delete_rows!(
+      """
+      delete from run_supervision_members
+      where
+        group_id in (
+          select id
+          from run_supervision_groups
+          where owner_run_id in (#{placeholders})
+        )
+        or current_child_run_id in (#{placeholders})
+      """,
+      run_ids ++ run_ids
+    )
+
+    delete_rows!(
+      "delete from run_supervision_groups where owner_run_id in (#{placeholders})",
+      run_ids
+    )
+
+    delete_rows!(
+      """
+      delete from run_children
+      where parent_run_id in (#{placeholders}) or child_run_id in (#{placeholders})
+      """,
+      run_ids ++ run_ids
+    )
+
+    delete_rows!(
+      "delete from run_topic_publishes where caller_run_id in (#{placeholders})",
+      run_ids
+    )
+
+    delete_rows!("delete from run_waits where run_id in (#{placeholders})", run_ids)
+    delete_rows!("delete from run_execs where run_id in (#{placeholders})", run_ids)
+    delete_rows!("delete from run_steps where run_id in (#{placeholders})", run_ids)
+    delete_rows!("delete from run_event_sequences where run_id in (#{placeholders})", run_ids)
+    delete_rows!("delete from run_events where run_id in (#{placeholders})", run_ids)
+
+    delete_rows!(
+      """
+      delete from run_relationships
+      where owner_run_id in (#{placeholders}) or target_run_id in (#{placeholders})
+      """,
+      run_ids ++ run_ids
+    )
+
+    delete_rows!("delete from service_runs where run_id in (#{placeholders})", run_ids)
+    delete_rows!("delete from runs where id in (#{placeholders})", run_ids)
+
+    :ok
   end
 
   defp placeholders(values) do

@@ -13,6 +13,7 @@ import { renderProject, renderProjectSummary, writeOutput } from "../output.ts";
 import {
   materializeProjectSnapshot,
   pruneAllProjectSnapshots,
+  releaseProjectSnapshot,
   removeProjectSnapshot,
 } from "../project-snapshot.ts";
 import { writeStarterProject } from "../project-starter.ts";
@@ -61,7 +62,11 @@ export async function handleProjectCommand(
       );
       manifest.snapshotPath = validated.snapshotPath;
       manifest.definitionsManifestHash = validated.definitionsManifestHash;
-      const response = await addProject(manifest);
+      const response = await addProject(manifest).catch(async (error) => {
+        await removeProjectSnapshot(validated.snapshotPath).catch(() => undefined);
+        throw error;
+      });
+      await releaseProjectSnapshot(validated.snapshotPath);
       await pruneRegisteredProjectSnapshots(response.project.name);
       writeOutput(flags, response, (body) => renderProject(body.project));
       return 0;
@@ -107,7 +112,11 @@ export async function handleProjectCommand(
       );
       manifest.snapshotPath = validated.snapshotPath;
       manifest.definitionsManifestHash = validated.definitionsManifestHash;
-      const response = await syncProject(manifest);
+      const response = await syncProject(manifest).catch(async (error) => {
+        await removeProjectSnapshot(validated.snapshotPath).catch(() => undefined);
+        throw error;
+      });
+      await releaseProjectSnapshot(validated.snapshotPath);
       await pruneRegisteredProjectSnapshots(response.project.name);
       writeOutput(flags, response, (body) => renderProject(body.project));
       return 0;
