@@ -387,7 +387,11 @@ defmodule VilanoKernel.Storage do
   end
 
   def stop_service_run(project_name, definition_name, service_key) do
-    initial_run = get_service_run(project_name, definition_name, service_key)
+    initial_run =
+      Infrastructure.run_with_busy_retry(
+        fn -> get_service_run(project_name, definition_name, service_key) end,
+        :admin_control
+      )
 
     stop_service_run_with_prepared_payload_retry(
       initial_run,
@@ -405,20 +409,28 @@ defmodule VilanoKernel.Storage do
          service_key,
          attempts_left
        ) do
-    maybe_preempt_active_managed_worker(initial_run)
+    Infrastructure.run_with_busy_retry(
+      fn -> maybe_preempt_active_managed_worker(initial_run) end,
+      :admin_control
+    )
 
     now = Infrastructure.now_iso8601()
     reason = "cli_stop"
     error_body = FailureRecovery.cancellation_error("Service stopped", reason)
 
     prepared_stop =
-      prepare_service_stop_for_admin(
-        project_name,
-        definition_name,
-        service_key,
-        error_body,
-        reason,
-        now
+      Infrastructure.run_with_busy_retry(
+        fn ->
+          prepare_service_stop_for_admin(
+            project_name,
+            definition_name,
+            service_key,
+            error_body,
+            reason,
+            now
+          )
+        end,
+        :admin_control
       )
 
     try do
@@ -474,16 +486,25 @@ defmodule VilanoKernel.Storage do
   end
 
   def cancel_run(run_id, reason \\ "cli_cancel") do
-    initial_run = get_run(run_id)
+    initial_run =
+      Infrastructure.run_with_busy_retry(fn -> get_run(run_id) end, :admin_control)
 
     cancel_run_with_prepared_payload_retry(initial_run, run_id, reason, 3)
   end
 
   defp cancel_run_with_prepared_payload_retry(initial_run, run_id, reason, attempts_left) do
-    maybe_preempt_cancellation_tree(run_id)
+    Infrastructure.run_with_busy_retry(
+      fn -> maybe_preempt_cancellation_tree(run_id) end,
+      :admin_control
+    )
 
     now = Infrastructure.now_iso8601()
-    prepared_cancellation = prepare_cancellation_for_cancel_run(run_id, reason, now)
+
+    prepared_cancellation =
+      Infrastructure.run_with_busy_retry(
+        fn -> prepare_cancellation_for_cancel_run(run_id, reason, now) end,
+        :admin_control
+      )
 
     try do
       case admin_control_transaction_with_optional_preemption(initial_run, fn ->
@@ -692,54 +713,59 @@ defmodule VilanoKernel.Storage do
   def prune_runtime(opts \\ %{}), do: Prune.prune_runtime(opts)
 
   def list_service_runs(project_name \\ nil, active_only \\ false) do
-    {where_sql, args} =
-      case {project_name, active_only} do
-        {nil, false} ->
-          {"where r.definition_kind = 'service'", []}
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        {where_sql, args} =
+          case {project_name, active_only} do
+            {nil, false} ->
+              {"where r.definition_kind = 'service'", []}
 
-        {nil, true} ->
-          {"where r.definition_kind = 'service' and r.status not in ('idle', 'stopped')", []}
+            {nil, true} ->
+              {"where r.definition_kind = 'service' and r.status not in ('idle', 'stopped')", []}
 
-        {project, false} ->
-          {"where r.definition_kind = 'service' and r.project_name = ?", [project]}
+            {project, false} ->
+              {"where r.definition_kind = 'service' and r.project_name = ?", [project]}
 
-        {project, true} ->
-          {"where r.definition_kind = 'service' and r.project_name = ? and r.status not in ('idle', 'stopped')",
-           [project]}
-      end
+            {project, true} ->
+              {"where r.definition_kind = 'service' and r.project_name = ? and r.status not in ('idle', 'stopped')",
+               [project]}
+          end
 
-    Repo
-    |> SQL.query!(
-      """
-      select
-        r.id,
-        r.project_name,
-        r.definition_kind,
-        r.definition_name,
-        r.status,
-        r.lease_id,
-        r.lease_worker_id,
-        r.lease_expires_at,
-        r.input_json,
-        r.output_json,
-        r.error_json,
-        r.created_at,
-        r.updated_at,
-        s.service_key,
-        s.key_input_json,
-        s.state_json,
-        s.created_at as service_created_at,
-        s.updated_at as service_updated_at
-      from runs r
-      join service_runs s on s.run_id = r.id
-      #{where_sql}
-      order by r.created_at desc
-      """,
-      args
+        Repo
+        |> SQL.query!(
+          """
+          select
+            r.id,
+            r.project_name,
+            r.definition_kind,
+            r.definition_name,
+            r.status,
+            r.lease_id,
+            r.lease_worker_id,
+            r.lease_expires_at,
+            r.input_json,
+            r.output_json,
+            r.error_json,
+            r.created_at,
+            r.updated_at,
+            s.service_key,
+            s.key_input_json,
+            s.state_json,
+            s.created_at as service_created_at,
+            s.updated_at as service_updated_at
+          from runs r
+          join service_runs s on s.run_id = r.id
+          #{where_sql}
+          order by r.created_at desc
+          """,
+          args
+        )
+        |> rows_to_maps()
+        |> Enum.map(&service_run_from_row(&1, &1))
+        |> Enum.map(&decorate_service_passivation/1)
+      end,
+      :public_read
     )
-    |> rows_to_maps()
-    |> Enum.map(&service_run_from_row(&1, &1))
-    |> Enum.map(&decorate_service_passivation/1)
   end
 
   defdelegate resolve_spawn(lease_id, definition_name, op_key, child_run_id, input),

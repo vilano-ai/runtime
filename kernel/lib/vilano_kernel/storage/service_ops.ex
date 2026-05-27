@@ -962,7 +962,7 @@ defmodule VilanoKernel.Storage.ServiceOps do
   end
 
   defp complete_service_turn_transaction(lease_id, envelope_id, body, now, prepared_stop) do
-    Infrastructure.transaction_with_busy_retry(fn ->
+    Infrastructure.run_with_busy_retry(fn ->
       case {RunControl.get_fenced_run_by_lease(lease_id, now), get_service_envelope(envelope_id)} do
         {nil, _} ->
           nil
@@ -1354,27 +1354,30 @@ defmodule VilanoKernel.Storage.ServiceOps do
   def get_service_turn_mailbox(lease_id, envelope_id) do
     now = Infrastructure.now_iso8601()
 
-    Infrastructure.transaction_with_busy_retry(fn ->
-      case {RunControl.get_fenced_run_by_lease(lease_id, now), get_service_envelope(envelope_id)} do
-        {nil, _} ->
-          nil
-
-        {_, nil} ->
-          nil
-
-        {service_run, envelope} ->
-          if envelope["service_run_id"] == service_run["id"] and
-               envelope["status"] == "processing" do
-            %{
-              "current" => mailbox_envelope_from_row(envelope),
-              "queued" => queued_mailbox_summary(service_run["id"], now)
-            }
-          else
+    Infrastructure.transaction_with_busy_retry(
+      fn ->
+        case {RunControl.get_fenced_run_by_lease(lease_id, now),
+              get_service_envelope(envelope_id)} do
+          {nil, _} ->
             nil
-          end
-      end
-    end)
-    |> unwrap_transaction_result()
+
+          {_, nil} ->
+            nil
+
+          {service_run, envelope} ->
+            if envelope["service_run_id"] == service_run["id"] and
+                 envelope["status"] == "processing" do
+              %{
+                "current" => mailbox_envelope_from_row(envelope),
+                "queued" => queued_mailbox_summary(service_run["id"], now)
+              }
+            else
+              nil
+            end
+        end
+      end,
+      :public_read
+    )
   end
 
   def defer_service_turn(lease_id, envelope_id, delay_ms, reason \\ nil) do

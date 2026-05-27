@@ -482,51 +482,55 @@ defmodule VilanoKernel.Storage.Supervision do
   def get_supervision_member_status(lease_id, group_id, member_key) do
     now = Infrastructure.now_iso8601()
 
-    Infrastructure.transaction_with_busy_retry(fn ->
-      case RunControl.get_fenced_run_by_lease(lease_id, now) do
-        nil ->
-          nil
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        case RunControl.get_fenced_run_by_lease(lease_id, now) do
+          nil ->
+            nil
 
-        owner_run ->
-          case AgentKernel.get_run_supervision_group_for_owner(owner_run["id"], group_id) do
-            nil ->
-              nil
+          owner_run ->
+            case AgentKernel.get_run_supervision_group_for_owner(owner_run["id"], group_id) do
+              nil ->
+                nil
 
-            _group ->
-              AgentKernel.get_run_supervision_member(group_id, member_key)
-              |> AgentKernel.supervision_member_runtime_state(&VilanoKernel.Storage.get_run/1)
-          end
-      end
-    end)
-    |> unwrap_transaction_result()
+              _group ->
+                AgentKernel.get_run_supervision_member(group_id, member_key)
+                |> AgentKernel.supervision_member_runtime_state(&VilanoKernel.Storage.get_run/1)
+            end
+        end
+      end,
+      :public_read
+    )
   end
 
   def list_supervision_members(lease_id, group_id) do
     now = Infrastructure.now_iso8601()
 
-    Infrastructure.transaction_with_busy_retry(fn ->
-      case RunControl.get_fenced_run_by_lease(lease_id, now) do
-        nil ->
-          nil
+    Infrastructure.run_with_busy_retry(
+      fn ->
+        case RunControl.get_fenced_run_by_lease(lease_id, now) do
+          nil ->
+            nil
 
-        owner_run ->
-          case AgentKernel.get_run_supervision_group_for_owner(owner_run["id"], group_id) do
-            nil ->
-              nil
+          owner_run ->
+            case AgentKernel.get_run_supervision_group_for_owner(owner_run["id"], group_id) do
+              nil ->
+                nil
 
-            _group ->
-              group_id
-              |> AgentKernel.list_run_supervision_members()
-              |> Enum.map(fn member ->
-                AgentKernel.supervision_member_runtime_state(
-                  member,
-                  &VilanoKernel.Storage.get_run/1
-                )
-              end)
-          end
-      end
-    end)
-    |> unwrap_transaction_result()
+              _group ->
+                group_id
+                |> AgentKernel.list_run_supervision_members()
+                |> Enum.map(fn member ->
+                  AgentKernel.supervision_member_runtime_state(
+                    member,
+                    &VilanoKernel.Storage.get_run/1
+                  )
+                end)
+            end
+        end
+      end,
+      :public_read
+    )
   end
 
   def maybe_apply_supervision_for_terminal_run!(
